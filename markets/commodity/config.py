@@ -1,0 +1,39 @@
+"""
+NOX Project — Commodity Market Config
+Emtia piyasasına özel parametreler.
+Daha yavaş döngüler, mevsimsellik, geniş ATR.
+"""
+
+# ── COMMODITY-SPECIFIC ──
+MIN_AVG_VOLUME_USD = 500_000
+RVOL_THRESH = 0.5
+
+# Stop / TP multipliers (emtia trendleri uzun sürer)
+TREND_STOP = 2.0
+GRI_STOP = 1.5
+MR_STOP = 1.2
+DONUS_STOP = 2.0
+COMBO_STOP = 1.5
+TREND_TP = 2.5
+GRI_TP = 2.0
+DONUS_TP = 3.0
+COMBO_TP = 2.0
+
+# Quality thresholds
+QUAL_MIN_GRI = 20
+QUAL_MIN_TREND = 15
+RS_THRESHOLD = 3.0
+
+# DIP specific
+PINK_EMA89 = 89
+PINK_EMA144 = 144
+PINK_RSI_LEN = 14
+PINK_RSI_DIV_LOOKBACK = 14
+PINK_TOUCH_WINDOW = 100
+PINK_TOUCH_COUNT = 12
+PINK_STOP_MULT = 2.0
+
+# ── SUPPLY/DEMAND SIGNAL ──
+SUPPLY_MIN_SCORE = 30
+SUPPLY_SEASONAL_WINDOW = 252
+SUPPLY_CONTANGO_WINDOW = 20

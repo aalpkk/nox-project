@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+
+# Generated outputs
+nox_*.html
+nox_*.csv
+nox_backtest_*.html
+nox_backtest_*.csv
+
+# Claude Code
+.claude/
