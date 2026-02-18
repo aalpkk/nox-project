@@ -34,6 +34,7 @@ SIGNAL_NAMES = {
     "PARTIAL": "PARTIAL",
     "DIP+": "DIP+", "DIP": "DIP", "DIP_E": "DIP_E", "DIP_W": "DIP_W",
     "RECOVER": "RECOVER", "INSTITUTIONAL": "INSTITUTIONAL",
+    "SIDEWAYS_MR": "SIDEWAYS_MR", "SIDEWAYS_SQ": "SIDEWAYS_SQ",
 }
 
 SIGNAL_EMOJI = {
@@ -43,6 +44,7 @@ SIGNAL_EMOJI = {
     "DIP+": "🔶", "DIP": "🔸", "DIP_E": "📙", "DIP_W": "👀",
     "RECOVER": "💎", "INSTITUTIONAL": "🏦", "WHALE": "🐋",
     "SUPPLY": "📦",
+    "SIDEWAYS_MR": "🔷", "SIDEWAYS_SQ": "🔶",
 }
 
 SIGNAL_COLORS = {
@@ -54,6 +56,7 @@ SIGNAL_COLORS = {
     "DIP_W": "#a3a3a3", "RECOVER": "#06b6d4", "INSTITUTIONAL": "#8b5cf6",
     "WHALE": "#0ea5e9",
     "SUPPLY": "#f59e0b",
+    "SIDEWAYS_MR": "#60a5fa", "SIDEWAYS_SQ": "#f59e0b",
 }
 
 SIGNAL_PRIORITY_TREND = {
@@ -66,6 +69,8 @@ SIGNAL_PRIORITY_DIP = {
     "DIP+": 1, "DIP": 2, "DIP_E": 3, "RECOVER": 4,
     "INSTITUTIONAL": 4, "WHALE": 4, "SUPPLY": 4, "DIP_W": 5,
 }
+
+SIGNAL_PRIORITY_SIDEWAYS = {"SIDEWAYS_SQ": 1, "SIDEWAYS_MR": 2}
 
 # ── REGIME CLASSIFICATION ──
 ADX_TREND = 20

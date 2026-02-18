@@ -62,13 +62,15 @@ def get_regime_for_date(dt):
 
 
 def simulate_trade(df, entry_idx, stop_price, tp_price, direction='long',
-                    trail_mult=None, atr_val=None):
+                    trail_mult=None, atr_val=None, max_hold_days=None):
     """
     Tek trade simülasyonu — trailing stop destekli.
     Entry → her gün trailing stop güncelle → stop/tp kontrolü → exit veya timeout.
     trail_mult ve atr_val verilirse, iz süren stop aktif olur:
       highest_close'dan trail_mult * atr_val mesafe ile stop yukarı çekilir.
+    max_hold_days: override for signal-specific timeout (default: MAX_HOLD_DAYS).
     """
+    hold_limit = max_hold_days if max_hold_days is not None else MAX_HOLD_DAYS
     n = len(df)
     if entry_idx >= n - 1:
         return None
@@ -94,7 +96,7 @@ def simulate_trade(df, entry_idx, stop_price, tp_price, direction='long',
     highest_close = entry_price
     use_trail = trail_mult is not None and atr_val is not None and atr_val > 0
 
-    for i in range(start_idx, min(start_idx + MAX_HOLD_DAYS, n)):
+    for i in range(start_idx, min(start_idx + hold_limit, n)):
         low = float(df['Low'].iloc[i])
         high = float(df['High'].iloc[i])
         close = float(df['Close'].iloc[i])
@@ -138,7 +140,7 @@ def simulate_trade(df, entry_idx, stop_price, tp_price, direction='long',
             if new_stop > current_stop:
                 current_stop = new_stop
 
-    last_idx = min(start_idx + MAX_HOLD_DAYS - 1, n - 1)
+    last_idx = min(start_idx + hold_limit - 1, n - 1)
     exit_price = float(df['Close'].iloc[last_idx]) * (1 - SLIPPAGE_PCT)
     pnl = (exit_price / entry_price - 1) * 100 - COMMISSION_PCT * 200
     # Realistic fill cap: max loss -25% (gap/likidite riski)
@@ -813,6 +815,260 @@ def _fast_dip_signals(ticker, df, xu_df, usd_df, dip_mod, debug=False):
 
 
 # ══════════════════════════════════════════════════════════════
+# VECTORIZED SIDEWAYS SIGNAL GENERATION
+# ══════════════════════════════════════════════════════════════
+
+def _fast_sideways_signals(ticker, df, xu_df, usd_df, debug=False):
+    """
+    Vectorized sideways signal generation.
+    Module A (SIDEWAYS_MR): Range Mean Reversion — within sideways flag + weekly_st_up
+    Module B (SIDEWAYS_SQ): Squeeze Breakout — within sideways flag periods
+    Precomputes all indicators once, scans every 5 days within sideways periods.
+    """
+    from markets.bist.config import (
+        SIDEWAYS_MR_RSI_THRESH, SIDEWAYS_MR_ATR_PCTILE_MAX,
+        SIDEWAYS_MR_RVOL_MIN, SIDEWAYS_MR_REWARD_ATR,
+        SIDEWAYS_MR_SECTOR_RS_MAX, SIDEWAYS_MR_STOP_ATR, SIDEWAYS_MR_TIMEOUT,
+        SIDEWAYS_SQ_BB_PCTILE_MAX, SIDEWAYS_SQ_ATR_PCTILE_MAX,
+        SIDEWAYS_SQ_BODY_ATR, SIDEWAYS_SQ_HHV_PERIOD,
+        SIDEWAYS_SQ_RR_TARGET, SIDEWAYS_SQ_TIMEOUT, SIDEWAYS_SQ_FT_MODE,
+        POS_SIZE_SIDEWAYS,
+        SIDEWAYS_ADX_THRESH, SIDEWAYS_BB_PCTILE_THRESH,
+        SIDEWAYS_EMA_ATR_THRESH, SIDEWAYS_HYST_ENTRY, SIDEWAYS_HYST_EXIT,
+    )
+    from core.indicators import calc_sideways_flag, calc_bb_width_percentile
+
+    n = len(df)
+    min_days = 200
+    if n < min_days:
+        return []
+
+    c = df['Close']
+    h = df['High']
+    l = df['Low']
+    o = df['Open']
+    v = df['Volume']
+
+    # ── Sideways flag on XU100 (precomputed once) ──
+    if xu_df is None or len(xu_df) < 100:
+        return []
+
+    sideways_flag = calc_sideways_flag(
+        xu_df, adx_thresh=SIDEWAYS_ADX_THRESH,
+        bb_pctile_thresh=SIDEWAYS_BB_PCTILE_THRESH,
+        ema_atr_thresh=SIDEWAYS_EMA_ATR_THRESH,
+        hyst_entry=SIDEWAYS_HYST_ENTRY,
+        hyst_exit=SIDEWAYS_HYST_EXIT,
+    )
+    # Align to stock index
+    sideways_flag_d = sideways_flag.reindex(df.index, method='ffill').fillna(False)
+
+    # Weekly SuperTrend
+    wdf = resample_weekly(df)
+    if len(wdf) >= 20:
+        wdf_st = calc_supertrend(wdf, ST_LEN, ST_MULT)
+        weekly_st_up_d = (wdf_st == 1).reindex(df.index, method='ffill').fillna(False)
+    else:
+        weekly_st_up_d = pd.Series(False, index=df.index)
+
+    # ── PRECOMPUTE indicators ──
+    atr_s = calc_atr(df, ATR_LEN)
+    vol_sma20 = sma(v, 20)
+    avg_turnover = vol_sma20 * c
+
+    # ATR percentile
+    atr_pctile_s = atr_s.rolling(ATR_PCTILE_WINDOW, min_periods=max(ATR_PCTILE_WINDOW // 2, 1)).apply(
+        lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+    ).fillna(0.5)
+
+    # BB
+    bb_mid = sma(c, BB_LEN)
+    bb_dev = c.rolling(BB_LEN).std() * BB_MULT
+    bb_upper = bb_mid + bb_dev
+    bb_lower = bb_mid - bb_dev
+
+    # BB width percentile
+    bb_w_pctile = calc_bb_width_percentile(df, BB_LEN, BB_MULT, 100)
+
+    # RSI
+    rsi14 = calc_rsi(c, 14)
+
+    # RVOL
+    rvol_s = v / vol_sma20.replace(0, np.nan)
+
+    # RS score
+    rs_score_s = pd.Series(0.0, index=df.index)
+    if xu_df is not None and len(xu_df) >= RS_LEN2 + 5:
+        xu_aligned = xu_df['Close'].reindex(df.index, method='ffill')
+        stock_ret1 = (c / c.shift(RS_LEN1) - 1) * 100
+        stock_ret2 = (c / c.shift(RS_LEN2) - 1) * 100
+        bench_ret1 = (xu_aligned / xu_aligned.shift(RS_LEN1) - 1) * 100
+        bench_ret2 = (xu_aligned / xu_aligned.shift(RS_LEN2) - 1) * 100
+        rs_score_s = ((stock_ret1 - bench_ret1) * 0.6 + (stock_ret2 - bench_ret2) * 0.4).fillna(0)
+
+    # Quality (vectorized)
+    candle_range_s = h - l
+    clv_s_arr = ((c - l) / candle_range_s.replace(0, np.nan)).fillna(0.5)
+    upper_wick_s = h - pd.concat([c, o], axis=1).max(axis=1)
+    wick_ratio_s = (upper_wick_s / candle_range_s.replace(0, np.nan)).fillna(0)
+    range_atr_s = (candle_range_s / atr_s.replace(0, np.nan)).fillna(0)
+
+    rvol_score = pd.Series(np.select(
+        [rvol_s >= 2, rvol_s >= RVOL_THRESH, rvol_s >= 1], [25, 20, 10], default=0
+    ), index=df.index)
+    clv_score = pd.Series(np.select(
+        [clv_s_arr >= 0.75, clv_s_arr >= 0.5, clv_s_arr >= 0.25], [25, 15, 5], default=0
+    ), index=df.index)
+    wick_score = pd.Series(np.select(
+        [wick_ratio_s <= 0.15, wick_ratio_s <= 0.3, wick_ratio_s <= 0.5], [25, 15, 5], default=0
+    ), index=df.index)
+    range_score = pd.Series(np.select(
+        [range_atr_s >= 1.2, range_atr_s >= 0.8, range_atr_s >= 0.5], [25, 15, 5], default=0
+    ), index=df.index)
+    quality_s = rvol_score + clv_score + wick_score + range_score
+
+    # HHV for squeeze breakout
+    hhv = c.rolling(SIDEWAYS_SQ_HHV_PERIOD).max()
+    body_s = (c - o).abs()
+
+    # ── Convert to arrays for fast access ──
+    c_arr = c.values
+    l_arr = l.values
+    o_arr = o.values
+    atr_arr = atr_s.values
+    avg_turn_arr = avg_turnover.values
+    sideways_arr = sideways_flag_d.values
+    weekly_st_arr = weekly_st_up_d.values
+    atr_pctile_arr = atr_pctile_s.values
+    bb_lower_arr = bb_lower.values
+    bb_mid_arr = bb_mid.values
+    bb_upper_arr = bb_upper.values
+    bb_w_pctile_arr = bb_w_pctile.values
+    rsi_arr = rsi14.values
+    rvol_arr = rvol_s.values
+    rs_arr = rs_score_s.values
+    quality_arr = quality_s.values
+    hhv_arr = hhv.values
+    body_arr = body_s.values
+
+    signals = []
+    step = 5
+
+    for day_idx in range(min_days, n, step):
+        # Must be in a sideways period
+        if not bool(sideways_arr[day_idx]):
+            continue
+
+        atr_val = atr_arr[day_idx]
+        if np.isnan(atr_val) or atr_val == 0:
+            continue
+        if avg_turn_arr[day_idx] < MIN_AVG_VOLUME_TL:
+            continue
+        if float(atr_pctile_arr[day_idx]) >= ATR_PANIC_PCTILE:
+            continue
+
+        close_price = c_arr[day_idx]
+        _rs = float(rs_arr[day_idx])
+        _quality = int(quality_arr[day_idx])
+        _rvol = float(rvol_arr[day_idx]) if not np.isnan(rvol_arr[day_idx]) else 0
+        _atr_pctile = float(atr_pctile_arr[day_idx])
+        _bb_w_pctile = float(bb_w_pctile_arr[day_idx])
+        _weekly_st = bool(weekly_st_arr[day_idx])
+
+        signal = None
+        timeout = None
+
+        # Module B: Squeeze Breakout (higher priority)
+        sq_bb_ok = _bb_w_pctile < SIDEWAYS_SQ_BB_PCTILE_MAX
+        sq_atr_ok = _atr_pctile < SIDEWAYS_SQ_ATR_PCTILE_MAX
+        sq_breakout = day_idx > 0 and close_price > float(hhv_arr[day_idx - 1]) if not np.isnan(hhv_arr[day_idx - 1]) else False
+        sq_body_ok = float(body_arr[day_idx]) > SIDEWAYS_SQ_BODY_ATR * atr_val
+
+        if sq_bb_ok and sq_atr_ok and sq_breakout and sq_body_ok:
+            signal = "SIDEWAYS_SQ"
+            timeout = SIDEWAYS_SQ_TIMEOUT
+
+        # Module A: Mean Reversion (only if weekly ST up, no SQ signal)
+        if signal is None and _weekly_st:
+            band_reclaim = (float(l_arr[day_idx]) < float(bb_lower_arr[day_idx]) and
+                            close_price > float(bb_lower_arr[day_idx]))
+            mr_rsi_ok = float(rsi_arr[day_idx]) < SIDEWAYS_MR_RSI_THRESH if not np.isnan(rsi_arr[day_idx]) else False
+            mr_atr_ok = _atr_pctile < SIDEWAYS_MR_ATR_PCTILE_MAX
+            mr_rvol_ok = _rvol >= SIDEWAYS_MR_RVOL_MIN
+            mr_rs_ok = _rs < SIDEWAYS_MR_SECTOR_RS_MAX
+
+            bb_mid_val = float(bb_mid_arr[day_idx])
+            dist_to_mid = bb_mid_val - close_price
+            mr_reward_ok = (dist_to_mid / atr_val) >= SIDEWAYS_MR_REWARD_ATR if atr_val > 0 else False
+
+            if band_reclaim and mr_rsi_ok and mr_atr_ok and mr_rvol_ok and mr_rs_ok and mr_reward_ok:
+                signal = "SIDEWAYS_MR"
+                timeout = SIDEWAYS_MR_TIMEOUT
+
+        if signal is None:
+            continue
+
+        # ── Stop / TP ──
+        if signal == "SIDEWAYS_MR":
+            tp_price = float(bb_mid_arr[day_idx])
+            stop_price = float(l_arr[day_idx]) - SIDEWAYS_MR_STOP_ATR * atr_val
+            tp_src = "BB"
+        else:  # SIDEWAYS_SQ
+            risk_pct = (close_price - float(l_arr[day_idx])) / close_price if close_price > 0 else 0.02
+            risk_pct = max(risk_pct, 0.005)
+            tp_price = close_price * (1 + SIDEWAYS_SQ_RR_TARGET * risk_pct)
+            stop_price = float(l_arr[day_idx])
+            tp_src = "RR"
+
+        risk = close_price - stop_price
+        reward = tp_price - close_price
+        rr = reward / risk if risk > 0 else 0
+        if rr < 1.0:
+            continue
+
+        pos_size = POS_SIZE_SIDEWAYS.get(signal, 0.6)
+        signal_date = df.index[day_idx]
+        bt_regime_name, bt_regime_type = get_regime_for_date(signal_date)
+
+        signals.append({
+            'ticker': ticker,
+            'signal': signal,
+            'trade_mode': 'SIDEWAYS',
+            'regime': 'SIDEWAYS',
+            'regime_score': 0,
+            'close': round(close_price, 2),
+            'stop': round(stop_price, 2),
+            'tp': round(tp_price, 2),
+            'tp_src': tp_src,
+            'rr': round(rr, 2),
+            'atr': round(atr_val, 2),
+            'atr_val_raw': atr_val,
+            'trail_mult': None,
+            'quality': _quality,
+            'rs_score': round(_rs, 1),
+            'rvol': round(_rvol, 1),
+            'bb_w_pctile': round(_bb_w_pctile, 1),
+            'overext_score': 0,
+            'overext_tags': [],
+            'overext_warning': False,
+            'turnover_m': round(float(avg_turn_arr[day_idx]) / 1e6, 1),
+            'atr_pctile': round(_atr_pctile, 2),
+            'weekly_st_up': _weekly_st,
+            'pos_size': pos_size,
+            'timeout': timeout,
+            'module': 'A' if signal == 'SIDEWAYS_MR' else 'B',
+            'date': signal_date,
+            'day_idx': day_idx,
+            'regime_period': bt_regime_name,
+            'regime_type': bt_regime_type,
+        })
+
+    if debug:
+        print(f"    {ticker}: sideways signals={len(signals)}")
+    return signals
+
+
+# ══════════════════════════════════════════════════════════════
 # ANA BACKTEST
 # ══════════════════════════════════════════════════════════════
 
@@ -826,6 +1082,8 @@ def generate_signals_for_ticker(ticker, df, xu_df, usd_df, regime_mod, dip_mod, 
         return _fast_trend_signals(ticker, df, xu_df, usd_df, debug=debug, elite=elite)
     elif mode == 'dip':
         return _fast_dip_signals(ticker, df, xu_df, usd_df, dip_mod, debug=debug)
+    elif mode == 'sideways':
+        return _fast_sideways_signals(ticker, df, xu_df, usd_df, debug=debug)
     return []
 
 
@@ -865,6 +1123,7 @@ def run_backtest(tickers, all_data, xu_df, usd_df, regime_mod, dip_mod,
                 df, day_idx, stop, tp,
                 trail_mult=sig.get('trail_mult'),
                 atr_val=sig.get('atr_val_raw'),
+                max_hold_days=sig.get('timeout'),
             )
             if trade is None:
                 continue

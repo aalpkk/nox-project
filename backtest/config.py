@@ -53,8 +53,10 @@ FILTER_TESTS = {
 
 # ── SİNYAL GRUPLARI (ayrı analiz) ──
 SIGNAL_GROUPS = {
-    "trend_all":  ["COMBO", "STRONG", "WEAK", "EARLY", "PARTIAL"],
-    "trend_top":  ["STRONG", "EARLY", "PARTIAL"],
-    "dip_all":    ["DIP+", "DIP", "DIP_E", "DIP_W", "RECOVER"],
-    "dip_top":    ["DIP+", "DIP", "RECOVER"],
+    "trend_all":    ["COMBO", "STRONG", "WEAK", "EARLY", "PARTIAL"],
+    "trend_top":    ["STRONG", "EARLY", "PARTIAL"],
+    "dip_all":      ["DIP+", "DIP", "DIP_E", "DIP_W", "RECOVER"],
+    "dip_top":      ["DIP+", "DIP", "RECOVER"],
+    "sideways_all": ["SIDEWAYS_MR", "SIDEWAYS_SQ"],
+    "sideways_sq":  ["SIDEWAYS_SQ"],
 }

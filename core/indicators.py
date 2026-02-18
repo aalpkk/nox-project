@@ -56,6 +56,19 @@ def calc_atr_percentile(df, atr_period=ATR_LEN, window=100):
     ).fillna(0.5)
 
 
+def calc_bb_width_percentile(df, bb_len=BB_LEN, bb_mult=BB_MULT, window=100):
+    """Rolling BB width percentile (0-100 scale). Sideways module için."""
+    c = df['Close']
+    bb_mid = sma(c, bb_len)
+    bb_dev = c.rolling(bb_len).std() * bb_mult
+    bb_upper = bb_mid + bb_dev
+    bb_lower = bb_mid - bb_dev
+    bb_width = (bb_upper - bb_lower) / bb_mid.replace(0, np.nan) * 100
+    return bb_width.rolling(window, min_periods=max(window // 2, 1)).apply(
+        lambda x: pd.Series(x).rank(pct=True).iloc[-1] * 100, raw=False
+    ).fillna(50.0)
+
+
 # ── RSI ──
 
 def calc_rsi(series, period):
@@ -400,6 +413,71 @@ def calc_overextended(df, wt_data=None):
 
 
 # ═══════════════════════════════════════════
+# SIDEWAYS FLAG (Hysteresis-based XU100 detector)
+# ═══════════════════════════════════════════
+
+def calc_sideways_flag(xu_df, adx_thresh=15, bb_pctile_thresh=25,
+                       ema_atr_thresh=1.0, hyst_entry=3, hyst_exit=2):
+    """
+    Hysteresis-based sideways regime flag on XU100.
+    3 conditions: weekly ADX(14)<thresh, BB_width_pctile<thresh, |close-EMA20|/ATR<thresh
+    2-of-3 rule → raw_sideways
+    Hysteresis: entry=N consecutive TRUE days, exit=M consecutive FALSE days.
+    Returns pd.Series of bool (same index as xu_df).
+    """
+    if xu_df is None or len(xu_df) < 100:
+        return pd.Series(False, index=xu_df.index if xu_df is not None else pd.Index([]))
+
+    c = xu_df['Close']
+
+    # Condition 1: Weekly ADX(14) < threshold
+    wdf = resample_weekly(xu_df)
+    if len(wdf) >= 20:
+        w_adx = calc_adx(wdf, 14)
+        w_adx_daily = w_adx.reindex(xu_df.index, method='ffill').fillna(20)
+    else:
+        w_adx_daily = pd.Series(20.0, index=xu_df.index)
+    cond_adx = w_adx_daily < adx_thresh
+
+    # Condition 2: BB width percentile < threshold
+    bb_w_pctile = calc_bb_width_percentile(xu_df, BB_LEN, BB_MULT, 100)
+    cond_bb = bb_w_pctile < bb_pctile_thresh
+
+    # Condition 3: |close - EMA20| / ATR < threshold
+    ema20 = ema(c, 20)
+    atr_s = calc_atr(xu_df, 14)
+    dist_ema_atr = ((c - ema20).abs() / atr_s.replace(0, np.nan)).fillna(999)
+    cond_dist = dist_ema_atr < ema_atr_thresh
+
+    # 2-of-3 rule
+    raw_sideways = (cond_adx.astype(int) + cond_bb.astype(int) + cond_dist.astype(int)) >= 2
+
+    # Hysteresis: entry after N consecutive TRUE, exit after M consecutive FALSE
+    n = len(xu_df)
+    flag = np.zeros(n, dtype=bool)
+    consec_true = 0
+    consec_false = 0
+    active = False
+
+    for i in range(n):
+        if raw_sideways.iloc[i]:
+            consec_true += 1
+            consec_false = 0
+        else:
+            consec_false += 1
+            consec_true = 0
+
+        if not active and consec_true >= hyst_entry:
+            active = True
+        elif active and consec_false >= hyst_exit:
+            active = False
+
+        flag[i] = active
+
+    return pd.Series(flag, index=xu_df.index)
+
+
+# ═══════════════════════════════════════════
 # XU100 MARKET STATE (Risk-On / Sideways / Risk-Off)
 # ═══════════════════════════════════════════
 
@@ -408,10 +486,11 @@ def calc_xu100_market_state(xu_df, ema_len=50):
     XU100 bazında piyasa durumu tespit et.
     risk_on  = xu_above_ema50 AND slope>0 AND weekly_st_up
     risk_off = NOT xu_above_ema50 AND slope<0 AND NOT weekly_st_up
-    sideways = ne risk_on ne risk_off
+    sideways = hysteresis-based sideways flag (replaces simple gap-fill)
     """
     if xu_df is None or len(xu_df) < ema_len + 20:
-        return {'risk_on': True, 'sideways': False, 'risk_off': False, 'weekly_st_up': True}
+        return {'risk_on': True, 'sideways': False, 'risk_off': False,
+                'weekly_st_up': True, 'sideways_flag_series': None}
 
     c = xu_df['Close']
     xu_ema = ema(c, ema_len)
@@ -433,11 +512,33 @@ def calc_xu100_market_state(xu_df, ema_len=50):
 
     risk_on = xu_above_ema and slope_pos and weekly_st_up
     risk_off = (not xu_above_ema) and (slope < 0) and (not weekly_st_up)
-    sideways = not risk_on and not risk_off
+
+    # Hysteresis-based sideways flag (imports thresholds at call time)
+    from markets.bist.config import (
+        SIDEWAYS_ADX_THRESH, SIDEWAYS_BB_PCTILE_THRESH,
+        SIDEWAYS_EMA_ATR_THRESH, SIDEWAYS_HYST_ENTRY, SIDEWAYS_HYST_EXIT,
+    )
+    sideways_series = calc_sideways_flag(
+        xu_df,
+        adx_thresh=SIDEWAYS_ADX_THRESH,
+        bb_pctile_thresh=SIDEWAYS_BB_PCTILE_THRESH,
+        ema_atr_thresh=SIDEWAYS_EMA_ATR_THRESH,
+        hyst_entry=SIDEWAYS_HYST_ENTRY,
+        hyst_exit=SIDEWAYS_HYST_EXIT,
+    )
+    sideways = bool(sideways_series.iloc[-1]) if len(sideways_series) > 0 else False
+
+    # Sideways overrides: if risk_on or risk_off is clearly set, sideways is secondary
+    # But the plan says sideways flag replaces the old gap-fill, so we respect it
+    # If sideways is True, neither risk_on nor risk_off matters for signal routing
+    if sideways:
+        risk_on = False
+        risk_off = False
 
     return {
         'risk_on': risk_on,
         'sideways': sideways,
         'risk_off': risk_off,
         'weekly_st_up': weekly_st_up,
+        'sideways_flag_series': sideways_series,
     }

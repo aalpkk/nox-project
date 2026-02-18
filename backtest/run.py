@@ -27,8 +27,8 @@ from backtest.report import generate_backtest_html, save_trades_csv
 
 def parse_args():
     parser = argparse.ArgumentParser(description='NOX Backtest — BIST')
-    parser.add_argument('--mode', choices=['trend', 'dip', 'both'], default='trend',
-                        help='Test modu: trend, dip, veya both')
+    parser.add_argument('--mode', choices=['trend', 'dip', 'sideways', 'both'], default='trend',
+                        help='Test modu: trend, dip, sideways, veya both')
     parser.add_argument('--max-tickers', type=int, default=None,
                         help='Maks hisse sayısı (hızlı test için, ör: 50)')
     parser.add_argument('--period', default='10y',

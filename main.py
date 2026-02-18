@@ -19,7 +19,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
 from core.config import (
-    SIGNAL_EMOJI, SIGNAL_PRIORITY_TREND, SIGNAL_PRIORITY_DIP, REGIME_SHORT,
+    SIGNAL_EMOJI, SIGNAL_PRIORITY_TREND, SIGNAL_PRIORITY_DIP,
+    SIGNAL_PRIORITY_SIDEWAYS, REGIME_SHORT,
 )
 from core.indicators import calc_xu100_market_state
 
@@ -52,11 +53,15 @@ def determine_mode(forced_mode=None):
 
 
 def load_market_modules(market_name):
-    """Dinamik olarak market modüllerini yükle."""
+    """Dinamik olarak market modüllerini yükle. 4-tuple: data, regime, dip, sideways."""
     data_mod = importlib.import_module(f'markets.{market_name}.data')
     regime_mod = importlib.import_module(f'markets.{market_name}.regime')
     dip_mod = importlib.import_module(f'markets.{market_name}.dip')
-    return data_mod, regime_mod, dip_mod
+    try:
+        sideways_mod = importlib.import_module(f'markets.{market_name}.sideways')
+    except ImportError:
+        sideways_mod = None
+    return data_mod, regime_mod, dip_mod, sideways_mod
 
 
 def run_trend(all_data, xu_df, usd_df, regime_mod, debug_mode, single_ticker, market_state=None):
@@ -105,6 +110,32 @@ def run_dip(all_data, xu_df, usd_df, dip_mod, debug_mode, single_ticker):
     return results
 
 
+def run_sideways(all_data, xu_df, usd_df, sideways_mod, debug_mode, single_ticker, market_state=None):
+    print("🔄 Sideways analiz ediliyor...\n")
+    dbg = {
+        'total': 0, 'no_atr': 0, 'low_vol': 0, 'no_signal': 0,
+        'exception': 0, 'signal': 0, 'panic_block': 0,
+        'mr_checks': 0, 'mr_signal': 0, 'sq_checks': 0, 'sq_signal': 0,
+    }
+    results = []
+    for t, df in all_data.items():
+        r = sideways_mod.analyze_sideways(t, df, xu_df, dbg if debug_mode else None, usd_df=usd_df, market_state=market_state)
+        if r:
+            results.append(r)
+    if debug_mode:
+        print(f"\n{'='*60}\n🔍 DEBUG — Sideways\n{'='*60}")
+        print(f"  Analiz: {dbg['total']} | Sinyal: {dbg['signal']} | Exception: {dbg.get('exception', 0)}")
+        print(f"  MR checks: {dbg.get('mr_checks', 0)} signals: {dbg.get('mr_signal', 0)}")
+        print(f"  SQ checks: {dbg.get('sq_checks', 0)} signals: {dbg.get('sq_signal', 0)}")
+        if market_state:
+            print(f"  Market State: sideways={market_state.get('sideways')} weekly_st={market_state.get('weekly_st_up')}")
+        for k in ('panic_block', 'low_vol', 'no_atr', 'log_only'):
+            if dbg.get(k, 0) > 0:
+                print(f"  {k}: {dbg[k]}")
+    results.sort(key=lambda x: (SIGNAL_PRIORITY_SIDEWAYS.get(x['signal'], 99), -x['rr']))
+    return results
+
+
 def print_results(results, mode):
     print(f"\n{'='*140}")
     for r in results:
@@ -124,13 +155,19 @@ def print_results(results, mode):
 def save_outputs(results, mode, market_name, total):
     from core.reports import (
         generate_regime_html, generate_dip_html,
+        generate_sideways_html,
         format_regime_telegram, format_dip_telegram,
+        format_sideways_telegram,
         send_telegram, send_telegram_document,
         push_html_to_github,
     )
     date_str = datetime.datetime.now().strftime('%Y%m%d')
 
-    if mode == 'trend':
+    if mode == 'sideways':
+        html = generate_sideways_html(results, total, market_label=market_name.upper())
+        html_file = f"nox_{market_name}_sideways_{date_str}.html"
+        gh_filename = f"nox_{market_name}_sideways.html"
+    elif mode == 'trend':
         html = generate_regime_html(results, total, market_label=market_name.upper())
         html_file = f"nox_{market_name}_trend_{date_str}.html"
         gh_filename = f"nox_{market_name}_trend.html"
@@ -151,7 +188,9 @@ def save_outputs(results, mode, market_name, total):
         df_out.to_csv(csv_file, index=False)
         print(f"💾 {csv_file}")
 
-    if mode == 'trend':
+    if mode == 'sideways':
+        msg = format_sideways_telegram(results, total, html_url)
+    elif mode == 'trend':
         msg = format_regime_telegram(results, total, html_url)
     else:
         msg = format_dip_telegram(results, total, html_url)
@@ -179,7 +218,7 @@ def main():
         print(f"📅 Backtest modu: veri {cutoff_date} tarihine kadar kesilecek")
 
     # Market modüllerini yükle
-    data_mod, regime_mod, dip_mod = load_market_modules(market_name)
+    data_mod, regime_mod, dip_mod, sideways_mod = load_market_modules(market_name)
 
     # Ticker listesi
     if market_name == 'bist':
@@ -233,11 +272,17 @@ def main():
     if xu_df is not None and mode == 'trend':
         market_state = calc_xu100_market_state(xu_df)
         if debug_mode:
-            print(f"🌐 Market State: {market_state}")
+            ms_print = {k: v for k, v in market_state.items() if k != 'sideways_flag_series'}
+            print(f"🌐 Market State: {ms_print}")
 
-    # Analiz
+    # Analiz — sideways router
     if mode == 'trend':
-        results = run_trend(all_data, xu_df, usd_df, regime_mod, debug_mode, single_ticker, market_state=market_state)
+        if market_state and market_state.get('sideways') and sideways_mod:
+            # TREND disabled during sideways, enable sideways modules
+            results = run_sideways(all_data, xu_df, usd_df, sideways_mod, debug_mode, single_ticker, market_state=market_state)
+            mode = 'sideways'  # switch mode for output
+        else:
+            results = run_trend(all_data, xu_df, usd_df, regime_mod, debug_mode, single_ticker, market_state=market_state)
     else:
         results = run_dip(all_data, xu_df, usd_df, dip_mod, debug_mode, single_ticker)
 

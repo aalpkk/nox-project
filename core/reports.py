@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 from collections import Counter
 from core.config import (
-    SIGNAL_EMOJI, SIGNAL_COLORS, SIGNAL_PRIORITY_TREND as SIGNAL_PRIORITY_REGIME, SIGNAL_PRIORITY_DIP,
+    SIGNAL_EMOJI, SIGNAL_COLORS, SIGNAL_PRIORITY_TREND as SIGNAL_PRIORITY_REGIME,
+    SIGNAL_PRIORITY_DIP, SIGNAL_PRIORITY_SIDEWAYS,
     REGIME_COLORS, REGIME_SHORT,
 )
 
@@ -665,4 +666,167 @@ def format_dip_telegram(results, total, html_url=None):
 
     if html_url:
         lines.append(f"\n🔗 <a href=\"{html_url}\">NOX Rapor</a>")
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════
+# SIDEWAYS HTML
+# ═══════════════════════════════════════════
+
+def generate_sideways_html(results, total, market_label="BIST"):
+    now = datetime.datetime.now().strftime('%d.%m.%Y %H:%M')
+    rows_json = json.dumps(_sanitize(results), ensure_ascii=False)
+    sig_counts = Counter(r['signal'] for r in results)
+    priority = ["SIDEWAYS_SQ", "SIDEWAYS_MR"]
+
+    html = f"""<!DOCTYPE html>
+<html lang="tr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOX — Sideways · {market_label} · {now}</title>
+<style>{_NOX_CSS}
+.oe-detail {{ display: none; position: absolute; right: 0; top: 100%; z-index: 20;
+  background: var(--bg-elevated); border: 1px solid var(--border-dim); border-radius: var(--radius-sm);
+  padding: 6px 10px; font-size: 0.65rem; white-space: nowrap; color: var(--text-secondary);
+  font-family: var(--font-mono); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
+.oe-wrap {{ position: relative; display: inline-block; cursor: help; }}
+.oe-wrap:hover .oe-detail {{ display: block; }}
+.oe-bar {{ display: flex; gap: 2px; align-items: center; height: 10px; }}
+.oe-pip {{ width: 6px; height: 6px; border-radius: 50%; }}
+.oe-pip.on {{ background: var(--nox-red); box-shadow: 0 0 4px var(--nox-red); }}
+.oe-pip.off {{ background: var(--border-subtle); }}
+</style>
+</head><body>
+<div class="nox-container">
+<div class="nox-header">
+  <div class="nox-logo">NOX<span class="proj">project</span><span class="mode">sideways · {market_label}</span></div>
+  <div class="nox-meta"><b>{len(results)}</b> sinyal / {total} taranan<br>{now}</div>
+</div>
+<div class="nox-stats" id="chips"></div>
+<div class="nox-filters">
+  <div><label>Sinyal</label>
+  <select id="fSig" onchange="af()"><option value="">Tümü</option>
+  <option value="SIDEWAYS_SQ">Squeeze</option><option value="SIDEWAYS_MR">Mean Rev</option></select></div>
+  <div><label>RS</label>
+  <select id="fRS" onchange="af()"><option value="">Tümü</option>
+  <option value="pos">Pozitif</option></select></div>
+  <div><label>Q≥</label><input type="number" id="fQ" value="0" step="10" min="0" oninput="af()"></div>
+  <div><label>Hisse</label><input type="text" id="fS" placeholder="ARA" oninput="af()"></div>
+  <div><button class="nox-btn" onclick="reset()">Sıfırla</button></div>
+</div>
+<div class="nox-table-wrap">
+<table><thead><tr>
+<th onclick="sb('ticker')">Hisse</th><th onclick="sb('signal')">Sinyal</th>
+<th onclick="sb('module')">Modul</th><th onclick="sb('pos_size')">Pos</th>
+<th onclick="sb('close')">Fiyat</th><th onclick="sb('stop')">Stop</th>
+<th onclick="sb('tp')">TP</th><th onclick="sb('rr')">R:R</th>
+<th onclick="sb('rs_score')">RS</th><th onclick="sb('quality')">Q</th>
+<th onclick="sb('rvol')">RVOL</th><th onclick="sb('bb_w_pctile')">BB_W%</th>
+<th onclick="sb('atr_pctile')">ATR%</th>
+<th onclick="sb('overext_score')">OE</th>
+</tr></thead><tbody id="tb"></tbody></table>
+</div>
+<div class="nox-status" id="st"><b>{len(results)}</b> / {len(results)}</div>
+</div>
+<script>
+const TV_PFX='{market_label}:'==':'?'':'{market_label}:';
+const D={rows_json};
+const SC={json.dumps(SIGNAL_COLORS)};
+const SP={json.dumps(SIGNAL_PRIORITY_SIDEWAYS)};
+let col='signal',asc=true,chip=null;
+function init(){{const cn={{}};D.forEach(r=>cn[r.signal]=(cn[r.signal]||0)+1);
+const el=document.getElementById('chips');
+{json.dumps(priority)}.forEach(s=>{{if(!cn[s])return;
+const d=document.createElement('div');d.className='nox-stat';d.dataset.s=s;
+d.innerHTML='<span class="dot" style="background:'+(SC[s]||'#71717a')+'"></span>'+s+' <span class="cnt">'+cn[s]+'</span>';
+d.onclick=()=>{{if(chip===s){{chip=null;d.classList.remove('active')}}else{{
+document.querySelectorAll('.nox-stat').forEach(x=>x.classList.remove('active'));chip=s;d.classList.add('active')}};af()}};
+el.appendChild(d)}});af()}}
+function af(){{const sig=document.getElementById('fSig').value;
+const rs=document.getElementById('fRS').value;const q=parseInt(document.getElementById('fQ').value)||0;
+const sr=document.getElementById('fS').value.toUpperCase();
+let f=D.filter(r=>{{if(chip&&r.signal!==chip)return false;if(sig&&r.signal!==sig)return false;
+if(rs==='pos'&&r.rs_score<=0)return false;if(r.quality<q)return false;
+if(sr&&!r.ticker.includes(sr))return false;return true}});
+f.sort((a,b)=>{{let va=a[col],vb=b[col];if(col==='signal'){{va=SP[va]||99;vb=SP[vb]||99}};
+if(typeof va==='string')return asc?va.localeCompare(vb):vb.localeCompare(va);
+return asc?(va||0)-(vb||0):(vb||0)-(va||0)}});render(f)}}
+function sb(c){{if(col===c)asc=!asc;else{{col=c;asc=c==='ticker'}};af()}}
+function reset(){{chip=null;document.querySelectorAll('.nox-stat').forEach(x=>x.classList.remove('active'));
+document.getElementById('fSig').value='';document.getElementById('fRS').value='';
+document.getElementById('fQ').value='0';document.getElementById('fS').value='';af()}}
+function mkOE(score,tags){{
+if(!tags||!tags.length)return '<span style="color:var(--text-muted)">—</span>';
+let pips='';for(let i=0;i<5;i++)pips+='<span class="oe-pip '+(i<score?'on':'off')+'"></span>';
+const lbl=score>=3?'⚠'+score:score;
+return '<span class="oe-wrap"><span class="'+(score>=3?'oe-badge':'')+'" style="'+(score<3?'color:var(--nox-yellow);font-size:.68rem':'')+'">'+lbl+'</span><div class="oe-detail"><div class="oe-bar">'+pips+'</div><div style="margin-top:4px">'+tags.join('<br>')+'</div></div></span>'}}
+function render(data){{const tb=document.getElementById('tb');tb.innerHTML='';
+data.forEach(r=>{{const tr=document.createElement('tr');
+const rsC=r.rs_score>0?'rs-pos':'rs-neg';
+const rrC=r.rr>=1.5?'var(--nox-green)':r.rr>=1?'var(--nox-yellow)':'var(--nox-red)';
+const posC=r.pos_size>=0.8?'var(--nox-green)':'var(--text-muted)';
+const atrP=r.atr_pctile!=null?(r.atr_pctile*100).toFixed(0)+'%':'—';
+const bbW=r.bb_w_pctile!=null?r.bb_w_pctile.toFixed(0)+'%':'—';
+tr.innerHTML=`<td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=${{TV_PFX}}${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
+<td><span class="sig-badge" style="background:${{SC[r.signal]||'#71717a'}}">${{r.signal}}</span></td>
+<td style="color:var(--text-muted);font-size:.68rem">${{r.module||'—'}}</td>
+<td style="color:${{posC}}">${{r.pos_size!=null?r.pos_size:'—'}}</td>
+<td>${{r.close}}</td><td>${{r.stop}}</td><td>${{r.tp}} <span style="color:var(--text-muted);font-size:.65rem">${{r.tp_src}}</span></td>
+<td class="rr-val" style="color:${{rrC}}">${{r.rr}}</td>
+<td class="${{rsC}}">${{r.rs_score}}</td><td>${{r.quality}}</td>
+<td style="color:${{r.rvol>=1.5?'var(--nox-orange)':'var(--text-muted)'}}">${{r.rvol}}x</td>
+<td>${{bbW}}</td><td>${{atrP}}</td>
+<td>${{mkOE(r.overext_score||0,r.overext_tags||[])}}</td>`;tb.appendChild(tr)}});
+document.getElementById('st').innerHTML='<b>'+data.length+'</b> / '+D.length}}
+init();
+</script></body></html>"""
+    return html
+
+
+# ═══════════════════════════════════════════
+# SIDEWAYS TELEGRAM
+# ═══════════════════════════════════════════
+
+def format_sideways_telegram(results, total, html_url=None):
+    now = datetime.datetime.now().strftime('%d.%m.%Y %H:%M')
+    sig_counts = Counter(r['signal'] for r in results)
+
+    lines = [f"<b>⬡ NOX Sideways — {now}</b>", ""]
+    if not results:
+        lines.append("Sideways modda sinyal yok. 🔇")
+        lines.append(f"📋 Taranan: {total}")
+        return "\n".join(lines)
+
+    lines.append(f"📋 {total} taranan | {len(results)} sinyal")
+    dist = []
+    for sig in ["SIDEWAYS_SQ", "SIDEWAYS_MR"]:
+        cnt = sig_counts.get(sig, 0)
+        if cnt > 0:
+            dist.append(f"{SIGNAL_EMOJI.get(sig, '')}{sig}:{cnt}")
+    lines.append(" ".join(dist))
+    lines.append("")
+
+    # Squeeze breakouts
+    sq = [r for r in results if r['signal'] == "SIDEWAYS_SQ"]
+    if sq:
+        lines.append(f"<b>🔶 Squeeze Breakout ({len(sq)})</b>")
+        lines.append("─────────────────")
+        for r in sq[:20]:
+            oe = f" ⚠OE{r['overext_score']}" if r.get('overext_warning') else ""
+            lines.append(f"🔶<b>{r['ticker']}</b> {r['close']} [{r['signal']}] pos:{r['pos_size']}{oe}\n"
+                         f"  S:{r['stop']} TP:{r['tp']} R:R={r['rr']} RS:{r['rs_score']} Q:{r['quality']}")
+        lines.append("")
+
+    # Mean reversion
+    mr = [r for r in results if r['signal'] == "SIDEWAYS_MR"]
+    if mr:
+        lines.append(f"<b>🔷 Mean Reversion ({len(mr)})</b>")
+        lines.append("─────────────────")
+        for r in mr[:20]:
+            lines.append(f"🔷<b>{r['ticker']}</b> {r['close']} [{r['signal']}] pos:{r['pos_size']}\n"
+                         f"  S:{r['stop']} TP:{r['tp']} R:R={r['rr']} RS:{r['rs_score']} Q:{r['quality']}")
+        lines.append("")
+
+    if html_url:
+        lines.append(f"🔗 <a href=\"{html_url}\">NOX Rapor</a>")
+    lines.append(f"\n📋 Taranan: {total} | Toplam: {len(results)}")
     return "\n".join(lines)
