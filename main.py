@@ -46,8 +46,12 @@ def parse_args():
 
 
 def determine_mode(forced_mode=None):
-    if forced_mode in ('trend', 'regime', 'dip'):
-        return 'dip' if forced_mode == 'dip' else 'trend'
+    if forced_mode in ('trend', 'regime', 'dip', 'sideways'):
+        if forced_mode == 'dip':
+            return 'dip'
+        if forced_mode == 'sideways':
+            return 'sideways'
+        return 'trend'
     today = datetime.datetime.now().weekday()
     return 'dip' if today >= 5 else 'trend'
 
@@ -209,7 +213,12 @@ def main():
     cutoff_date = args['cutoff_date']
 
     market_label = market_name.upper()
-    mode_label = f"⬡ NOX TREND · {market_label}" if mode == 'trend' else f"⬡ NOX DIP · {market_label}"
+    if mode == 'sideways':
+        mode_label = f"⬡ NOX SIDEWAYS · {market_label}"
+    elif mode == 'dip':
+        mode_label = f"⬡ NOX DIP · {market_label}"
+    else:
+        mode_label = f"⬡ NOX TREND · {market_label}"
     print(f"{'='*60}")
     print(f"{mode_label}")
     print(f"{'='*60}")
@@ -269,14 +278,24 @@ def main():
 
     # Market state (1 kere hesapla, tüm ticker'lara geç)
     market_state = None
-    if xu_df is not None and mode == 'trend':
+    if xu_df is not None and mode in ('trend', 'sideways'):
         market_state = calc_xu100_market_state(xu_df)
         if debug_mode:
             ms_print = {k: v for k, v in market_state.items() if k != 'sideways_flag_series'}
             print(f"🌐 Market State: {ms_print}")
 
     # Analiz — sideways router
-    if mode == 'trend':
+    if mode == 'sideways':
+        # Forced sideways mode — override market_state
+        if not sideways_mod:
+            print("❌ Sideways modülü bulunamadı!")
+            return
+        if market_state is None:
+            market_state = calc_xu100_market_state(xu_df) if xu_df is not None else {}
+        market_state['sideways'] = True  # force sideways flag
+        print(f"⚠️ Sideways ZORLA aktif (market_state.sideways override)")
+        results = run_sideways(all_data, xu_df, usd_df, sideways_mod, debug_mode, single_ticker, market_state=market_state)
+    elif mode == 'trend':
         if market_state and market_state.get('sideways') and sideways_mod:
             # TREND disabled during sideways, enable sideways modules
             results = run_sideways(all_data, xu_df, usd_df, sideways_mod, debug_mode, single_ticker, market_state=market_state)
