@@ -314,6 +314,23 @@ def detect_qm(df, pivots, atr):
             if bar_close <= neckline:
                 continue
 
+            # --- Neckline invalidation ---
+            # Break sonrasi herhangi bir barda close < neckline ise QM iptal
+            neckline_lost = False
+            for cb in range(break_bar + 1, b):
+                if close[cb] < neckline:
+                    neckline_lost = True
+                    break
+            if neckline_lost:
+                continue
+
+            # --- Momentum kontrolu ---
+            # Son 4 barda fiyat 1.5+ ATR dustuyse bu retest degil, dusus trendi
+            if b >= 4:
+                price_drop = close[b - 4] - close[b]
+                if atr_at_break > 0 and price_drop > 1.5 * atr_at_break:
+                    continue
+
             # Quick vs Late
             bars_since_break = b - break_bar
             if bars_since_break <= SMC_CFG['qm_max_retest_bars']:
@@ -342,6 +359,14 @@ def detect_qm(df, pivots, atr):
                 sd_ratio = struct_dist / atr_at_break
                 quality += min(int(sd_ratio * 10), 20)
 
+            # --- Excursion filtresi ---
+            # Fiyat neckline'dan 3+ ATR uzaklasip geri geldiyse QM iptal
+            # (yeni yapi olusmus, neckline artik gecersiz)
+            max_high_since = max(high[break_bar:b + 1])
+            excursion_atr = (max_high_since - neckline) / atr_at_break if atr_at_break > 0 else 0
+            if excursion_atr > 3.0:
+                continue
+
             stop_price = ll_pivot.price - 0.5 * atr_at_break
             risk = bar_close - stop_price
             target_price = bar_close + 2.0 * risk
@@ -351,7 +376,7 @@ def detect_qm(df, pivots, atr):
                 direction='BUY',
                 pattern=pattern_type,
                 key_level=neckline,
-                quality=min(quality, 100),
+                quality=max(min(quality, 100), 0),
                 stop=round(stop_price, 4),
                 target=round(target_price, 4),
                 details={
@@ -406,6 +431,23 @@ def detect_qm(df, pivots, atr):
             if bar_close >= neckline:
                 continue
 
+            # --- Neckline invalidation ---
+            # Break sonrasi herhangi bir barda close > neckline ise QM iptal
+            neckline_lost = False
+            for cb in range(break_bar + 1, b):
+                if close[cb] > neckline:
+                    neckline_lost = True
+                    break
+            if neckline_lost:
+                continue
+
+            # --- Momentum kontrolu ---
+            # Son 4 barda fiyat 1.5+ ATR yukseldiyse bu retest degil, yukselis trendi
+            if b >= 4:
+                price_rise = close[b] - close[b - 4]
+                if atr_at_break > 0 and price_rise > 1.5 * atr_at_break:
+                    continue
+
             bars_since_break = b - break_bar
             if bars_since_break <= SMC_CFG['qm_max_retest_bars']:
                 pattern_type = 'QM_QUICK'
@@ -433,6 +475,13 @@ def detect_qm(df, pivots, atr):
                 sd_ratio = struct_dist / atr_at_break
                 quality += min(int(sd_ratio * 10), 20)
 
+            # --- Excursion filtresi ---
+            # Fiyat neckline'dan 3+ ATR uzaklasip geri geldiyse QM iptal
+            min_low_since = min(low[break_bar:b + 1])
+            excursion_atr = (neckline - min_low_since) / atr_at_break if atr_at_break > 0 else 0
+            if excursion_atr > 3.0:
+                continue
+
             stop_price = hh_pivot.price + 0.5 * atr_at_break
             risk = stop_price - bar_close
             target_price = bar_close - 2.0 * risk
@@ -442,7 +491,7 @@ def detect_qm(df, pivots, atr):
                 direction='SELL',
                 pattern=pattern_type,
                 key_level=neckline,
-                quality=min(quality, 100),
+                quality=max(min(quality, 100), 0),
                 stop=round(stop_price, 4),
                 target=round(target_price, 4),
                 details={

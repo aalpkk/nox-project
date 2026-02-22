@@ -1,0 +1,824 @@
+// ═══════════════════════════════════════════════════════════════════════
+// NOX SMC Pattern Screener v1.0 — TradingView Overlay
+// ═══════════════════════════════════════════════════════════════════════
+// QM, Fakeout V1/V2, Flag, 3-Drive, Compression, Can-Can, 2R/2S Fakeout
+// Python smc_patterns.py'nin 1:1 Pine Script replika'si.
+// ═══════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("NOX SMC Pattern Screener v1.0", overlay=true, max_labels_count=500, max_lines_count=200)
+
+// ── INPUTS ──────────────────────────────────────────────────────────────
+var G1 = "Ana Ayarlar"
+i_lb        = input.int(5, "Pivot Lookback", minval=2, maxval=10, group=G1)
+i_atr_len   = input.int(14, "ATR Uzunlugu", group=G1)
+i_scan      = input.int(5, "Sinyal Penceresi (bar)", minval=1, maxval=30, group=G1)
+i_min_q     = input.int(40, "Min Kalite", minval=0, maxval=100, group=G1)
+
+var G2 = "Pattern Filtre"
+i_qm        = input.bool(true, "QM (Quasimodo)", group=G2)
+i_fo        = input.bool(true, "Fakeout V1/V2", group=G2)
+i_flag      = input.bool(true, "Flag Breakout", group=G2)
+i_3d        = input.bool(true, "3-Drive", group=G2)
+i_cp        = input.bool(true, "Compression", group=G2)
+i_cc        = input.bool(true, "Can-Can", group=G2)
+i_2rs       = input.bool(true, "2R/2S Fakeout", group=G2)
+
+var G3 = "Gorseller"
+i_show_pv   = input.bool(true, "Pivot Etiketleri", group=G3)
+i_show_tbl  = input.bool(true, "Ozet Tablosu", group=G3)
+
+// ── INDICATORS ──────────────────────────────────────────────────────────
+atr_v  = ta.atr(i_atr_len)
+rsi_v  = ta.rsi(close, 14)
+v_sma  = ta.sma(volume, 20)
+nz_atr = nz(atr_v, 1.0)
+
+// Pre-compute ta.* (scope disina cikarilmis)
+low4   = ta.lowest(low, 4)
+high4  = ta.highest(high, 4)
+low20c = ta.lowest(close, 20)
+hi20c  = ta.highest(close, 20)
+
+// Degisken uzunluk icin yardimci fonksiyonlar
+f_hi(int len) =>
+    float mx = high[0]
+    for i = 1 to math.max(len - 1, 1)
+        if i < len
+            mx := math.max(mx, high[i])
+    mx
+
+f_lo(int len) =>
+    float mn = low[0]
+    for i = 1 to math.max(len - 1, 1)
+        if i < len
+            mn := math.min(mn, low[i])
+    mn
+
+f_vol_sma(int len, int offset) =>
+    float s = 0.0
+    int n = math.max(len, 1)
+    for i = offset to offset + n - 1
+        s += nz(volume[i])
+    s / n
+
+// ── PIVOT DETECTION & STRUCTURE ─────────────────────────────────────────
+// Parallel arrays: bar, price, type (1=high,-1=low), label
+var array<int>    pv_bar   = array.new<int>()
+var array<float>  pv_price = array.new<float>()
+var array<int>    pv_type  = array.new<int>()
+var array<string> pv_lbl   = array.new<string>()
+var float last_h_price = na
+var float last_l_price = na
+
+ph = ta.pivothigh(high, i_lb, i_lb)
+pl = ta.pivotlow(low, i_lb, i_lb)
+
+// Pivot high onayi
+if not na(ph)
+    int pb = bar_index - i_lb
+    string lb = "H"
+    if not na(last_h_price)
+        lb := ph > last_h_price ? "HH" : "LH"
+    last_h_price := ph
+    array.push(pv_bar, pb)
+    array.push(pv_price, ph)
+    array.push(pv_type, 1)
+    array.push(pv_lbl, lb)
+    if i_show_pv
+        lbl_col = lb == "HH" ? color.new(color.teal, 20) : color.new(color.orange, 20)
+        label.new(pb, ph, lb, style=label.style_label_down, color=lbl_col,
+             textcolor=color.white, size=size.tiny)
+
+// Pivot low onayi
+if not na(pl)
+    int pb = bar_index - i_lb
+    string lb = "L"
+    if not na(last_l_price)
+        lb := pl > last_l_price ? "HL" : "LL"
+    last_l_price := pl
+    array.push(pv_bar, pb)
+    array.push(pv_price, pl)
+    array.push(pv_type, -1)
+    array.push(pv_lbl, lb)
+    if i_show_pv
+        lbl_col = lb == "HL" ? color.new(color.teal, 20) : color.new(color.red, 20)
+        label.new(pb, pl, lb, style=label.style_label_up, color=lbl_col,
+             textcolor=color.white, size=size.tiny)
+
+// Array boyutunu sinirla
+if array.size(pv_bar) > 60
+    array.shift(pv_bar),  array.shift(pv_price)
+    array.shift(pv_type), array.shift(pv_lbl)
+
+int pv_sz = array.size(pv_bar)
+
+// ── MARKET BIAS ─────────────────────────────────────────────────────────
+f_bias() =>
+    string r = "neutral"
+    if pv_sz >= 2
+        string lh = na, string ll = na
+        for i = pv_sz - 1 to math.max(0, pv_sz - 20) by 1
+            if na(lh) and array.get(pv_type, i) == 1
+                lh := array.get(pv_lbl, i)
+            if na(ll) and array.get(pv_type, i) == -1
+                ll := array.get(pv_lbl, i)
+            if not na(lh) and not na(ll)
+                break
+        if lh == "HH" and ll == "HL"
+            r := "bullish"
+        else if lh == "LH" and ll == "LL"
+            r := "bearish"
+    r
+
+string bias = f_bias()
+
+// ── SCORING HELPERS ─────────────────────────────────────────────────────
+f_vol_sc(float v, float vs, int mx) =>
+    if vs <= 0
+        0
+    else
+        float rt = v / vs
+        rt >= 2.0 ? mx : rt >= 1.5 ? int(mx*0.75) : rt >= 1.2 ? int(mx*0.5) : rt >= 1.0 ? int(mx*0.25) : 0
+
+f_prox_sc(float d, float a, int mx) =>
+    if a <= 0
+        0
+    else
+        float rt = d / a
+        rt <= 0.2 ? mx : rt <= 0.5 ? int(mx*0.75) : rt <= 0.8 ? int(mx*0.5) : rt <= 1.5 ? int(mx*0.25) : 0
+
+f_bias_adj(int q, string dir) =>
+    int r = q
+    if bias == "bullish"
+        r := dir == "BUY" ? math.min(q + 15, 100) : math.max(q - 15, 0)
+    else if bias == "bearish"
+        r := dir == "SELL" ? math.min(q + 15, 100) : math.max(q - 15, 0)
+    r
+
+f_q_color(int q, bool is_buy) =>
+    if is_buy
+        q >= 80 ? #00C853 : q >= 60 ? #66BB6A : #A5D6A7
+    else
+        q >= 80 ? #FF1744 : q >= 60 ? #EF5350 : #EF9A9A
+
+// Pivot arama yardimcilari
+f_find_last(int typ, string lbl, int skip) =>
+    int cnt = 0, int result = -1
+    if pv_sz > 0
+        for i = pv_sz - 1 to 0 by 1
+            if array.get(pv_type, i) == typ
+                if na(lbl) or array.get(pv_lbl, i) == lbl
+                    if cnt == skip
+                        result := i
+                        break
+                    cnt += 1
+    result
+
+f_count_near(int typ, float price, float tol) =>
+    int cnt = 0
+    if pv_sz > 0
+        for i = 0 to pv_sz - 1
+            if array.get(pv_type, i) == typ
+                if math.abs(array.get(pv_price, i) - price) <= tol
+                    cnt += 1
+    cnt
+
+f_cluster_level(int typ) =>
+    float best_price = na, int best_cnt = 0, int best_last_bar = 0
+    if pv_sz > 0
+        float tol = nz_atr * 0.5
+        for i = pv_sz - 1 to math.max(0, pv_sz - 30) by 1
+            if array.get(pv_type, i) == typ
+                float p = array.get(pv_price, i)
+                int cnt = f_count_near(typ, p, tol)
+                if cnt >= 2 and cnt > best_cnt
+                    best_cnt := cnt
+                    best_price := p
+                    best_last_bar := array.get(pv_bar, i)
+    [best_price, best_cnt, best_last_bar]
+
+// ── SINYAL EMIT ─────────────────────────────────────────────────────────
+f_emit(string pat, string dir, int q, float kl, float sl, float tp) =>
+    int qa = f_bias_adj(q, dir)
+    if qa >= i_min_q and bar_index >= (last_bar_index - i_scan)
+        string txt = pat + " " + str.tostring(qa)
+        col = f_q_color(qa, dir == "BUY")
+        if dir == "BUY"
+            label.new(bar_index, low - nz_atr * 0.5, txt,
+                 style=label.style_label_up, color=col,
+                 textcolor=color.white, size=size.small)
+            // stop & target cizgileri
+            line.new(bar_index, sl, bar_index + 5, sl,
+                 color=color.new(color.red, 50), style=line.style_dotted, width=1)
+            line.new(bar_index, tp, bar_index + 5, tp,
+                 color=color.new(color.green, 50), style=line.style_dotted, width=1)
+        else
+            label.new(bar_index, high + nz_atr * 0.5, txt,
+                 style=label.style_label_down, color=col,
+                 textcolor=color.white, size=size.small)
+            line.new(bar_index, sl, bar_index + 5, sl,
+                 color=color.new(color.red, 50), style=line.style_dotted, width=1)
+            line.new(bar_index, tp, bar_index + 5, tp,
+                 color=color.new(color.green, 50), style=line.style_dotted, width=1)
+    qa
+
+// ═══════════════════════════════════════════════════════════════════════
+// PATTERN DETECTION
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── 1. QM (Quasimodo) ──────────────────────────────────────────────────
+if i_qm and pv_sz >= 6
+    // BULLISH QM: LH → LL → break above LH → retest LH
+    for i = pv_sz - 1 to math.max(0, pv_sz - 15) by 1
+        if array.get(pv_type, i) == 1 and array.get(pv_lbl, i) == "LH"
+            float neckline = array.get(pv_price, i)
+            int lh_bar = array.get(pv_bar, i)
+            // LL sonrasi var mi?
+            bool found_ll = false
+            float ll_price = na
+            if i < pv_sz - 1
+                for j = i + 1 to pv_sz - 1
+                    if array.get(pv_type, j) == -1 and array.get(pv_lbl, j) == "LL"
+                        found_ll := true
+                        ll_price := array.get(pv_price, j)
+                        break
+            if found_ll
+                // Neckline kirildi mi? (onceki barlarda close > neckline)
+                bool broken = false
+                int break_bar = na
+                for k = 1 to 30
+                    if bar_index - k < lh_bar
+                        break
+                    if close[k] > neckline and (na(break_bar) or bar_index - k < break_bar)
+                        broken := true
+                        break_bar := bar_index - k
+                        break
+                if broken and not na(break_bar)
+                    // Retest: su an neckline yakininda mi?
+                    float retest_dist = math.abs(low - neckline)
+                    bool retest = retest_dist <= 1.5 * nz_atr and close > neckline
+                    int bars_since = bar_index - break_bar
+                    string qm_type = bars_since <= 5 ? "QM_Q" : bars_since <= 25 ? "QM_L" : na
+                    if retest and not na(qm_type)
+                        int q = 0
+                        // CHoCH body (0-20)
+                        if not na(break_bar)
+                            float bb = math.abs(close[bar_index - break_bar] - open[bar_index - break_bar])
+                            q += math.min(int(bb / nz_atr * 15), 20)
+                        // Retest proximity (0-20)
+                        q += f_prox_sc(retest_dist, nz_atr, 20)
+                        // Volume (0-20)
+                        q += f_vol_sc(volume, v_sma, 20)
+                        // Structure clarity (0-20)
+                        if not na(ll_price)
+                            q += math.min(int(math.abs(neckline - ll_price) / nz_atr * 10), 20)
+                        float sl = nz(ll_price, low) - 0.5 * nz_atr
+                        float risk = close - sl
+                        float tp = close + 2.0 * risk
+                        f_emit(qm_type, "BUY", q, neckline, sl, tp)
+                    break  // ilk LH icin
+
+    // BEARISH QM: HL → HH → break below HL → retest HL
+    for i = pv_sz - 1 to math.max(0, pv_sz - 15) by 1
+        if array.get(pv_type, i) == -1 and array.get(pv_lbl, i) == "HL"
+            float neckline = array.get(pv_price, i)
+            int hl_bar = array.get(pv_bar, i)
+            bool found_hh = false
+            float hh_price = na
+            if i < pv_sz - 1
+                for j = i + 1 to pv_sz - 1
+                    if array.get(pv_type, j) == 1 and array.get(pv_lbl, j) == "HH"
+                        found_hh := true
+                        hh_price := array.get(pv_price, j)
+                        break
+            if found_hh
+                bool broken = false
+                int break_bar = na
+                for k = 1 to 30
+                    if bar_index - k < hl_bar
+                        break
+                    if close[k] < neckline
+                        broken := true
+                        break_bar := bar_index - k
+                        break
+                if broken and not na(break_bar)
+                    float retest_dist = math.abs(high - neckline)
+                    bool retest = retest_dist <= 1.5 * nz_atr and close < neckline
+                    int bars_since = bar_index - break_bar
+                    string qm_type = bars_since <= 5 ? "QM_Q" : bars_since <= 25 ? "QM_L" : na
+                    if retest and not na(qm_type)
+                        int q = 0
+                        if not na(break_bar)
+                            float bb = math.abs(close[bar_index - break_bar] - open[bar_index - break_bar])
+                            q += math.min(int(bb / nz_atr * 15), 20)
+                        q += f_prox_sc(retest_dist, nz_atr, 20)
+                        q += f_vol_sc(volume, v_sma, 20)
+                        if not na(hh_price)
+                            q += math.min(int(math.abs(hh_price - neckline) / nz_atr * 10), 20)
+                        float sl = nz(hh_price, high) + 0.5 * nz_atr
+                        float risk = sl - close
+                        float tp = close - 2.0 * risk
+                        f_emit(qm_type, "SELL", q, neckline, sl, tp)
+                    break
+
+// ── 2. FAKEOUT V1 ──────────────────────────────────────────────────────
+if i_fo and pv_sz >= 3
+    // BULLISH: sweep below swing low → recovery
+    for i = pv_sz - 1 to math.max(0, pv_sz - 10) by 1
+        if array.get(pv_type, i) == -1
+            float level = array.get(pv_price, i)
+            int pbar = array.get(pv_bar, i)
+            if bar_index - pbar > 50
+                continue
+            // Son 3 barda sweep var mi?
+            bool swept = false
+            float sweep_low = na
+            int sweep_k = na
+            for k = 0 to 3
+                if low[k] < level and math.abs(low[k] - level) <= 2.0 * nz_atr
+                    swept := true
+                    sweep_low := low[k]
+                    sweep_k := k
+                    break
+            // Recovery: close > level
+            if swept and close > level and not na(sweep_low)
+                float depth = level - sweep_low
+                float lw = math.min(close[nz(sweep_k,0)], open[nz(sweep_k,0)]) - low[nz(sweep_k,0)]
+                int q = 0
+                // Wick (0-20)
+                q += math.min(int(lw / nz_atr * 20), 20)
+                // Volume (0-20)
+                q += f_vol_sc(volume, v_sma, 20)
+                // Recovery body (0-20)
+                float rec_body = close - open
+                if rec_body > 0
+                    q += math.min(int(rec_body / nz_atr * 20), 20)
+                // Depth shallowness (0-20)
+                float dr = depth / nz_atr
+                q += dr <= 0.3 ? 20 : dr <= 0.5 ? 15 : dr <= 1.0 ? 8 : 0
+                float sl = sweep_low - 0.3 * nz_atr
+                float risk = close - sl
+                float tp = close + 2.0 * risk
+                f_emit("FO1", "BUY", q, level, sl, tp)
+                break
+
+    // BEARISH: sweep above swing high → recovery
+    for i = pv_sz - 1 to math.max(0, pv_sz - 10) by 1
+        if array.get(pv_type, i) == 1
+            float level = array.get(pv_price, i)
+            int pbar = array.get(pv_bar, i)
+            if bar_index - pbar > 50
+                continue
+            bool swept = false
+            float sweep_hi = na
+            int sweep_k = na
+            for k = 0 to 3
+                if high[k] > level and math.abs(high[k] - level) <= 2.0 * nz_atr
+                    swept := true
+                    sweep_hi := high[k]
+                    sweep_k := k
+                    break
+            if swept and close < level and not na(sweep_hi)
+                float depth = sweep_hi - level
+                float uw = high[nz(sweep_k,0)] - math.max(close[nz(sweep_k,0)], open[nz(sweep_k,0)])
+                int q = 0
+                q += math.min(int(uw / nz_atr * 20), 20)
+                q += f_vol_sc(volume, v_sma, 20)
+                float rec_body = open - close
+                if rec_body > 0
+                    q += math.min(int(rec_body / nz_atr * 20), 20)
+                float dr = depth / nz_atr
+                q += dr <= 0.3 ? 20 : dr <= 0.5 ? 15 : dr <= 1.0 ? 8 : 0
+                float sl = sweep_hi + 0.3 * nz_atr
+                float risk = sl - close
+                float tp = close - 2.0 * risk
+                f_emit("FO1", "SELL", q, level, sl, tp)
+                break
+
+// ── 3. FAKEOUT V2 (V1 + CHoCH) ─────────────────────────────────────────
+// V1 kosullari + onceki LH/HL kirilmasi
+if i_fo and pv_sz >= 5
+    // BULLISH FO2: sweep below + close recovers + LH kirilmis
+    for i = pv_sz - 1 to math.max(0, pv_sz - 10) by 1
+        if array.get(pv_type, i) == -1
+            float level = array.get(pv_price, i)
+            if bar_index - array.get(pv_bar, i) > 50
+                continue
+            bool swept = false
+            for k = 0 to 3
+                if low[k] < level and math.abs(low[k] - level) <= 2.0 * nz_atr
+                    swept := true
+                    break
+            if swept and close > level
+                // CHoCH: onceki LH'yi kirdi mi?
+                int lh_idx = f_find_last(1, "LH", 0)
+                bool choch = false
+                if lh_idx >= 0
+                    float lh_p = array.get(pv_price, lh_idx)
+                    for k = 0 to 5
+                        if close[k] > lh_p
+                            choch := true
+                            break
+                if choch
+                    float lw = math.min(close, open) - low
+                    int q = 0
+                    q += math.min(int(lw / nz_atr * 20), 20)
+                    q += f_vol_sc(volume, v_sma, 20)
+                    q += close > open ? math.min(int((close - open) / nz_atr * 20), 20) : 0
+                    q += 15  // CHoCH bonus
+                    float sl = low4 - 0.3 * nz_atr
+                    float risk = close - sl
+                    float tp = close + 2.0 * risk
+                    f_emit("FO2", "BUY", q, level, sl, tp)
+                    break
+
+    // BEARISH FO2
+    for i = pv_sz - 1 to math.max(0, pv_sz - 10) by 1
+        if array.get(pv_type, i) == 1
+            float level = array.get(pv_price, i)
+            if bar_index - array.get(pv_bar, i) > 50
+                continue
+            bool swept = false
+            for k = 0 to 3
+                if high[k] > level and math.abs(high[k] - level) <= 2.0 * nz_atr
+                    swept := true
+                    break
+            if swept and close < level
+                int hl_idx = f_find_last(-1, "HL", 0)
+                bool choch = false
+                if hl_idx >= 0
+                    float hl_p = array.get(pv_price, hl_idx)
+                    for k = 0 to 5
+                        if close[k] < hl_p
+                            choch := true
+                            break
+                if choch
+                    float uw = high - math.max(close, open)
+                    int q = 0
+                    q += math.min(int(uw / nz_atr * 20), 20)
+                    q += f_vol_sc(volume, v_sma, 20)
+                    q += open > close ? math.min(int((open - close) / nz_atr * 20), 20) : 0
+                    q += 15
+                    float sl = high4 + 0.3 * nz_atr
+                    float risk = sl - close
+                    float tp = close - 2.0 * risk
+                    f_emit("FO2", "SELL", q, level, sl, tp)
+                    break
+
+// ── 4. FLAG BREAKOUT ────────────────────────────────────────────────────
+if i_flag and pv_sz >= 4
+    // BULLISH FLAG: impulse yukari → konsolidasyon → breakout
+    int hh_idx = f_find_last(1, "HH", 0)
+    if hh_idx >= 0
+        float imp_end = array.get(pv_price, hh_idx)
+        int imp_end_bar = array.get(pv_bar, hh_idx)
+        // Onceki low = impulse baslangici
+        int lo_idx = -1
+        if hh_idx >= 1
+            for j = hh_idx - 1 to 0 by 1
+                if array.get(pv_type, j) == -1
+                    lo_idx := j
+                    break
+        if lo_idx >= 0
+            float imp_start = array.get(pv_price, lo_idx)
+            float imp_size = imp_end - imp_start
+            if imp_size >= 2.0 * nz_atr
+                // Konsolidasyon (HH'dan sonraki barlar)
+                int consol_len = bar_index - imp_end_bar
+                if consol_len >= 3 and consol_len <= 20
+                    float flag_hi = f_hi(consol_len)
+                    float flag_lo = f_lo(consol_len)
+                    float ret_pct = imp_size > 0 ? (imp_end - flag_lo) / imp_size : 999.0
+                    if ret_pct >= 0.20 and ret_pct <= 0.55
+                        // Breakout
+                        float body = close - open
+                        if close > flag_hi and body > 0.5 * nz_atr
+                            int q = 0
+                            float imp_atr = imp_size / nz_atr
+                            q += imp_atr > 1.5 ? math.min(int((imp_atr - 1.5) * 13), 20) : 0
+                            float fibo_d = math.abs(ret_pct - 0.382)
+                            q += fibo_d <= 0.05 ? 20 : fibo_d <= 0.10 ? 15 : fibo_d <= 0.17 ? 8 : 0
+                            q += f_vol_sc(volume, v_sma, 20)
+                            q += consol_len >= 4 and consol_len <= 7 ? 20 : consol_len <= 10 ? 15 : 8
+                            float sl = flag_lo - 0.3 * nz_atr
+                            float risk = close - sl
+                            float tp = close + 2.0 * risk
+                            f_emit("FLG", "BUY", q, flag_hi, sl, tp)
+
+    // BEARISH FLAG
+    int ll_idx = f_find_last(-1, "LL", 0)
+    if ll_idx >= 0
+        float imp_end = array.get(pv_price, ll_idx)
+        int imp_end_bar = array.get(pv_bar, ll_idx)
+        int hi_idx = -1
+        if ll_idx >= 1
+            for j = ll_idx - 1 to 0 by 1
+                if array.get(pv_type, j) == 1
+                    hi_idx := j
+                    break
+        if hi_idx >= 0
+            float imp_start = array.get(pv_price, hi_idx)
+            float imp_size = imp_start - imp_end
+            if imp_size >= 2.0 * nz_atr
+                int consol_len = bar_index - imp_end_bar
+                if consol_len >= 3 and consol_len <= 20
+                    float flag_hi = f_hi(consol_len)
+                    float flag_lo = f_lo(consol_len)
+                    float ret_pct = imp_size > 0 ? (flag_hi - imp_end) / imp_size : 999.0
+                    if ret_pct >= 0.20 and ret_pct <= 0.55
+                        float body = open - close
+                        if close < flag_lo and body > 0.5 * nz_atr
+                            int q = 0
+                            float imp_atr = imp_size / nz_atr
+                            q += imp_atr > 1.5 ? math.min(int((imp_atr - 1.5) * 13), 20) : 0
+                            float fibo_d = math.abs(ret_pct - 0.382)
+                            q += fibo_d <= 0.05 ? 20 : fibo_d <= 0.10 ? 15 : fibo_d <= 0.17 ? 8 : 0
+                            q += f_vol_sc(volume, v_sma, 20)
+                            q += consol_len >= 4 and consol_len <= 7 ? 20 : consol_len <= 10 ? 15 : 8
+                            float sl = flag_hi + 0.3 * nz_atr
+                            float risk = sl - close
+                            float tp = close - 2.0 * risk
+                            f_emit("FLG", "SELL", q, flag_lo, sl, tp)
+
+// ── 5. 3-DRIVE ─────────────────────────────────────────────────────────
+if i_3d and pv_sz >= 8
+    // BEARISH: 3 ardisik HH, azalan drive
+    int hh3_i = f_find_last(1, "HH", 0)
+    int hh2_i = f_find_last(1, "HH", 1)
+    int hh1_i = f_find_last(1, "HH", 2)
+    if hh1_i >= 0 and hh2_i >= 0 and hh3_i >= 0
+        float hh1 = array.get(pv_price, hh1_i)
+        float hh2 = array.get(pv_price, hh2_i)
+        float hh3 = array.get(pv_price, hh3_i)
+        // HH3 onay bari = bar_index yakininda olmali
+        int hh3_bar = array.get(pv_bar, hh3_i)
+        if bar_index - hh3_bar <= i_scan + i_lb
+            // Onceki low'lari bul
+            int lo_b1 = -1, int lo_a1 = -1, int lo_a2 = -1
+            if hh1_i >= 1
+                for j = hh1_i - 1 to 0 by 1
+                    if array.get(pv_type, j) == -1
+                        lo_b1 := j
+                        break
+            if hh1_i + 1 < hh2_i
+                for j = hh1_i + 1 to hh2_i - 1
+                    if array.get(pv_type, j) == -1
+                        lo_a1 := j
+                        break
+            if hh2_i + 1 < hh3_i
+                for j = hh2_i + 1 to hh3_i - 1
+                    if array.get(pv_type, j) == -1
+                        lo_a2 := j
+                        break
+            if lo_b1 >= 0 and lo_a1 >= 0 and lo_a2 >= 0
+                float d1 = hh1 - array.get(pv_price, lo_b1)
+                float d2 = hh2 - array.get(pv_price, lo_a1)
+                float d3 = hh3 - array.get(pv_price, lo_a2)
+                if d1 > 0 and d2 > 0 and d3 > 0 and d2 < d1 and d3 < d2
+                    float ratio = d3 / d1
+                    int q = 0
+                    q += ratio < 0.3 ? 20 : ratio < 0.5 ? 15 : 8
+                    // RSI divergence
+                    float rsi_at_1 = rsi_v[bar_index - array.get(pv_bar, hh1_i)]
+                    float rsi_at_3 = rsi_v[bar_index - hh3_bar]
+                    if not na(rsi_at_1) and not na(rsi_at_3) and rsi_at_3 < rsi_at_1
+                        float rd = rsi_at_1 - rsi_at_3
+                        q += rd > 15 ? 25 : rd > 10 ? 18 : rd > 5 ? 12 : 5
+                    q += 10  // wick + volume basitlesmis
+                    float sl = hh3 + 0.5 * nz_atr
+                    float risk = sl - close
+                    float tp = close - 2.0 * risk
+                    f_emit("3DR", "SELL", q, hh3, sl, tp)
+
+    // BULLISH: 3 ardisik LL, azalan drive
+    int ll3_i = f_find_last(-1, "LL", 0)
+    int ll2_i = f_find_last(-1, "LL", 1)
+    int ll1_i = f_find_last(-1, "LL", 2)
+    if ll1_i >= 0 and ll2_i >= 0 and ll3_i >= 0
+        float ll1 = array.get(pv_price, ll1_i)
+        float ll2 = array.get(pv_price, ll2_i)
+        float ll3 = array.get(pv_price, ll3_i)
+        int ll3_bar = array.get(pv_bar, ll3_i)
+        if bar_index - ll3_bar <= i_scan + i_lb
+            int hi_b1 = -1, int hi_a1 = -1, int hi_a2 = -1
+            if ll1_i >= 1
+                for j = ll1_i - 1 to 0 by 1
+                    if array.get(pv_type, j) == 1
+                        hi_b1 := j
+                        break
+            if ll1_i + 1 < ll2_i
+                for j = ll1_i + 1 to ll2_i - 1
+                    if array.get(pv_type, j) == 1
+                        hi_a1 := j
+                        break
+            if ll2_i + 1 < ll3_i
+                for j = ll2_i + 1 to ll3_i - 1
+                    if array.get(pv_type, j) == 1
+                        hi_a2 := j
+                        break
+            if hi_b1 >= 0 and hi_a1 >= 0 and hi_a2 >= 0
+                float d1 = array.get(pv_price, hi_b1) - ll1
+                float d2 = array.get(pv_price, hi_a1) - ll2
+                float d3 = array.get(pv_price, hi_a2) - ll3
+                if d1 > 0 and d2 > 0 and d3 > 0 and d2 < d1 and d3 < d2
+                    float ratio = d3 / d1
+                    int q = 0
+                    q += ratio < 0.3 ? 20 : ratio < 0.5 ? 15 : 8
+                    float rsi_at_1 = rsi_v[bar_index - array.get(pv_bar, ll1_i)]
+                    float rsi_at_3 = rsi_v[bar_index - ll3_bar]
+                    if not na(rsi_at_1) and not na(rsi_at_3) and rsi_at_3 > rsi_at_1
+                        float rd = rsi_at_3 - rsi_at_1
+                        q += rd > 15 ? 25 : rd > 10 ? 18 : rd > 5 ? 12 : 5
+                    q += 10
+                    float sl = ll3 - 0.5 * nz_atr
+                    float risk = close - sl
+                    float tp = close + 2.0 * risk
+                    f_emit("3DR", "BUY", q, ll3, sl, tp)
+
+// ── 6. COMPRESSION ──────────────────────────────────────────────────────
+if i_cp and bar_index > 20
+    // High'lar azalan, low'lar artan → range daraliyor → breakout
+    // Son 5-19 barlik pencerede compression ara
+    int best_len = 0
+    for try_len = 5 to 19
+        if bar_index < try_len + 5
+            continue
+        // Slope: high azaliyor mu?
+        float h_first = high[try_len]
+        float h_last  = high[1]
+        float l_first = low[try_len]
+        float l_last  = low[1]
+        bool h_down = h_last < h_first
+        bool l_up   = l_last > l_first
+        float r_first = h_first - l_first
+        float r_last  = h_last - l_last
+        if h_down and l_up and r_first > 0 and r_last < r_first * 0.7
+            if try_len > best_len
+                best_len := try_len
+
+    if best_len >= 5
+        float comp_hi = f_hi(best_len)
+        float comp_lo = f_lo(best_len)
+        float body = close - open
+        float comp_range = comp_hi - comp_lo
+
+        // Bullish breakout
+        if close > comp_hi and math.abs(body) > 0.6 * nz_atr
+            int q = 0
+            q += best_len >= 12 ? 20 : best_len >= 10 ? 15 : best_len >= 7 ? 10 : 5
+            float r_first = high[best_len] - low[best_len]
+            float r_last  = high[1] - low[1]
+            float nr = r_first > 0 ? r_last / r_first : 1.0
+            q += nr < 0.3 ? 20 : nr < 0.5 ? 15 : nr < 0.7 ? 8 : 0
+            q += math.min(int(math.abs(body) / nz_atr * 15), 20)
+            // Volume kontrast
+            float avg_vol = f_vol_sma(best_len, 1)
+            q += nz(avg_vol) > 0 ? f_vol_sc(volume, avg_vol, 20) : 0
+            float sl = comp_lo - 0.3 * nz_atr
+            float tp = close + comp_range
+            f_emit("CMP", "BUY", q, comp_hi, sl, tp)
+
+        // Bearish breakout
+        else if close < comp_lo and math.abs(body) > 0.6 * nz_atr
+            int q = 0
+            q += best_len >= 12 ? 20 : best_len >= 10 ? 15 : best_len >= 7 ? 10 : 5
+            float r_first = high[best_len] - low[best_len]
+            float r_last  = high[1] - low[1]
+            float nr = r_first > 0 ? r_last / r_first : 1.0
+            q += nr < 0.3 ? 20 : nr < 0.5 ? 15 : nr < 0.7 ? 8 : 0
+            q += math.min(int(math.abs(body) / nz_atr * 15), 20)
+            float avg_vol = f_vol_sma(best_len, 1)
+            q += nz(avg_vol) > 0 ? f_vol_sc(volume, avg_vol, 20) : 0
+            float sl = comp_hi + 0.3 * nz_atr
+            float tp = close - comp_range
+            f_emit("CMP", "SELL", q, comp_lo, sl, tp)
+
+// ── 7. CAN-CAN (S/R Flip) ──────────────────────────────────────────────
+if i_cc and pv_sz >= 4
+    // BEARISH: destek kirilmasi → retest → rejection
+    [sup_level, sup_cnt, sup_bar] = f_cluster_level(-1)
+    if not na(sup_level) and sup_cnt >= 2
+        // Kirilma var mi? (onceki barlarda close < level - tol)
+        bool broken = false
+        for k = 1 to 20
+            if close[k] < sup_level - 0.3 * nz_atr
+                broken := true
+                break
+        // Retest: su an seviyeye yakin + rejection
+        if broken and math.abs(high - sup_level) <= 0.5 * nz_atr and close < sup_level
+            float wick = high - math.max(close, open)
+            int q = 0
+            q += sup_cnt >= 4 ? 20 : sup_cnt >= 3 ? 15 : 8
+            q += f_prox_sc(math.abs(high - sup_level), nz_atr, 20)
+            // Break depth
+            float min_close = low20c
+            float bd = sup_level - min_close
+            q += nz_atr > 0 ? math.min(int(bd / nz_atr * 12), 20) : 0
+            float bar_body = math.abs(close - open)
+            q += bar_body > 0 and wick > bar_body ? math.min(int(wick / bar_body * 8), 15) : 0
+            float sl = sup_level + 0.5 * nz_atr
+            float risk = sl - close
+            float tp = close - 2.0 * risk
+            f_emit("CC", "SELL", q, sup_level, sl, tp)
+
+    // BULLISH: direnc kirilmasi → retest → BUY
+    [res_level, res_cnt, res_bar] = f_cluster_level(1)
+    if not na(res_level) and res_cnt >= 2
+        bool broken = false
+        for k = 1 to 20
+            if close[k] > res_level + 0.3 * nz_atr
+                broken := true
+                break
+        if broken and math.abs(low - res_level) <= 0.5 * nz_atr and close > res_level
+            float wick = math.min(close, open) - low
+            int q = 0
+            q += res_cnt >= 4 ? 20 : res_cnt >= 3 ? 15 : 8
+            q += f_prox_sc(math.abs(low - res_level), nz_atr, 20)
+            float max_close = hi20c
+            float bd = max_close - res_level
+            q += nz_atr > 0 ? math.min(int(bd / nz_atr * 12), 20) : 0
+            float bar_body = math.abs(close - open)
+            q += bar_body > 0 and wick > bar_body ? math.min(int(wick / bar_body * 8), 15) : 0
+            float sl = res_level - 0.5 * nz_atr
+            float risk = close - sl
+            float tp = close + 2.0 * risk
+            f_emit("CC", "BUY", q, res_level, sl, tp)
+
+// ── 8. 2R/2S FAKEOUT ───────────────────────────────────────────────────
+if i_2rs and pv_sz >= 4
+    // 2R BEARISH: double resistance sweep → geri donus
+    [r_level, r_cnt, r_bar] = f_cluster_level(1)
+    if not na(r_level) and r_cnt >= 2
+        // Son 3 barda sweep var mi?
+        bool swept = false
+        float sw_hi = na
+        for k = 0 to 3
+            if high[k] > r_level and high[k] - r_level <= 2.0 * nz_atr
+                swept := true
+                sw_hi := high[k]
+                break
+        if swept and close < r_level and not na(sw_hi)
+            float depth = sw_hi - r_level
+            int q = 0
+            q += r_cnt >= 4 ? 20 : r_cnt >= 3 ? 15 : 8
+            float dr = depth / nz_atr
+            q += dr <= 0.3 ? 20 : dr <= 0.5 ? 15 : dr <= 1.0 ? 10 : 0
+            float uw = high - math.max(close, open)
+            float bb = math.abs(close - open)
+            q += bb > 0 and uw > bb ? math.min(int(uw / bb * 10), 20) : 0
+            q += f_vol_sc(volume, v_sma, 15)
+            float sl = sw_hi + 0.3 * nz_atr
+            float risk = sl - close
+            float tp = close - 2.0 * risk
+            f_emit("2R", "SELL", q, r_level, sl, tp)
+
+    // 2S BULLISH: double support sweep → geri donus
+    [s_level, s_cnt, s_bar] = f_cluster_level(-1)
+    if not na(s_level) and s_cnt >= 2
+        bool swept = false
+        float sw_lo = na
+        for k = 0 to 3
+            if low[k] < s_level and s_level - low[k] <= 2.0 * nz_atr
+                swept := true
+                sw_lo := low[k]
+                break
+        if swept and close > s_level and not na(sw_lo)
+            float depth = s_level - sw_lo
+            int q = 0
+            q += s_cnt >= 4 ? 20 : s_cnt >= 3 ? 15 : 8
+            float dr = depth / nz_atr
+            q += dr <= 0.3 ? 20 : dr <= 0.5 ? 15 : dr <= 1.0 ? 10 : 0
+            float lw = math.min(close, open) - low
+            float bb = math.abs(close - open)
+            q += bb > 0 and lw > bb ? math.min(int(lw / bb * 10), 20) : 0
+            q += f_vol_sc(volume, v_sma, 15)
+            float sl = sw_lo - 0.3 * nz_atr
+            float risk = close - sl
+            float tp = close + 2.0 * risk
+            f_emit("2S", "BUY", q, s_level, sl, tp)
+
+// ═══════════════════════════════════════════════════════════════════════
+// OZET TABLOSU
+// ═══════════════════════════════════════════════════════════════════════
+if i_show_tbl and barstate.islast
+    var table tbl = table.new(position.top_right, 2, 4,
+         bgcolor=color.new(#1a1a2e, 10), border_color=color.new(#333333, 0),
+         border_width=1, frame_color=color.new(#00bcd4, 0), frame_width=2)
+    table.cell(tbl, 0, 0, "NOX SMC v1.0",
+         text_color=#00bcd4, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, syminfo.ticker,
+         text_color=color.white, text_size=size.small, text_halign=text.align_right)
+    string bias_txt = bias == "bullish" ? "YUKARI" : bias == "bearish" ? "ASAGI" : "NOTR"
+    color bias_col = bias == "bullish" ? color.green : bias == "bearish" ? color.red : color.gray
+    table.cell(tbl, 0, 1, "Bias",
+         text_color=color.gray, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, bias_txt,
+         text_color=bias_col, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(tbl, 0, 2, "ATR",
+         text_color=color.gray, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, str.tostring(nz_atr, "#.##"),
+         text_color=color.white, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(tbl, 0, 3, "Pivotlar",
+         text_color=color.gray, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, str.tostring(pv_sz),
+         text_color=color.white, text_size=size.tiny, text_halign=text.align_right)
