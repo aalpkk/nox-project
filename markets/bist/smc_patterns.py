@@ -35,7 +35,7 @@ SMC_CFG = {
     'compression_min_bars': 5,
     'drive_min_bars': 3,
     'cancan_tolerance_atr': 0.3,
-    'scan_bars': 15,
+    'scan_bars': 5,
 }
 
 
@@ -211,6 +211,38 @@ def _get_pivots_of_type(pivots, ptype):
     return [p for p in pivots if p.ptype == ptype]
 
 
+def _vol_score(vol_val, vol_sma_val, max_pts=20):
+    """Gradient volume score: higher ratio = more points."""
+    if vol_sma_val <= 0:
+        return 0
+    ratio = vol_val / vol_sma_val
+    if ratio >= 2.0:
+        return max_pts
+    if ratio >= 1.5:
+        return int(max_pts * 0.75)
+    if ratio >= 1.2:
+        return int(max_pts * 0.5)
+    if ratio >= 1.0:
+        return int(max_pts * 0.25)
+    return 0
+
+
+def _proximity_score(distance, atr_val, max_pts=20):
+    """Gradient proximity score: closer = more points."""
+    if atr_val <= 0:
+        return 0
+    ratio = distance / atr_val
+    if ratio <= 0.2:
+        return max_pts
+    if ratio <= 0.5:
+        return int(max_pts * 0.75)
+    if ratio <= 0.8:
+        return int(max_pts * 0.5)
+    if ratio <= 1.5:
+        return int(max_pts * 0.25)
+    return 0
+
+
 # =============================================================================
 # 3. QM (Quasimodo) — Quick + Late Retest
 # =============================================================================
@@ -291,23 +323,24 @@ def detect_qm(df, pivots, atr):
             else:
                 continue
 
-            # Kalite skoru
+            # Kalite skoru (gradyan — max ~80)
             quality = 0
-            # CHoCH temizligi
+            # CHoCH temizligi (0-20)
             if break_by_body:
-                quality += 25
-            # Retest hassasiyeti
-            if retest_distance <= 0.3 * atr_at_break:
-                quality += 25
-            elif retest_distance <= 0.7 * atr_at_break:
-                quality += 15
-            # Hacim
-            if break_bar < len(vol_sma20) and vol_sma20[break_bar] > 0:
-                if vol[break_bar] > vol_sma20[break_bar]:
-                    quality += 25
-            # Yapi netligi
-            if ll_pivot.price < lh_pivot.price - atr_at_break:
-                quality += 25
+                break_body_size = abs(close[break_bar] - df['open'].iloc[break_bar])
+                quality += min(int(break_body_size / atr_at_break * 15), 20) if atr_at_break > 0 else 12
+            else:
+                quality += 5
+            # Retest hassasiyeti (0-20)
+            quality += _proximity_score(retest_distance, atr_at_break, 20)
+            # Hacim (0-20)
+            if break_bar < len(vol_sma20):
+                quality += _vol_score(vol[break_bar], vol_sma20[break_bar], 20)
+            # Yapi netligi (0-20)
+            struct_dist = abs(lh_pivot.price - ll_pivot.price)
+            if atr_at_break > 0:
+                sd_ratio = struct_dist / atr_at_break
+                quality += min(int(sd_ratio * 10), 20)
 
             stop_price = ll_pivot.price - 0.5 * atr_at_break
             risk = bar_close - stop_price
@@ -381,18 +414,24 @@ def detect_qm(df, pivots, atr):
             else:
                 continue
 
+            # Kalite skoru (gradyan — max ~80)
             quality = 0
+            # CHoCH temizligi (0-20)
             if break_by_body:
-                quality += 25
-            if retest_distance <= 0.3 * atr_at_break:
-                quality += 25
-            elif retest_distance <= 0.7 * atr_at_break:
-                quality += 15
-            if break_bar < len(vol_sma20) and vol_sma20[break_bar] > 0:
-                if vol[break_bar] > vol_sma20[break_bar]:
-                    quality += 25
-            if hh_pivot.price > hl_pivot.price + atr_at_break:
-                quality += 25
+                break_body_size = abs(close[break_bar] - df['open'].iloc[break_bar])
+                quality += min(int(break_body_size / atr_at_break * 15), 20) if atr_at_break > 0 else 12
+            else:
+                quality += 5
+            # Retest hassasiyeti (0-20)
+            quality += _proximity_score(retest_distance, atr_at_break, 20)
+            # Hacim (0-20)
+            if break_bar < len(vol_sma20):
+                quality += _vol_score(vol[break_bar], vol_sma20[break_bar], 20)
+            # Yapi netligi (0-20)
+            struct_dist = abs(hh_pivot.price - hl_pivot.price)
+            if atr_at_break > 0:
+                sd_ratio = struct_dist / atr_at_break
+                quality += min(int(sd_ratio * 10), 20)
 
             stop_price = hh_pivot.price + 0.5 * atr_at_break
             risk = stop_price - bar_close
@@ -479,24 +518,28 @@ def detect_fakeout_v1(df, pivots, atr):
             lower_wick = min(close[b], open_[b]) - low[b]
             wick_rejection = lower_wick > body if body > 0 else lower_wick > 0
 
-            # Kalite skoru
+            # Kalite skoru (gradyan — max ~80)
             quality = 0
-            # Rejection wick boyutu / ATR
-            if atr_b > 0 and lower_wick > 0.5 * atr_b:
-                quality += 30
-            elif atr_b > 0 and lower_wick > 0.3 * atr_b:
-                quality += 15
-            # Hacim spike
-            if b < len(vol_sma20) and vol_sma20[b] > 0 and vol[b] > vol_sma20[b] * 1.3:
-                quality += 25
-            # Sweep sonrasi ilk bar yonu
+            # Rejection wick (0-20)
+            if atr_b > 0:
+                wick_ratio = lower_wick / atr_b
+                quality += min(int(wick_ratio * 20), 20)
+            # Hacim spike (0-20)
+            if b < len(vol_sma20):
+                quality += _vol_score(vol[b], vol_sma20[b], 20)
+            # Recovery bar quality (0-20)
             if recovery_bar < n and close[recovery_bar] > open_[recovery_bar]:
-                quality += 25
-            # Sweep derinligi: sig = iyi
-            if sweep_depth <= 0.5 * atr_b:
-                quality += 20
-            elif sweep_depth <= 1.0 * atr_b:
-                quality += 10
+                rec_body = close[recovery_bar] - open_[recovery_bar]
+                quality += min(int(rec_body / atr_b * 20), 20) if atr_b > 0 else 12
+            # Sweep shallowness (0-20)
+            if atr_b > 0:
+                depth_ratio = sweep_depth / atr_b
+                if depth_ratio <= 0.3:
+                    quality += 20
+                elif depth_ratio <= 0.5:
+                    quality += 15
+                elif depth_ratio <= 1.0:
+                    quality += 8
 
             stop_price = low[b] - 0.3 * atr_b
             risk = close[recovery_bar] - stop_price
@@ -554,19 +597,28 @@ def detect_fakeout_v1(df, pivots, atr):
             body = abs(close[b] - open_[b])
             upper_wick = high[b] - max(close[b], open_[b])
 
+            # Kalite skoru (gradyan — max ~80)
             quality = 0
-            if atr_b > 0 and upper_wick > 0.5 * atr_b:
-                quality += 30
-            elif atr_b > 0 and upper_wick > 0.3 * atr_b:
-                quality += 15
-            if b < len(vol_sma20) and vol_sma20[b] > 0 and vol[b] > vol_sma20[b] * 1.3:
-                quality += 25
+            # Rejection wick (0-20)
+            if atr_b > 0:
+                wick_ratio = upper_wick / atr_b
+                quality += min(int(wick_ratio * 20), 20)
+            # Hacim spike (0-20)
+            if b < len(vol_sma20):
+                quality += _vol_score(vol[b], vol_sma20[b], 20)
+            # Recovery bar quality (0-20)
             if recovery_bar < n and close[recovery_bar] < open_[recovery_bar]:
-                quality += 25
-            if sweep_depth <= 0.5 * atr_b:
-                quality += 20
-            elif sweep_depth <= 1.0 * atr_b:
-                quality += 10
+                rec_body = open_[recovery_bar] - close[recovery_bar]
+                quality += min(int(rec_body / atr_b * 20), 20) if atr_b > 0 else 12
+            # Sweep shallowness (0-20)
+            if atr_b > 0:
+                depth_ratio = sweep_depth / atr_b
+                if depth_ratio <= 0.3:
+                    quality += 20
+                elif depth_ratio <= 0.5:
+                    quality += 15
+                elif depth_ratio <= 1.0:
+                    quality += 8
 
             stop_price = high[b] + 0.3 * atr_b
             risk = stop_price - close[recovery_bar]
@@ -639,7 +691,7 @@ def detect_fakeout_v2(df, pivots, atr):
 
         if has_choch:
             # V2 olarak yeniden olustur, kaliteye bonus ekle
-            v2_quality = min(sig.quality + 20, 100)
+            v2_quality = min(sig.quality + 15, 100)
             signals.append(PatternSignal(
                 bar_idx=sig.bar_idx,
                 direction=sig.direction,
@@ -731,27 +783,30 @@ def detect_flag_b(df, pivots, atr):
 
             # Breakout: close > konsolidasyon high'i AND body > 0.5*ATR
             if close[b] > flag_high and body > 0.5 * atr_b:
-                # Kalite
+                # Kalite (gradyan — max ~80)
                 quality = 0
-                # Impulse temizligi
-                if impulse_size >= 3.0 * atr_at_peak:
-                    quality += 25
-                elif impulse_size >= 2.0 * atr_at_peak:
+                # Impulse temizligi (0-20)
+                imp_atr = impulse_size / atr_at_peak if atr_at_peak > 0 else 0
+                quality += min(int((imp_atr - 1.5) * 13), 20) if imp_atr > 1.5 else 0
+                # Retrace ideal araligi (0-20) — Fibo ~0.382
+                fibo_dist = abs(retrace_pct - 0.382)
+                if fibo_dist <= 0.05:
+                    quality += 20
+                elif fibo_dist <= 0.10:
                     quality += 15
-                # Retrace ideal araligi (Fibo ~0.382)
-                if 0.30 <= retrace_pct <= 0.45:
-                    quality += 25
-                elif 0.20 <= retrace_pct <= 0.55:
-                    quality += 15
-                # Breakout hacmi
-                if b < len(vol_sma20) and vol_sma20[b] > 0 and vol[b] > vol_sma20[b]:
-                    quality += 25
-                # Flag suresi
+                elif fibo_dist <= 0.17:
+                    quality += 8
+                # Breakout hacmi (0-20)
+                if b < len(vol_sma20):
+                    quality += _vol_score(vol[b], vol_sma20[b], 20)
+                # Flag suresi (0-20)
                 flag_bars = b - consol_start
-                if 3 <= flag_bars <= 8:
-                    quality += 25
-                elif flag_bars <= 12:
+                if 4 <= flag_bars <= 7:
+                    quality += 20
+                elif 3 <= flag_bars <= 10:
                     quality += 15
+                elif flag_bars <= 15:
+                    quality += 8
 
                 stop_price = flag_low - 0.3 * atr_b
                 risk = close[b] - stop_price
@@ -822,22 +877,30 @@ def detect_flag_b(df, pivots, atr):
             body = open_[b] - close[b]  # bearish body
 
             if close[b] < flag_low and body > 0.5 * atr_b:
+                # Kalite (gradyan — max ~80)
                 quality = 0
-                if impulse_size >= 3.0 * atr_at_bottom:
-                    quality += 25
-                elif impulse_size >= 2.0 * atr_at_bottom:
+                # Impulse temizligi (0-20)
+                imp_atr = impulse_size / atr_at_bottom if atr_at_bottom > 0 else 0
+                quality += min(int((imp_atr - 1.5) * 13), 20) if imp_atr > 1.5 else 0
+                # Retrace ideal araligi (0-20)
+                fibo_dist = abs(retrace_pct - 0.382)
+                if fibo_dist <= 0.05:
+                    quality += 20
+                elif fibo_dist <= 0.10:
                     quality += 15
-                if 0.30 <= retrace_pct <= 0.45:
-                    quality += 25
-                elif 0.20 <= retrace_pct <= 0.55:
-                    quality += 15
-                if b < len(vol_sma20) and vol_sma20[b] > 0 and vol[b] > vol_sma20[b]:
-                    quality += 25
+                elif fibo_dist <= 0.17:
+                    quality += 8
+                # Breakout hacmi (0-20)
+                if b < len(vol_sma20):
+                    quality += _vol_score(vol[b], vol_sma20[b], 20)
+                # Flag suresi (0-20)
                 flag_bars = b - consol_start
-                if 3 <= flag_bars <= 8:
-                    quality += 25
-                elif flag_bars <= 12:
+                if 4 <= flag_bars <= 7:
+                    quality += 20
+                elif 3 <= flag_bars <= 10:
                     quality += 15
+                elif flag_bars <= 15:
+                    quality += 8
 
                 stop_price = flag_high + 0.3 * atr_b
                 risk = stop_price - close[b]
@@ -926,36 +989,48 @@ def detect_3drive(df, pivots, atr):
         if atr_at_hh3 <= 0:
             continue
 
-        # Kalite
+        # Kalite (gradyan — max ~75)
         quality = 0
-        # Momentum azalmasi netligi
+        # Momentum azalmasi netligi (0-20)
         ratio = drive3 / drive1 if drive1 > 0 else 1
-        if ratio < 0.5:
-            quality += 30
-        elif ratio < 0.75:
+        if ratio < 0.3:
             quality += 20
+        elif ratio < 0.5:
+            quality += 15
+        elif ratio < 0.75:
+            quality += 8
 
-        # RSI divergence: fiyat HH yaparken RSI dusuyor
+        # RSI divergence: fiyat HH yaparken RSI dusuyor (0-25)
         if hh1.idx < len(rsi) and hh3.idx < len(rsi):
             rsi1 = rsi[hh1.idx]
             rsi3 = rsi[hh3.idx]
             if not (np.isnan(rsi1) or np.isnan(rsi3)) and rsi3 < rsi1:
-                quality += 30
+                rsi_diff = rsi1 - rsi3
+                if rsi_diff > 15:
+                    quality += 25
+                elif rsi_diff > 10:
+                    quality += 18
+                elif rsi_diff > 5:
+                    quality += 12
+                else:
+                    quality += 5
 
-        # Son drive wick rejection
+        # Son drive wick rejection (0-15)
         if hh3.idx < n:
             bar_body = abs(close[hh3.idx] - df['open'].iloc[hh3.idx])
             bar_upper_wick = df['high'].iloc[hh3.idx] - max(close[hh3.idx], df['open'].iloc[hh3.idx])
-            if bar_upper_wick > bar_body:
-                quality += 20
+            if bar_body > 0 and bar_upper_wick > bar_body:
+                quality += min(int(bar_upper_wick / max(bar_body, 0.01) * 8), 15)
 
-        # Hacim dususu
+        # Hacim dususu (0-15)
         if hh1.idx < len(vol) and hh2.idx < len(vol) and hh3.idx < len(vol):
             v1 = vol[hh1.idx]
             v2 = vol[hh2.idx]
             v3 = vol[hh3.idx]
-            if v2 < v1 and v3 < v2 and v1 > 0:
-                quality += 20
+            if v1 > 0 and v2 < v1 and v3 < v2:
+                quality += 15
+            elif v1 > 0 and v3 < v1:
+                quality += 8
 
         signal_bar = hh3.confirm_idx
         if signal_bar >= n:
@@ -1019,31 +1094,47 @@ def detect_3drive(df, pivots, atr):
         if atr_at_ll3 <= 0:
             continue
 
+        # Kalite (gradyan — max ~75)
         quality = 0
         ratio = drive3 / drive1 if drive1 > 0 else 1
-        if ratio < 0.5:
-            quality += 30
-        elif ratio < 0.75:
+        if ratio < 0.3:
             quality += 20
+        elif ratio < 0.5:
+            quality += 15
+        elif ratio < 0.75:
+            quality += 8
 
+        # RSI divergence (0-25)
         if ll1.idx < len(rsi) and ll3.idx < len(rsi):
             rsi1 = rsi[ll1.idx]
             rsi3 = rsi[ll3.idx]
             if not (np.isnan(rsi1) or np.isnan(rsi3)) and rsi3 > rsi1:
-                quality += 30
+                rsi_diff = rsi3 - rsi1
+                if rsi_diff > 15:
+                    quality += 25
+                elif rsi_diff > 10:
+                    quality += 18
+                elif rsi_diff > 5:
+                    quality += 12
+                else:
+                    quality += 5
 
+        # Wick rejection (0-15)
         if ll3.idx < n:
             bar_body = abs(close[ll3.idx] - df['open'].iloc[ll3.idx])
             bar_lower_wick = min(close[ll3.idx], df['open'].iloc[ll3.idx]) - df['low'].iloc[ll3.idx]
-            if bar_lower_wick > bar_body:
-                quality += 20
+            if bar_body > 0 and bar_lower_wick > bar_body:
+                quality += min(int(bar_lower_wick / max(bar_body, 0.01) * 8), 15)
 
+        # Hacim dususu (0-15)
         if ll1.idx < len(vol) and ll2.idx < len(vol) and ll3.idx < len(vol):
             v1 = vol[ll1.idx]
             v2 = vol[ll2.idx]
             v3 = vol[ll3.idx]
-            if v2 < v1 and v3 < v2 and v1 > 0:
-                quality += 20
+            if v1 > 0 and v2 < v1 and v3 < v2:
+                quality += 15
+            elif v1 > 0 and v3 < v1:
+                quality += 8
 
         signal_bar = ll3.confirm_idx
         if signal_bar >= n:
@@ -1149,27 +1240,36 @@ def detect_compression(df, atr):
             atr_at_b = atr.iloc[b] if b < n else atr.iloc[-1]
 
             if close[b] > comp_upper and abs(body) > 0.6 * atr_at_b:
-                # Bullish breakout
+                # Bullish breakout — kalite (gradyan — max ~80)
                 quality = 0
-                # Sikisma suresi
-                if best_comp_len >= 10:
-                    quality += 25
-                elif best_comp_len >= 7:
+                # Sikisma suresi (0-20)
+                if best_comp_len >= 12:
+                    quality += 20
+                elif best_comp_len >= 10:
                     quality += 15
-                # Range daralma hizi
+                elif best_comp_len >= 7:
+                    quality += 10
+                elif best_comp_len >= 5:
+                    quality += 5
+                # Range daralma hizi (0-20)
                 first_r = high[best_comp_start] - low[best_comp_start]
                 last_r = high[comp_end] - low[comp_end]
-                if first_r > 0 and last_r / first_r < 0.5:
-                    quality += 25
-                # Breakout body/ATR
-                if atr_at_b > 0 and abs(body) > atr_at_b:
-                    quality += 25
-                elif atr_at_b > 0 and abs(body) > 0.7 * atr_at_b:
-                    quality += 15
-                # Hacim: sikismada dusuk, breakout'ta yuksek
+                if first_r > 0:
+                    narrow_ratio = last_r / first_r
+                    if narrow_ratio < 0.3:
+                        quality += 20
+                    elif narrow_ratio < 0.5:
+                        quality += 15
+                    elif narrow_ratio < 0.7:
+                        quality += 8
+                # Breakout body/ATR (0-20)
+                if atr_at_b > 0:
+                    body_ratio = abs(body) / atr_at_b
+                    quality += min(int(body_ratio * 15), 20)
+                # Hacim kontrast (0-20)
                 comp_avg_vol = vol[best_comp_start:comp_end + 1].mean()
-                if comp_avg_vol > 0 and vol[b] > comp_avg_vol * 1.5:
-                    quality += 25
+                if comp_avg_vol > 0:
+                    quality += _vol_score(vol[b], comp_avg_vol, 20)
 
                 comp_range = comp_upper - comp_lower
                 stop_price = comp_lower - 0.3 * atr_at_b
@@ -1193,23 +1293,36 @@ def detect_compression(df, atr):
                 break
 
             elif close[b] < comp_lower and abs(body) > 0.6 * atr_at_b:
-                # Bearish breakout
+                # Bearish breakout — kalite (gradyan — max ~80)
                 quality = 0
-                if best_comp_len >= 10:
-                    quality += 25
-                elif best_comp_len >= 7:
+                # Sikisma suresi (0-20)
+                if best_comp_len >= 12:
+                    quality += 20
+                elif best_comp_len >= 10:
                     quality += 15
+                elif best_comp_len >= 7:
+                    quality += 10
+                elif best_comp_len >= 5:
+                    quality += 5
+                # Range daralma (0-20)
                 first_r = high[best_comp_start] - low[best_comp_start]
                 last_r = high[comp_end] - low[comp_end]
-                if first_r > 0 and last_r / first_r < 0.5:
-                    quality += 25
-                if atr_at_b > 0 and abs(body) > atr_at_b:
-                    quality += 25
-                elif atr_at_b > 0 and abs(body) > 0.7 * atr_at_b:
-                    quality += 15
+                if first_r > 0:
+                    narrow_ratio = last_r / first_r
+                    if narrow_ratio < 0.3:
+                        quality += 20
+                    elif narrow_ratio < 0.5:
+                        quality += 15
+                    elif narrow_ratio < 0.7:
+                        quality += 8
+                # Breakout body/ATR (0-20)
+                if atr_at_b > 0:
+                    body_ratio = abs(body) / atr_at_b
+                    quality += min(int(body_ratio * 15), 20)
+                # Hacim kontrast (0-20)
                 comp_avg_vol = vol[best_comp_start:comp_end + 1].mean()
-                if comp_avg_vol > 0 and vol[b] > comp_avg_vol * 1.5:
-                    quality += 25
+                if comp_avg_vol > 0:
+                    quality += _vol_score(vol[b], comp_avg_vol, 20)
 
                 comp_range = comp_upper - comp_lower
                 stop_price = comp_upper + 0.3 * atr_at_b
@@ -1288,24 +1401,27 @@ def detect_cancan(df, pivots, atr):
                     # Wick rejection kontrolu
                     wick = high[b] - max(close[b], df['open'].iloc[b])
 
+                    # Kalite (gradyan — max ~75)
                     quality = 0
-                    if touch_count >= 3:
-                        quality += 30
-                    elif touch_count >= 2:
+                    # Touch count (0-20)
+                    if touch_count >= 4:
                         quality += 20
-                    # Kirilma netligi
-                    break_depth = level - close[break_bar]
-                    if atr_at_break > 0 and break_depth > atr_at_break:
-                        quality += 25
-                    # Retest hassasiyeti
-                    retest_dist = abs(high[b] - level)
-                    if retest_dist <= 0.2 * atr_at_break:
-                        quality += 25
-                    elif retest_dist <= 0.5 * atr_at_break:
+                    elif touch_count >= 3:
                         quality += 15
-                    # Wick rejection
-                    if wick > abs(close[b] - df['open'].iloc[b]):
-                        quality += 20
+                    else:
+                        quality += 8
+                    # Kirilma netligi (0-20)
+                    break_depth = level - close[break_bar]
+                    if atr_at_break > 0:
+                        bd_ratio = break_depth / atr_at_break
+                        quality += min(int(bd_ratio * 12), 20)
+                    # Retest hassasiyeti (0-20)
+                    retest_dist = abs(high[b] - level)
+                    quality += _proximity_score(retest_dist, atr_at_break, 20)
+                    # Wick rejection (0-15)
+                    bar_body = abs(close[b] - df['open'].iloc[b])
+                    if bar_body > 0 and wick > bar_body:
+                        quality += min(int(wick / bar_body * 8), 15)
 
                     stop_price = level + 0.5 * atr_at_break
                     risk = stop_price - close[b]
@@ -1351,21 +1467,27 @@ def detect_cancan(df, pivots, atr):
                 if close[b] > level:
                     wick = min(close[b], df['open'].iloc[b]) - low[b]
 
+                    # Kalite (gradyan — max ~75)
                     quality = 0
-                    if touch_count >= 3:
-                        quality += 30
-                    elif touch_count >= 2:
+                    # Touch count (0-20)
+                    if touch_count >= 4:
                         quality += 20
-                    break_depth = close[break_bar] - level
-                    if atr_at_break > 0 and break_depth > atr_at_break:
-                        quality += 25
-                    retest_dist = abs(low[b] - level)
-                    if retest_dist <= 0.2 * atr_at_break:
-                        quality += 25
-                    elif retest_dist <= 0.5 * atr_at_break:
+                    elif touch_count >= 3:
                         quality += 15
-                    if wick > abs(close[b] - df['open'].iloc[b]):
-                        quality += 20
+                    else:
+                        quality += 8
+                    # Kirilma netligi (0-20)
+                    break_depth = close[break_bar] - level
+                    if atr_at_break > 0:
+                        bd_ratio = break_depth / atr_at_break
+                        quality += min(int(bd_ratio * 12), 20)
+                    # Retest hassasiyeti (0-20)
+                    retest_dist = abs(low[b] - level)
+                    quality += _proximity_score(retest_dist, atr_at_break, 20)
+                    # Wick rejection (0-15)
+                    bar_body = abs(close[b] - df['open'].iloc[b])
+                    if bar_body > 0 and wick > bar_body:
+                        quality += min(int(wick / bar_body * 8), 15)
 
                     stop_price = level - 0.5 * atr_at_break
                     risk = close[b] - stop_price
@@ -1487,25 +1609,33 @@ def detect_2r2s_fakeout(df, pivots, atr):
             if not recovered:
                 continue
 
+            # Kalite (gradyan — max ~75)
             quality = 0
-            if touch_count >= 3:
-                quality += 30
-            elif touch_count >= 2:
+            # Touch count (0-20)
+            if touch_count >= 4:
                 quality += 20
-            # Sweep derinligi
-            if sweep_depth <= 0.5 * atr_b:
-                quality += 25
-            elif sweep_depth <= 1.0 * atr_b:
+            elif touch_count >= 3:
                 quality += 15
-            # Rejection wick
-            upper_wick = high[b] - max(close[b], open_[b])
-            if upper_wick > abs(close[b] - open_[b]):
-                quality += 25
-            # Hacim
-            vol_sma20 = sma(df['volume'], 20).values
-            if b < len(vol_sma20) and vol_sma20[b] > 0:
-                if df['volume'].iloc[b] > vol_sma20[b] * 1.3:
+            else:
+                quality += 8
+            # Sweep shallowness (0-20)
+            if atr_b > 0:
+                depth_ratio = sweep_depth / atr_b
+                if depth_ratio <= 0.3:
                     quality += 20
+                elif depth_ratio <= 0.5:
+                    quality += 15
+                elif depth_ratio <= 1.0:
+                    quality += 10
+            # Rejection wick (0-20)
+            upper_wick = high[b] - max(close[b], open_[b])
+            bar_body = abs(close[b] - open_[b])
+            if bar_body > 0 and upper_wick > bar_body:
+                quality += min(int(upper_wick / bar_body * 10), 20)
+            # Hacim (0-15)
+            vol_sma20 = sma(df['volume'], 20).values
+            if b < len(vol_sma20):
+                quality += _vol_score(df['volume'].iloc[b], vol_sma20[b], 15)
 
             stop_price = high[b] + 0.3 * atr_b
             risk = stop_price - close[recovery_bar]
@@ -1560,22 +1690,33 @@ def detect_2r2s_fakeout(df, pivots, atr):
             if not recovered:
                 continue
 
+            # Kalite (gradyan — max ~75)
             quality = 0
-            if touch_count >= 3:
-                quality += 30
-            elif touch_count >= 2:
+            # Touch count (0-20)
+            if touch_count >= 4:
                 quality += 20
-            if sweep_depth <= 0.5 * atr_b:
-                quality += 25
-            elif sweep_depth <= 1.0 * atr_b:
+            elif touch_count >= 3:
                 quality += 15
-            lower_wick = min(close[b], open_[b]) - low[b]
-            if lower_wick > abs(close[b] - open_[b]):
-                quality += 25
-            vol_sma20 = sma(df['volume'], 20).values
-            if b < len(vol_sma20) and vol_sma20[b] > 0:
-                if df['volume'].iloc[b] > vol_sma20[b] * 1.3:
+            else:
+                quality += 8
+            # Sweep shallowness (0-20)
+            if atr_b > 0:
+                depth_ratio = sweep_depth / atr_b
+                if depth_ratio <= 0.3:
                     quality += 20
+                elif depth_ratio <= 0.5:
+                    quality += 15
+                elif depth_ratio <= 1.0:
+                    quality += 10
+            # Rejection wick (0-20)
+            lower_wick = min(close[b], open_[b]) - low[b]
+            bar_body = abs(close[b] - open_[b])
+            if bar_body > 0 and lower_wick > bar_body:
+                quality += min(int(lower_wick / bar_body * 10), 20)
+            # Hacim (0-15)
+            vol_sma20 = sma(df['volume'], 20).values
+            if b < len(vol_sma20):
+                quality += _vol_score(df['volume'].iloc[b], vol_sma20[b], 15)
 
             stop_price = low[b] - 0.3 * atr_b
             risk = close[recovery_bar] - stop_price
@@ -1645,6 +1786,22 @@ def scan_patterns(df, scan_bars=None):
             seen.add(key)
             unique.append(s)
     signals = unique
+
+    # Bias alignment post-processing: +15 uyumlu, -15 counter-trend
+    bias = get_market_bias(pivots)
+    for s in signals:
+        if bias == 'bullish':
+            if s.direction == 'BUY':
+                s.quality = min(s.quality + 15, 100)
+            else:
+                s.quality = max(s.quality - 15, 0)
+        elif bias == 'bearish':
+            if s.direction == 'SELL':
+                s.quality = min(s.quality + 15, 100)
+            else:
+                s.quality = max(s.quality - 15, 0)
+        # neutral: degisiklik yok
+        s.details['bias'] = bias
 
     # Kaliteye gore sirala
     signals.sort(key=lambda s: s.quality, reverse=True)

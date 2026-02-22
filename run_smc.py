@@ -407,7 +407,7 @@ def main():
     parser.add_argument('--pattern', metavar='PATTERN', help='Pattern filtresi (QM, FAKEOUT, FLAG, ...)')
     parser.add_argument('--csv', action='store_true', help='CSV kaydet')
     parser.add_argument('--output', default='output', help='CSV cikti dizini')
-    parser.add_argument('--scan-bars', type=int, default=15, help='Son kac bar taranacak (default: 15)')
+    parser.add_argument('--scan-bars', type=int, default=5, help='Son kac bar taranacak (default: 5)')
     args = parser.parse_args()
 
     # ── 1. Ticker listesi ────────────────────────────────────────────────────
