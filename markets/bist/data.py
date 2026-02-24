@@ -190,6 +190,36 @@ def fetch_data(tickers, period="1y", batch_size=50):
             print(f"  [!] Batch hata: {e}")
         if i + batch_size < len(tickers):
             time.sleep(1)
+
+    # ── Stale data fix: eksik son gunu olan ticker'lari tekrar cek ──
+    if all_data:
+        max_date = max(df.index[-1] for df in all_data.values())
+        stale = [t for t, df in all_data.items() if df.index[-1] < max_date]
+        if stale:
+            print(f"  ⚠️ {len(stale)} hisse eski tarihli, tekrar çekiliyor...")
+            for i in range(0, len(stale), 5):
+                mini = stale[i:i+5]
+                yf_syms = [f"{t}.IS" for t in mini]
+                try:
+                    raw = yf.download(" ".join(yf_syms), period=period,
+                                      progress=False, auto_adjust=True,
+                                      group_by='ticker', threads=True)
+                    if raw.empty:
+                        continue
+                    for t, yf_t in zip(mini, yf_syms):
+                        df = _normalize_df(raw, t, yf_t, yf_syms)
+                        if df is not None and df.index[-1] >= max_date:
+                            all_data[t] = df
+                except Exception:
+                    pass
+                if i + 5 < len(stale):
+                    time.sleep(0.5)
+            still_stale = sum(1 for t in stale if all_data[t].index[-1] < max_date)
+            if still_stale:
+                print(f"  ⚠️ {still_stale} hisse hala eski ({max_date.strftime('%Y-%m-%d')} degil)")
+            else:
+                print(f"  ✅ Tum hisseler güncellendi ({max_date.strftime('%Y-%m-%d')})")
+
     print(f"✅ {len(all_data)}/{len(tickers)} hisse yüklendi\n")
     return all_data
 
