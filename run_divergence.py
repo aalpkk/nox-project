@@ -570,7 +570,7 @@ def main():
     # ── 2. Veri yukleme ──────────────────────────────────────────────────────
     print(f"\n  Veri yukleniyor (period={args.period})...")
     t0 = time.time()
-    all_data = data_mod.fetch_data(tickers, period=args.period)
+    all_data = data_mod.fetch_data(tickers, period=args.period, batch_size=25)
     print(f"  {len(all_data)} hisse yuklendi ({time.time() - t0:.1f}s)")
 
     if not all_data:
