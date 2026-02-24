@@ -303,7 +303,7 @@ def calc_macd(series, fast=12, slow=26, signal=9):
 # ── Resample ──
 
 def resample_weekly(df):
-    wdf = df.resample('W').agg({
+    wdf = df.resample('W-FRI').agg({
         'Open': 'first', 'High': 'max', 'Low': 'min',
         'Close': 'last', 'Volume': 'sum'
     }).dropna()

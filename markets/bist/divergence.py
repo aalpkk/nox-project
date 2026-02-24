@@ -1240,6 +1240,16 @@ def detect_price_volume_divergence(df, atr, obv_ema):
         if np.isnan(vs) or np.isnan(atr_val) or vs <= 0 or atr_val <= 0:
             continue
 
+        # Tavan/taban filtresi: close == high/low + >= %9.5 degisim → limit hisse, sinyal sahte
+        if i >= 1:
+            prev_c = close_vals[i - 1]
+            if prev_c > 0:
+                chg = (c / prev_c - 1)
+                if c == h and chg >= 0.095:    # Tavan
+                    continue
+                if c == l and chg <= -0.095:   # Taban
+                    continue
+
         vol_ratio = v / vs
         if vol_ratio < min_vol_ratio:
             continue
