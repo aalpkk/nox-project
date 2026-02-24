@@ -231,6 +231,8 @@ def _print_debug(ticker, df):
                     det_parts.append(f"{d['sub_type']}")
                     det_parts.append(f"VolR: {d.get('vol_ratio', 0):.1f}")
                     det_parts.append(f"R/ATR: {d.get('range_atr', 0):.3f}")
+                    if d.get('limit_tag'):
+                        det_parts.append(f"[{d['limit_tag']}]")
                 elif 'vol_ratio' in d:
                     det_parts.append(f"VolR: {d['vol_ratio']:.1f}")
                 if d.get('has_mfi'):
@@ -361,10 +363,12 @@ def _print_section(title, items, section_type):
             sub = d.get('sub_type', '?')[:6]
             vol_r = d.get('vol_ratio', 0)
             ra = d.get('range_atr', 0)
+            lt = d.get('limit_tag')
             date_str = _fmt_date(item['signal_date'])
             vol_str = f"x{vol_r:.1f}"
+            tag = f" [{lt}]" if lt else ""
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {sub:>8} "
-                  f"{vol_str:>6} {ra:>7.3f} {sig.quality:>7} {date_str:>6}")
+                  f"{vol_str:>6} {ra:>7.3f} {sig.quality:>7} {date_str:>6}{tag}")
 
     print(f"  {'─' * 75}")
 
@@ -518,6 +522,8 @@ def _save_csv(all_results, date_str, output_dir):
                 row['range_atr'] = d.get('range_atr')
             if 'sub_type' in d:
                 row['sub_type'] = d.get('sub_type')
+            if d.get('limit_tag'):
+                row['limit_tag'] = d.get('limit_tag')
             if 'close_slope' in d:
                 row['close_slope'] = d.get('close_slope')
             if 'has_mfi' in d:
