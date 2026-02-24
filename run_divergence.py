@@ -227,10 +227,11 @@ def _print_debug(ticker, df):
                     det_parts.append(f"MFI: {d['prev_mfi']:.0f}→{d['curr_mfi']:.0f}")
                 if 'adx_slope' in d:
                     det_parts.append(f"ADX: {d['adx_value']:.0f} slope={d['adx_slope']:.2f}")
-                if 'close_slope' in d and 'vol_slope' in d:
-                    det_parts.append(f"FSlope: {d['close_slope']:.3f}")
-                    det_parts.append(f"VSlope: {d['vol_slope']:.3f}")
-                if 'vol_ratio' in d:
+                if 'sub_type' in d:
+                    det_parts.append(f"{d['sub_type']}")
+                    det_parts.append(f"VolR: {d.get('vol_ratio', 0):.1f}")
+                    det_parts.append(f"R/ATR: {d.get('range_atr', 0):.3f}")
+                elif 'vol_ratio' in d:
                     det_parts.append(f"VolR: {d['vol_ratio']:.1f}")
                 if d.get('has_mfi'):
                     det_parts.append("MFI+")
@@ -351,17 +352,19 @@ def _print_section(title, items, section_type):
                   f"{sig.quality:>7} {date_str:>6}")
 
     elif section_type in ('pv',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'F.Slope':>8} {'H.Slope':>8} "
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'VolR':>6} {'R/ATR':>7} "
               f"{'Kalite':>7} {'Tarih':>6}")
         print(f"  {'─' * 75}")
         for item in items:
             sig = item['signal']
             d = sig.details
-            cs = d.get('close_slope', 0)
-            vs = d.get('vol_slope', 0)
+            sub = d.get('sub_type', '?')[:6]
+            vol_r = d.get('vol_ratio', 0)
+            ra = d.get('range_atr', 0)
             date_str = _fmt_date(item['signal_date'])
-            print(f"  {item['ticker']:<8} {item['close']:>8.2f} {cs:>8.3f} "
-                  f"{vs:>8.3f} {sig.quality:>7} {date_str:>6}")
+            vol_str = f"x{vol_r:.1f}"
+            print(f"  {item['ticker']:<8} {item['close']:>8.2f} {sub:>8} "
+                  f"{vol_str:>6} {ra:>7.3f} {sig.quality:>7} {date_str:>6}")
 
     print(f"  {'─' * 75}")
 
@@ -509,12 +512,14 @@ def _save_csv(all_results, date_str, output_dir):
             if 'adx_slope' in d:
                 row['adx_value'] = d.get('adx_value')
                 row['adx_slope'] = d.get('adx_slope')
-            if 'close_slope' in d:
-                row['close_slope'] = d.get('close_slope')
-            if 'vol_slope' in d:
-                row['vol_slope'] = d.get('vol_slope')
             if 'vol_ratio' in d:
                 row['vol_ratio'] = d.get('vol_ratio')
+            if 'range_atr' in d:
+                row['range_atr'] = d.get('range_atr')
+            if 'sub_type' in d:
+                row['sub_type'] = d.get('sub_type')
+            if 'close_slope' in d:
+                row['close_slope'] = d.get('close_slope')
             if 'has_mfi' in d:
                 row['has_mfi'] = d.get('has_mfi')
 

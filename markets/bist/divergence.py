@@ -52,6 +52,8 @@ DIV_CFG = {
     'adx_min_slope': -0.3,
     'pv_div_lookback': 20,
     'pv_div_min_bars': 5,
+    'pv_min_vol_ratio': 1.5,   # Hacim en az SMA * 1.5 olmali
+    'pv_max_range_ratio': 0.5, # Bar range / ATR < 0.5 → kucuk bar (emilim)
 }
 
 
@@ -1197,132 +1199,147 @@ def _adx_exhaust_quality(adx_slope, adx_value, close_slope_norm,
 
 
 # =============================================================================
-# FIYAT-HACIM UYUMSUZLUGU
+# FIYAT-HACIM UYUMSUZLUGU (VSA — Volume Spread Analysis)
 # =============================================================================
 
 def detect_price_volume_divergence(df, atr, obv_ema):
     """
-    Fiyat-Hacim trend uyumsuzlugu.
+    Hacim-Fiyat Uyumsuzlugu — VSA mantigi.
 
-    Bullish: close slope < 0 AND volume slope < 0 (satis baskisi azaliyor)
-    Bearish: close slope > 0 AND volume slope < 0 (alim ilgisi azaliyor)
+    Yuksek hacim + kucuk fiyat bari = emilim/dagitim.
+    Buyuk oyuncu fiyati hareket ettirmeden al/sat yapiyor.
+
+    Emilim (AL):  Hacim > SMA*min_vol_ratio + range/ATR < max_range_ratio + kapanis barin ust yarisinda
+    Dagitim (SAT): Hacim > SMA*min_vol_ratio + range/ATR < max_range_ratio + kapanis barin alt yarisinda
+    Reddedilmis Satis (AL):  Hacim > SMA*min_vol_ratio + uzun alt fitil (fitil > govde)
+    Reddedilmis Ralli (SAT): Hacim > SMA*min_vol_ratio + uzun ust fitil (fitil > govde)
     """
     signals = []
     n = len(df)
     cfg = DIV_CFG
-    lookback = cfg['pv_div_lookback']
-    min_bars = cfg['pv_div_min_bars']
+    scan = cfg['scan_bars']
 
-    if n < lookback + min_bars:
-        return signals
-
+    high_vals = df['high'].values
+    low_vals = df['low'].values
+    open_vals = df['open'].values
     close_vals = df['close'].values
     vol_vals = df['volume'].values
 
-    for end_offset in range(0, min(10, n - lookback)):
-        end_bar = n - 1 - end_offset
-        start_bar = end_bar - lookback + 1
+    vol_sma = sma(df['volume'], cfg['vol_sma_len']).values
+    atr_vals = atr.values
 
-        if start_bar < 0:
+    min_vol_ratio = cfg.get('pv_min_vol_ratio', 1.5)
+    max_range_ratio = cfg.get('pv_max_range_ratio', 0.5)
+
+    for i in range(max(cfg['vol_sma_len'], 1), n):
+        h, l, o, c = high_vals[i], low_vals[i], open_vals[i], close_vals[i]
+        v = vol_vals[i]
+        vs = vol_sma[i]
+        atr_val = atr_vals[i]
+
+        if np.isnan(vs) or np.isnan(atr_val) or vs <= 0 or atr_val <= 0:
             continue
 
-        close_window = close_vals[start_bar:end_bar + 1]
-        vol_window = vol_vals[start_bar:end_bar + 1]
-
-        if len(close_window) < min_bars:
+        vol_ratio = v / vs
+        if vol_ratio < min_vol_ratio:
             continue
 
-        if np.any(np.isnan(close_window)) or np.any(close_window <= 0):
+        bar_range = h - l
+        if bar_range <= 0:
             continue
-        if np.any(np.isnan(vol_window)) or np.all(vol_window <= 0):
-            continue
+        range_atr = bar_range / atr_val
 
-        x = np.arange(len(close_window), dtype=float)
-
-        try:
-            close_slope = np.polyfit(x, close_window, 1)[0]
-            vol_slope = np.polyfit(x, vol_window, 1)[0]
-        except (np.linalg.LinAlgError, ValueError):
-            continue
-
-        atr_val = atr.iloc[end_bar] if end_bar < len(atr) else atr.iloc[-1]
-        if atr_val <= 0:
-            continue
-
-        close_slope_norm = close_slope / atr_val
-        avg_vol = vol_window.mean()
-        vol_slope_norm = vol_slope / avg_vol if avg_vol > 0 else 0
+        body = abs(c - o)
+        upper_wick = h - max(o, c)
+        lower_wick = min(o, c) - l
+        mid = (h + l) / 2
 
         div_type = None
         direction = None
+        sub_type = None  # 'ABSORB' veya 'REJECT'
 
-        # Bullish PV Div: fiyat dusuyor + hacim azaliyor
-        if close_slope_norm < -0.1 and vol_slope_norm < -0.05:
-            div_type = 'PRICE_VOLUME'
-            direction = 'BUY'
-        # Bearish PV Div: fiyat yukseliyor + hacim azaliyor
-        elif close_slope_norm > 0.1 and vol_slope_norm < -0.05:
-            div_type = 'PRICE_VOLUME'
-            direction = 'SELL'
+        # --- Emilim / Dagitim: kucuk bar + yuksek hacim ---
+        if range_atr < max_range_ratio:
+            if c >= mid:
+                # Kapanis ust yarisinda → emilim (dibe yakin alim)
+                div_type = 'PRICE_VOLUME'
+                direction = 'BUY'
+                sub_type = 'ABSORB'
+            else:
+                # Kapanis alt yarisinda → dagitim (tepeye yakin satim)
+                div_type = 'PRICE_VOLUME'
+                direction = 'SELL'
+                sub_type = 'ABSORB'
+
+        # --- Reddedilmis hareketler: uzun fitil + yuksek hacim ---
+        elif body > 0:
+            wick_body = max(upper_wick, lower_wick) / body
+            if wick_body >= 1.5:
+                if lower_wick > upper_wick and lower_wick > body:
+                    # Uzun alt fitil → satis reddedildi → AL
+                    div_type = 'PRICE_VOLUME'
+                    direction = 'BUY'
+                    sub_type = 'REJECT'
+                elif upper_wick > lower_wick and upper_wick > body:
+                    # Uzun ust fitil → alis reddedildi → SAT
+                    div_type = 'PRICE_VOLUME'
+                    direction = 'SELL'
+                    sub_type = 'REJECT'
 
         if div_type is None:
             continue
 
         quality = _pv_div_quality(
-            close_slope_norm, vol_slope_norm, end_bar,
-            df, atr, obv_ema, direction, lookback
+            vol_ratio, range_atr, sub_type, i, df, atr, obv_ema, direction
         )
 
         signals.append(DivergenceSignal(
-            bar_idx=end_bar,
+            bar_idx=i,
             direction=direction,
             div_type=div_type,
             quality=quality,
             details={
-                'close_slope': round(close_slope_norm, 3),
-                'vol_slope': round(vol_slope_norm, 3),
-                'lookback': lookback,
-                'start_bar': start_bar,
-                'end_bar': end_bar,
+                'vol_ratio': round(vol_ratio, 2),
+                'range_atr': round(range_atr, 3),
+                'sub_type': sub_type,
+                'close': round(c, 4),
+                'bar_range': round(bar_range, 4),
             },
         ))
-
-        break  # Ilk gecerli pencere yeterli
 
     return signals
 
 
-def _pv_div_quality(close_slope, vol_slope, signal_bar,
-                    df, atr, obv_ema, direction, lookback):
-    """Fiyat-Hacim divergence kalite skoru (0-100)."""
+def _pv_div_quality(vol_ratio, range_atr, sub_type, signal_bar,
+                    df, atr, obv_ema, direction):
+    """Fiyat-Hacim (VSA) kalite skoru (0-100)."""
     quality = 0
     n = len(df)
 
-    # 1. Fiyat trend gucu (0-25)
-    abs_cs = abs(close_slope)
-    if abs_cs >= 1.0:
+    # 1. Hacim spike buyuklugu (0-30)
+    if vol_ratio >= 3.0:
+        quality += 30
+    elif vol_ratio >= 2.5:
         quality += 25
-    elif abs_cs >= 0.5:
+    elif vol_ratio >= 2.0:
         quality += 20
-    elif abs_cs >= 0.3:
+    elif vol_ratio >= 1.5:
         quality += 15
-    elif abs_cs >= 0.15:
-        quality += 10
     else:
-        quality += 5
+        quality += 10
 
-    # 2. Hacim trend gucu (0-25)
-    abs_vs = abs(vol_slope)
-    if abs_vs >= 0.5:
-        quality += 25
-    elif abs_vs >= 0.3:
-        quality += 20
-    elif abs_vs >= 0.15:
-        quality += 15
-    elif abs_vs >= 0.08:
-        quality += 10
-    else:
-        quality += 5
+    # 2. Bar daralma gucu (0-20) — kucuk range daha anlamli
+    if sub_type == 'ABSORB':
+        if range_atr <= 0.2:
+            quality += 20
+        elif range_atr <= 0.3:
+            quality += 15
+        elif range_atr <= 0.4:
+            quality += 10
+        else:
+            quality += 5
+    else:  # REJECT
+        quality += 10  # Reject icin range buyuk olabilir, sabit bonus
 
     # 3. OBV teyidi (0-20)
     if signal_bar >= 5 and signal_bar < len(obv_ema):
@@ -1332,21 +1349,13 @@ def _pv_div_quality(close_slope, vol_slope, signal_bar,
             if direction == 'BUY' and obv_diff > 0:
                 quality += 20
             elif direction == 'BUY' and obv_diff <= 0:
-                quality += 8
+                quality += 5
             elif direction == 'SELL' and obv_diff < 0:
                 quality += 20
             elif direction == 'SELL' and obv_diff >= 0:
-                quality += 8
+                quality += 5
 
-    # 4. Sure (0-15) — daha uzun divergence daha anlamli
-    if lookback >= 30:
-        quality += 15
-    elif lookback >= 20:
-        quality += 10
-    else:
-        quality += 5
-
-    # 5. Recency (0-15)
+    # 4. Recency (0-15)
     bars_from_end = n - 1 - signal_bar
     if bars_from_end <= 2:
         quality += 15
@@ -1354,6 +1363,12 @@ def _pv_div_quality(close_slope, vol_slope, signal_bar,
         quality += 10
     elif bars_from_end <= 10:
         quality += 5
+
+    # 5. Sub-type bonus (0-10)
+    if sub_type == 'ABSORB':
+        quality += 10  # Emilim daha guclu sinyal
+    else:
+        quality += 5   # Reject
 
     return max(min(quality, 100), 0)
 
