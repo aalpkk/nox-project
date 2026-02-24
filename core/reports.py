@@ -305,7 +305,7 @@ def generate_regime_html(results, total, market_label="BIST"):
     now = datetime.datetime.now().strftime('%d.%m.%Y %H:%M')
     rows_json = json.dumps(_sanitize(results), ensure_ascii=False)
     sig_counts = Counter(r['signal'] for r in results)
-    priority = ["COMBO+","COMBO","STRONG","WEAK","REVERSAL","EARLY","PULLBACK","SQUEEZE","MEANREV","PARTIAL"]
+    priority = ["COMBO+","COMBO","STRONG","WEAK","REVERSAL","EARLY","BUILDUP","PULLBACK","SQUEEZE","MEANREV","PARTIAL"]
 
     html = f"""<!DOCTYPE html>
 <html lang="tr"><head><meta charset="UTF-8">
@@ -579,7 +579,7 @@ def format_regime_telegram(results, total, html_url=None):
     signal_groups = {}
     for r in results:
         signal_groups.setdefault(r['signal'], []).append(r)
-    priority = ["COMBO+","COMBO","STRONG","WEAK","REVERSAL","EARLY","PULLBACK","SQUEEZE","MEANREV"]
+    priority = ["COMBO+","COMBO","STRONG","WEAK","REVERSAL","EARLY","BUILDUP","PULLBACK","SQUEEZE","MEANREV"]
 
     lines = [f"<b>⬡ NOX Regime — {now}</b>", ""]
     if not results:
@@ -598,7 +598,7 @@ def format_regime_telegram(results, total, html_url=None):
     lines.append("")
 
     top_signals = []
-    for sig in ["COMBO+","STRONG","REVERSAL","EARLY","PULLBACK","SQUEEZE","MEANREV"]:
+    for sig in ["COMBO+","STRONG","REVERSAL","EARLY","BUILDUP","PULLBACK","SQUEEZE","MEANREV"]:
         for r in signal_groups.get(sig, []):
             top_signals.append(r)
     cmb_best = sorted([r for r in signal_groups.get("COMBO", []) if r['rs_score'] > 0 and r['quality'] >= 50],

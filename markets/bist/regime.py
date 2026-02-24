@@ -14,7 +14,7 @@ from markets.bist.config import (
     TREND_TP, GRI_TP, DONUS_TP, COMBO_TP, QUAL_MIN_GRI, QUAL_MIN_TREND,
     RS_THRESHOLD, MIN_AVG_VOLUME_TL,
     ATR_PANIC_PCTILE, ATR_PCTILE_WINDOW,
-    CORE_Q_MIN_PARTIAL_STRONG, CORE_Q_MIN_EARLY, CORE_Q_MIN_COMBO,
+    CORE_Q_MIN_PARTIAL_STRONG, CORE_Q_MIN_EARLY, CORE_Q_MIN_COMBO, CORE_Q_MIN_BUILDUP,
     COMBO_RS_MAX, COMBO_OE_MAX, COMBO_DIST_EMA_MAX,
     POS_SIZE_CORE, POS_SIZE_MOMENTUM,
     MOMENTUM_RS_THRESH,
@@ -31,7 +31,7 @@ from core.config import (
 from core.indicators import (
     ema, sma, rma, true_range, calc_atr, calc_adx, calc_supertrend,
     calc_wavetrend, calc_pmax, calc_smc, calc_order_blocks,
-    calc_rsi, resample_weekly, calc_overextended, calc_atr_percentile,
+    calc_rsi, resample_weekly, calc_overextended, calc_atr_percentile, calc_macd,
 )
 
 
@@ -274,11 +274,33 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
         mom_up5 = (c.iloc[-1] - c.iloc[-6]) / c.iloc[-6] * 100 if n > 6 else 0
         green_cnt = sum(1 for i in range(5) if c.iloc[-1 - i] > o.iloc[-1 - i])
         adx_turn = adx_val > adx_s.iloc[-2] and adx_s.iloc[-2] > adx_s.iloc[-3] if n > 3 else False
-        early_rsi = calc_rsi(c, 14).iloc[-1]
+        rsi14 = calc_rsi(c, 14)
+        early_rsi = rsi14.iloc[-1]
         highest5 = c.rolling(5).max().iloc[-1]
         early_struct = struct_break and v.iloc[-1] > vol_sma20.iloc[-1] * 1.2 and adx_turn
         early_mom = mom_up5 > 5.0 and c.iloc[-1] >= highest5 and green_cnt >= 3 and v.iloc[-1] > vol_sma20.iloc[-1] * 1.2
         early = regime <= 1 and (early_struct or early_mom) and early_rsi < 75
+
+        # H: BUILDUP — kompresyondan genislemeye gecis
+        adx_low = adx_val < 25
+        adx_was_falling = adx_s.iloc[-5] > adx_s.iloc[-3] if n > 5 else False
+        adx_turning_up = adx_slope > 0
+
+        rsi_slope = rsi14.iloc[-1] - rsi14.iloc[-3] if n > 3 else 0
+        rsi_neutral = 40 < rsi14.iloc[-1] < 65
+        rsi_turning_up = rsi_slope > 0
+
+        macd_line, signal_line, hist = calc_macd(c)
+        hist_turning = (hist.iloc[-1] > hist.iloc[-2] and
+                        hist.iloc[-2] > hist.iloc[-3]) if n > 3 else False
+
+        price_above_ema55 = c.iloc[-1] > ema_s.iloc[-1]
+        price_near_ema20 = abs(c.iloc[-1] - ema20.iloc[-1]) / atr_val < 1.0
+
+        buildup = (adx_low and adx_turning_up and adx_was_falling and
+                   rsi_neutral and rsi_turning_up and
+                   hist_turning and
+                   price_above_ema55 and price_near_ema20)
 
         # G: COMBO
         combo_base = (wt_cross_up or wt_recent) and wt_bullish and pmax_long
@@ -311,6 +333,8 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
                 dbg['donus_check'] += 1
             if early:
                 dbg['early_check'] += 1
+            if buildup:
+                dbg['buildup_check'] = dbg.get('buildup_check', 0) + 1
             if pullback:
                 dbg['pb_check'] += 1
             if sq_exp:
@@ -356,6 +380,8 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
             signal = "REVERSAL"
         elif early:
             signal = "EARLY"
+        elif buildup:
+            signal = "BUILDUP"
         elif pullback:
             signal = "PULLBACK"
         elif sq_exp:
@@ -406,11 +432,6 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
                 if dbg:
                     dbg['mode_filter'] = dbg.get('mode_filter', 0) + 1
                 return None
-            # COMBO+ → CORE'da kapalı
-            if signal == "COMBO+":
-                if dbg:
-                    dbg['mode_filter'] = dbg.get('mode_filter', 0) + 1
-                return None
             # COMBO özel kurallar
             if signal == "COMBO":
                 if rs_score >= COMBO_RS_MAX or oe_score > COMBO_OE_MAX or dist_ema_atr > COMBO_DIST_EMA_MAX or quality < CORE_Q_MIN_COMBO:
@@ -429,6 +450,12 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
                     if dbg:
                         dbg['q_filter'] = dbg.get('q_filter', 0) + 1
                     return None
+            # BUILDUP quality gate
+            if signal == "BUILDUP":
+                if quality < CORE_Q_MIN_BUILDUP:
+                    if dbg:
+                        dbg['q_filter'] = dbg.get('q_filter', 0) + 1
+                    return None
 
         if dbg:
             dbg['signal'] += 1
@@ -444,6 +471,7 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
             "COMBO+": COMBO_STOP, "COMBO": COMBO_STOP,
             "STRONG": TREND_STOP, "WEAK": TREND_STOP,
             "PULLBACK": GRI_STOP, "SQUEEZE": GRI_STOP, "EARLY": GRI_STOP,
+            "BUILDUP": GRI_STOP,
             "REVERSAL": DONUS_STOP, "MEANREV": MR_STOP,
             "PARTIAL": TREND_STOP,
         }.get(signal, TREND_STOP)
@@ -469,6 +497,9 @@ def analyze_regime(ticker, df, xu_df, dbg=None, usd_df=None, market_state=None):
             tp_price = close_price + atr_val * TREND_TP * 0.75
             tp_src = "ATR"
         elif signal == "EARLY":
+            tp_price = close_price + atr_val * TREND_TP * 0.8
+            tp_src = "ATR"
+        elif signal == "BUILDUP":
             tp_price = close_price + atr_val * TREND_TP * 0.8
             tp_src = "ATR"
         else:

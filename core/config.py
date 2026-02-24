@@ -31,7 +31,7 @@ SIGNAL_NAMES = {
     "COMBO+": "COMBO+", "COMBO": "COMBO", "STRONG": "STRONG",
     "WEAK": "WEAK", "REVERSAL": "REVERSAL", "EARLY": "EARLY",
     "PULLBACK": "PULLBACK", "SQUEEZE": "SQUEEZE", "MEANREV": "MEANREV",
-    "PARTIAL": "PARTIAL",
+    "PARTIAL": "PARTIAL", "BUILDUP": "BUILDUP",
     "DIP+": "DIP+", "DIP": "DIP", "DIP_E": "DIP_E", "DIP_W": "DIP_W",
     "RECOVER": "RECOVER", "INSTITUTIONAL": "INSTITUTIONAL",
     "SIDEWAYS_MR": "SIDEWAYS_MR", "SIDEWAYS_SQ": "SIDEWAYS_SQ",
@@ -40,7 +40,7 @@ SIGNAL_NAMES = {
 SIGNAL_EMOJI = {
     "COMBO+": "🔴", "COMBO": "🟠", "STRONG": "🟢", "WEAK": "🟡",
     "REVERSAL": "🟣", "EARLY": "🟠", "PULLBACK": "🔵",
-    "SQUEEZE": "🟩", "MEANREV": "⚪", "PARTIAL": "⬜",
+    "SQUEEZE": "🟩", "MEANREV": "⚪", "PARTIAL": "⬜", "BUILDUP": "⚡",
     "DIP+": "🔶", "DIP": "🔸", "DIP_E": "📙", "DIP_W": "👀",
     "RECOVER": "💎", "INSTITUTIONAL": "🏦", "WHALE": "🐋",
     "SUPPLY": "📦",
@@ -51,7 +51,7 @@ SIGNAL_COLORS = {
     "COMBO+": "#ef4444", "COMBO": "#f97316", "STRONG": "#22c55e",
     "WEAK": "#eab308", "REVERSAL": "#a855f7", "EARLY": "#f97316",
     "PULLBACK": "#3b82f6", "SQUEEZE": "#4ade80", "MEANREV": "#d1d5db",
-    "PARTIAL": "#9ca3af",
+    "PARTIAL": "#9ca3af", "BUILDUP": "#818cf8",
     "DIP+": "#f59e0b", "DIP": "#fb923c", "DIP_E": "#fbbf24",
     "DIP_W": "#a3a3a3", "RECOVER": "#06b6d4", "INSTITUTIONAL": "#8b5cf6",
     "WHALE": "#0ea5e9",
@@ -61,8 +61,8 @@ SIGNAL_COLORS = {
 
 SIGNAL_PRIORITY_TREND = {
     "COMBO+": 1, "COMBO": 2, "STRONG": 3, "WEAK": 4,
-    "REVERSAL": 5, "EARLY": 6, "PULLBACK": 7,
-    "SQUEEZE": 8, "MEANREV": 9, "PARTIAL": 10,
+    "REVERSAL": 5, "EARLY": 6, "BUILDUP": 7, "PULLBACK": 8,
+    "SQUEEZE": 9, "MEANREV": 10, "PARTIAL": 11,
 }
 
 SIGNAL_PRIORITY_DIP = {
