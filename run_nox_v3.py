@@ -30,6 +30,7 @@ import pandas as pd
 
 from markets.bist import data as data_mod
 from markets.bist.nox_v3_signals import compute_nox_v3
+from markets.bist.trend_birth import scan_trend_birth
 from core.reports import _NOX_CSS, _sanitize, send_telegram, send_telegram_document, push_html_to_github
 
 
@@ -76,7 +77,7 @@ def _to_weekly(df):
 # TARAMA
 # =============================================================================
 
-def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
+def _scan(stock_dfs, debug_ticker=None, scan_bars=10, tf_label='daily'):
     """
     Tum hisselerde pivot tarama yap.
     Son `scan_bars` onay barini kontrol eder (varsayilan=2*lb=10).
@@ -84,6 +85,7 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
     Kirilmis pivotlar filtrelenir (fiyat pivot seviyesinin altina dustuyse).
     Ticker basina sadece en son sinyal raporlanir.
     Ayrica ADAY (onaylanmamis) pivot low adaylarini da tarar.
+    tf_label='weekly' ise haftalik momentum alanlari hesaplanir.
     """
     buys = []
     sells = []
@@ -104,6 +106,14 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
             last = len(df) - 1
             if last_date is None:
                 last_date = df.index[-1]
+
+            # Haftalik momentum alanlari
+            wk_mom = False
+            wk_rsi_up = False
+            if tf_label == 'weekly' and last >= 1:
+                wk_mom = float(result['close'].iloc[last]) > float(result['close'].iloc[last - 1])
+                rsi_arr = result['rsi']
+                wk_rsi_up = float(rsi_arr.iloc[last]) > float(rsi_arr.iloc[last - 1])
 
             if debug_ticker and ticker == debug_ticker:
                 _print_debug(ticker, result)
@@ -140,6 +150,8 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
                         'signal_date': signal_date,
                         'pivot_date': pivot_date,
                         'fresh': fresh,
+                        'wk_mom': wk_mom,
+                        'wk_rsi_up': wk_rsi_up,
                     })
                     found_buy = True
                     break  # ticker basina en son gecerli sinyal
@@ -175,6 +187,8 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
                             'slope': result['adx_slope'].iloc[last],
                             'rsi': result['rsi'].iloc[last],
                             'pivot_date': df.index[min_pos].strftime('%Y-%m-%d'),
+                            'wk_mom': wk_mom,
+                            'wk_rsi_up': wk_rsi_up,
                         })
 
             # — SAT: en son onaylanan pivot high —
@@ -212,6 +226,42 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
 
 
 # =============================================================================
+# HAFTALIK ZENGINLESTIRME — Trend Birth + Durum
+# =============================================================================
+
+def _enrich_with_trend_birth(signals, stock_dfs):
+    """Haftalik AL/ADAY sinyallerini gunluk Trend Birth verisiyle zenginlestirir.
+    Her sinyal icin tb_stage (OK/TRG/PREP/-) ve status (HAZIR/IZLE/BEKLE) ekler."""
+    for sig in signals:
+        ticker = sig['ticker']
+        df = stock_dfs.get(ticker)
+        if df is None or len(df) < 60:
+            sig.update(tb_stage='-', tb_prep=0, tb_triggers=0, status='BEKLE')
+            continue
+        try:
+            tb = scan_trend_birth(df)
+            last = len(df) - 1
+            prep = int(tb['prep_score'].iloc[last])
+            trig = int(tb['trigger_count'].iloc[last])
+            conf = bool(tb['confirmed'].iloc[last])
+
+            stage = 'OK' if conf else 'TRG' if trig >= 2 else 'PREP' if prep >= 40 else '-'
+
+            wk_mom = sig.get('wk_mom', False)
+            if wk_mom and stage in ('TRG', 'OK'):
+                status = 'HAZIR'
+            elif wk_mom:
+                status = 'İZLE'
+            else:
+                status = 'BEKLE'
+
+            sig.update(tb_stage=stage, tb_prep=prep, tb_triggers=trig, status=status)
+        except Exception:
+            sig.update(tb_stage='-', tb_prep=0, tb_triggers=0, status='BEKLE')
+    return signals
+
+
+# =============================================================================
 # RAPOR
 # =============================================================================
 
@@ -222,21 +272,33 @@ def _print_section(title):
     print(f"{'━' * w}")
 
 
-def _print_buy_group(label, items):
+def _print_buy_group(label, items, weekly=False):
     if not items:
         print(f"\n  {label} (0)")
         return
     print(f"\n  {label} ({len(items)})")
-    print(f"  {'─' * 90}")
-    print(f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
-          f"{'RG':>5} {'ADX':>5} {'Slope':>6} {'RSI':>5} {'':>6}")
-    print(f"  {'─' * 90}")
+    w = 90 if not weekly else 115
+    print(f"  {'─' * w}")
+    hdr = (f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
+           f"{'RG':>5} {'ADX':>5} {'Slope':>6} {'RSI':>5}")
+    if weekly:
+        hdr += f" {'Mom':>4} {'TB':>4} {'Durum':>6}"
+    hdr += f" {'':>6}"
+    print(hdr)
+    print(f"  {'─' * w}")
     for b in items:
         tag = '★BUGN' if b.get('fresh') == 'BUGUN' else ''
-        print(f"  {b['ticker']:<8} {b['pivot_date']:>10} "
-              f"{b['close']:>8.2f} {b['pivot']:>8.2f} {b['delta_pct']:>+5.1f}% "
-              f"{b['rg']:>5.0f} {b['adx']:>5.1f} {b['slope']:>+6.2f} {b['rsi']:>5.1f} {tag:>6}")
-    print(f"  {'─' * 90}")
+        line = (f"  {b['ticker']:<8} {b['pivot_date']:>10} "
+                f"{b['close']:>8.2f} {b['pivot']:>8.2f} {b['delta_pct']:>+5.1f}% "
+                f"{b['rg']:>5.0f} {b['adx']:>5.1f} {b['slope']:>+6.2f} {b['rsi']:>5.1f}")
+        if weekly:
+            mom = '✓' if b.get('wk_mom') else '✗'
+            tb = b.get('tb_stage', '-')
+            status = b.get('status', 'BEKLE')
+            line += f" {mom:>4} {tb:>4} {status:>6}"
+        line += f" {tag:>6}"
+        print(line)
+    print(f"  {'─' * w}")
 
 
 def _print_sell_group(label, items):
@@ -257,36 +319,49 @@ def _print_sell_group(label, items):
     print(f"  {'─' * 82}")
 
 
-def _print_candidate_group(label, items):
+def _print_candidate_group(label, items, weekly=False):
     if not items:
         print(f"\n  {label} (0)")
         return
     print(f"\n  {label} ({len(items)})")
-    print(f"  {'─' * 90}")
-    print(f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
-          f"{'Bars':>4} {'RG':>5} {'ADX':>5} {'Slope':>6} {'RSI':>5}")
-    print(f"  {'─' * 90}")
+    w = 90 if not weekly else 115
+    print(f"  {'─' * w}")
+    hdr = (f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
+           f"{'Bars':>4} {'RG':>5} {'ADX':>5} {'Slope':>6} {'RSI':>5}")
+    if weekly:
+        hdr += f" {'Mom':>4} {'TB':>4} {'Durum':>6}"
+    print(hdr)
+    print(f"  {'─' * w}")
     for c in items:
         gate_tag = '⬡' if c.get('gate') else ''
-        print(f"  {c['ticker']:<8} {c['pivot_date']:>10} "
-              f"{c['close']:>8.2f} {c['pivot']:>8.2f} {c['delta_pct']:>+5.1f}% "
-              f"{c['bars_since']:>4} {c['rg']:>5.0f} {c['adx']:>5.1f} "
-              f"{c['slope']:>+6.2f} {c['rsi']:>5.1f} {gate_tag}")
-    print(f"  {'─' * 90}")
+        line = (f"  {c['ticker']:<8} {c['pivot_date']:>10} "
+                f"{c['close']:>8.2f} {c['pivot']:>8.2f} {c['delta_pct']:>+5.1f}% "
+                f"{c['bars_since']:>4} {c['rg']:>5.0f} {c['adx']:>5.1f} "
+                f"{c['slope']:>+6.2f} {c['rsi']:>5.1f}")
+        if weekly:
+            mom = '✓' if c.get('wk_mom') else '✗'
+            tb = c.get('tb_stage', '-')
+            status = c.get('status', 'BEKLE')
+            line += f" {mom:>4} {tb:>4} {status:>6}"
+        line += f" {gate_tag}"
+        print(line)
+    print(f"  {'─' * w}")
 
 
 def _print_results(buys, sells, candidates, n_scanned, date_str, tf_label):
     _print_section(f"◆ NOX v3 [{tf_label}] — {date_str} — {n_scanned} hisse")
+    is_weekly = tf_label == 'HAFTALIK'
 
     # AL sinyallerini gate durumuna gore ayir
     gated = [b for b in buys if b['gate']]
     ungated = [b for b in buys if not b['gate']]
 
-    _print_buy_group("◆ PIVOT AL — ONAYLI (Gate Acik)", gated)
-    _print_buy_group("◆ PIVOT AL — Sadece Pivot (Gate Kapali)", ungated)
+    al_label = "◆ WATCHLIST AL" if is_weekly else "◆ PIVOT AL"
+    _print_buy_group(f"{al_label} — ONAYLI (Gate Acik)", gated, weekly=is_weekly)
+    _print_buy_group(f"{al_label} — Sadece Pivot (Gate Kapali)", ungated, weekly=is_weekly)
 
     # ADAY: onaylanmamis pivot adaylari
-    _print_candidate_group("◆ ADAY — Taze Elmas (Onay Bekliyor)", candidates)
+    _print_candidate_group("◆ ADAY — Taze Elmas (Onay Bekliyor)", candidates, weekly=is_weekly)
 
     # SAT sinyallerini severity'ye gore ayir
     severe = [s for s in sells if s['severity'] >= 2]
@@ -379,10 +454,10 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                    overlap_tickers):
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
 
-    def _prep_buys(buys):
+    def _prep_buys(buys, weekly=False):
         rows = []
         for b in buys:
-            rows.append({
+            row = {
                 'ticker': b['ticker'],
                 'close': round(b['close'], 2),
                 'pivot': round(b['pivot'], 2),
@@ -395,7 +470,13 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                 'pivot_date': b['pivot_date'],
                 'signal_date': b['signal_date'],
                 'fresh': b['fresh'],
-            })
+            }
+            if weekly:
+                row['wk_mom'] = b.get('wk_mom', False)
+                row['tb_stage'] = b.get('tb_stage', '-')
+                row['tb_prep'] = b.get('tb_prep', 0)
+                row['status'] = b.get('status', 'BEKLE')
+            rows.append(row)
         return rows
 
     def _prep_sells(sells):
@@ -416,10 +497,10 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
             })
         return rows
 
-    def _prep_candidates(cands):
+    def _prep_candidates(cands, weekly=False):
         rows = []
         for c in cands:
-            rows.append({
+            row = {
                 'ticker': c['ticker'],
                 'close': round(c['close'], 2),
                 'pivot': round(c['pivot'], 2),
@@ -431,7 +512,13 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                 'rsi': round(c['rsi'], 1),
                 'gate': c['gate'],
                 'pivot_date': c['pivot_date'],
-            })
+            }
+            if weekly:
+                row['wk_mom'] = c.get('wk_mom', False)
+                row['tb_stage'] = c.get('tb_stage', '-')
+                row['tb_prep'] = c.get('tb_prep', 0)
+                row['status'] = c.get('status', 'BEKLE')
+            rows.append(row)
         return rows
 
     data = {
@@ -442,9 +529,9 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
             'n': d_n or 0, 'date': d_date or '',
         },
         'weekly': {
-            'buys': _sanitize(_prep_buys(w_buys)) if w_buys else [],
+            'buys': _sanitize(_prep_buys(w_buys, weekly=True)) if w_buys else [],
             'sells': _sanitize(_prep_sells(w_sells)) if w_sells else [],
-            'candidates': _sanitize(_prep_candidates(w_cands)) if w_cands else [],
+            'candidates': _sanitize(_prep_candidates(w_cands, weekly=True)) if w_cands else [],
             'n': w_n or 0, 'date': w_date or '',
         },
         'overlap': sorted(overlap_tickers) if overlap_tickers else [],
@@ -518,6 +605,17 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
 .delta-lo {{ color: var(--nox-green); }}
 .delta-mid {{ color: var(--nox-yellow); }}
 .delta-hi {{ color: var(--nox-red); }}
+.status-badge {{
+  display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm);
+  font-size: 0.68rem; font-weight: 700; font-family: var(--font-mono);
+}}
+.status-hazir {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
+.status-izle  {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
+.status-bekle {{ background: rgba(113,113,122,0.15); color: var(--text-muted); }}
+.tb-ok   {{ color: var(--nox-green); font-weight: 700; }}
+.tb-trg  {{ color: var(--nox-cyan); font-weight: 700; }}
+.tb-prep {{ color: var(--nox-yellow); }}
+.tb-none {{ color: var(--text-muted); }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -540,6 +638,10 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
   <select id="fRSI" onchange="render()"><option value="">Tumü</option>
   <option value="low">≤30 (Asırı Satım)</option><option value="mid">30-70</option>
   <option value="high">≥70 (Asırı Alım)</option></select></div>
+  <div><label>Durum</label>
+  <select id="fStatus" onchange="render()"><option value="">Tumü</option>
+  <option value="HAZIR">HAZIR</option><option value="İZLE">İZLE</option>
+  <option value="BEKLE">BEKLE</option></select></div>
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
 </div>
 
@@ -576,6 +678,7 @@ function resetF(){{
   document.getElementById('fDelta').value='';
   document.getElementById('fADX').value='0';
   document.getElementById('fRSI').value='';
+  document.getElementById('fStatus').value='';
   render();
 }}
 
@@ -603,6 +706,7 @@ function applyGlobalFilters(rows){{
   const maxDelta=parseFloat(document.getElementById('fDelta').value);
   const minADX=parseFloat(document.getElementById('fADX').value)||0;
   const fRSI=document.getElementById('fRSI').value;
+  const fStatus=document.getElementById('fStatus').value;
   return rows.filter(r=>{{
     if(sr&&!r.ticker.includes(sr)) return false;
     if(ff&&r.fresh!==ff) return false;
@@ -611,6 +715,7 @@ function applyGlobalFilters(rows){{
     if(fRSI==='low'&&r.rsi>30) return false;
     if(fRSI==='mid'&&(r.rsi<30||r.rsi>70)) return false;
     if(fRSI==='high'&&r.rsi<70) return false;
+    if(fStatus&&r.status&&r.status!==fStatus) return false;
     return true;
   }});
 }}
@@ -619,9 +724,29 @@ function mkFreshBadge(fresh){{
   return '<span class="fresh-badge fresh-yakin">YAKIN</span>';
 }}
 
+function mkStatusBadge(s){{
+  if(!s) return '';
+  const cls=s==='HAZIR'?'status-hazir':s==='İZLE'?'status-izle':'status-bekle';
+  return `<span class="status-badge ${{cls}}">${{s}}</span>`;
+}}
+function mkTbBadge(stage){{
+  if(!stage||stage==='-') return '<span class="tb-none">-</span>';
+  const cls=stage==='OK'?'tb-ok':stage==='TRG'?'tb-trg':'tb-prep';
+  return `<span class="${{cls}}">${{stage}}</span>`;
+}}
+
 function mkBuyTable(buys, tf, label, cssClass){{
+  const isW=tf==='weekly';
   const sk=sortState[tf+'-'+label];
   if(sk) buys=sortRows(buys, sk.col, sk.asc);
+  else if(isW){{ // varsayilan siralama: HAZIR > IZLE > BEKLE, sonra delta_pct artan
+    const so={{'HAZIR':0,'İZLE':1,'BEKLE':2}};
+    buys=[...buys].sort((a,b)=>{{
+      const sa=so[a.status]??2, sb=so[b.status]??2;
+      if(sa!==sb) return sa-sb;
+      return (a.delta_pct||0)-(b.delta_pct||0);
+    }});
+  }}
   const fg=document.getElementById('fGate').value;
   buys=applyGlobalFilters(buys);
   buys=buys.filter(r=>{{
@@ -638,7 +763,9 @@ function mkBuyTable(buys, tf, label, cssClass){{
   <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>DipFiy</th><th ${{srt('delta_pct')}}>Δ%</th>
   <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
-  <th>Gate</th></tr></thead><tbody>`;
+  <th>Gate</th>`;
+  if(isW) h+=`<th>Mom</th><th ${{srt('tb_stage')}}>TB</th><th ${{srt('tb_prep')}}>Prep</th><th ${{srt('status')}}>Durum</th>`;
+  h+=`</tr></thead><tbody>`;
   buys.forEach(r=>{{
     const ovB=OV.has(r.ticker)?'<span class="overlap-badge">D+W</span>':'';
     const gateC=r.gate?'gate-open':'gate-closed';
@@ -655,7 +782,10 @@ function mkBuyTable(buys, tf, label, cssClass){{
     <td>${{r.rg}}</td><td>${{r.adx}}</td>
     <td style="color:${{slopeC}}">${{r.slope>0?'+':''}}${{r.slope}}</td>
     <td style="color:${{rsiC}}">${{r.rsi}}</td>
-    <td class="${{gateC}}">${{gateT}}</td></tr>`;
+    <td class="${{gateC}}">${{gateT}}</td>`;
+    if(isW) h+=`<td style="color:${{r.wk_mom?'var(--nox-green)':'var(--text-muted)'}}">${{r.wk_mom?'✓':'✗'}}</td>
+    <td>${{mkTbBadge(r.tb_stage)}}</td><td>${{r.tb_prep||0}}</td><td>${{mkStatusBadge(r.status)}}</td>`;
+    h+=`</tr>`;
   }});
   h+=`</tbody></table></div>`;
   return h;
@@ -695,17 +825,18 @@ function mkSellTable(sells, tf, label, cssClass){{
 }}
 
 function mkCandidateTable(cands, tf){{
+  const isW=tf==='weekly';
   const sk=sortState[tf+'-cand'];
   if(sk) cands=sortRows(cands, sk.col, sk.asc);
-  const sr=document.getElementById('fS').value.toUpperCase();
-  const maxDelta=parseFloat(document.getElementById('fDelta').value);
-  const minADX=parseFloat(document.getElementById('fADX').value)||0;
-  cands=cands.filter(r=>{{
-    if(sr&&!r.ticker.includes(sr)) return false;
-    if(!isNaN(maxDelta)&&maxDelta>0&&r.delta_pct>maxDelta) return false;
-    if(minADX>0&&r.adx<minADX) return false;
-    return true;
-  }});
+  else if(isW){{
+    const so={{'HAZIR':0,'İZLE':1,'BEKLE':2}};
+    cands=[...cands].sort((a,b)=>{{
+      const sa=so[a.status]??2, sb=so[b.status]??2;
+      if(sa!==sb) return sa-sb;
+      return (a.delta_pct||0)-(b.delta_pct||0);
+    }});
+  }}
+  cands=applyGlobalFilters(cands);
   if(!cands.length) return '';
   const srt=(c)=>`onclick="doSort('${{tf}}','cand','${{c}}')"`;
   let h=`<div class="section-title"><span class="icon">💎</span>ADAY — Taze Elmas (Onay Bekliyor)<span class="section-count" style="background:rgba(34,211,238,0.12);color:var(--nox-cyan)">${{cands.length}}</span></div>`;
@@ -715,7 +846,9 @@ function mkCandidateTable(cands, tf){{
   <th ${{srt('bars_since')}}>Bars</th>
   <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
-  <th>Gate</th></tr></thead><tbody>`;
+  <th>Gate</th>`;
+  if(isW) h+=`<th>Mom</th><th ${{srt('tb_stage')}}>TB</th><th ${{srt('tb_prep')}}>Prep</th><th ${{srt('status')}}>Durum</th>`;
+  h+=`</tr></thead><tbody>`;
   cands.forEach(r=>{{
     const deltaC=r.delta_pct<=5?'delta-lo':r.delta_pct<=15?'delta-mid':'delta-hi';
     const slopeC=r.slope>0?'var(--nox-green)':r.slope<-0.3?'var(--nox-red)':'var(--text-muted)';
@@ -732,7 +865,10 @@ function mkCandidateTable(cands, tf){{
     <td>${{r.rg}}</td><td>${{r.adx}}</td>
     <td style="color:${{slopeC}}">${{r.slope>0?'+':''}}${{r.slope}}</td>
     <td style="color:${{rsiC}}">${{r.rsi}}</td>
-    <td class="${{gateC}}">${{gateT}}</td></tr>`;
+    <td class="${{gateC}}">${{gateT}}</td>`;
+    if(isW) h+=`<td style="color:${{r.wk_mom?'var(--nox-green)':'var(--text-muted)'}}">${{r.wk_mom?'✓':'✗'}}</td>
+    <td>${{mkTbBadge(r.tb_stage)}}</td><td>${{r.tb_prep||0}}</td><td>${{mkStatusBadge(r.status)}}</td>`;
+    h+=`</tr>`;
   }});
   h+=`</tbody></table></div>`;
   return h;
@@ -748,7 +884,8 @@ function render(){{
     // AL
     const gated=td.buys.filter(r=>r.gate);
     const ungated=td.buys.filter(r=>!r.gate);
-    html+=`<div class="section-title" style="font-size:1rem;color:var(--nox-green)">PIVOT AL<span class="section-count cnt-buy">${{td.buys.length}}</span></div>`;
+    const alTitle=tf==='weekly'?'WATCHLIST — Haftalık Pivot':'PIVOT AL';
+    html+=`<div class="section-title" style="font-size:1rem;color:var(--nox-green)">${{alTitle}}<span class="section-count cnt-buy">${{td.buys.length}}</span></div>`;
     html+=mkBuyTable(gated,tf,'gated','cnt-gate');
     html+=mkBuyTable(ungated,tf,'ungated','cnt-buy');
 
@@ -799,9 +936,13 @@ def _save_html(html_content, date_str, output_dir):
 # =============================================================================
 
 def _format_weekly_telegram(buys, sells, candidates, n_scanned, date_str, html_url=None):
-    """Haftalik sinyal Telegram mesaji."""
-    gated = [b for b in buys if b['gate']]
-    ungated = [b for b in buys if not b['gate']]
+    """Haftalik sinyal Telegram mesaji — HAZIR/IZLE/BEKLE gruplu."""
+    # AL + ADAY birlestir, duruma gore grupla
+    all_signals = buys + candidates
+    hazir = [s for s in all_signals if s.get('status') == 'HAZIR']
+    izle = [s for s in all_signals if s.get('status') == 'İZLE']
+    bekle = [s for s in all_signals if s.get('status', 'BEKLE') == 'BEKLE']
+
     severe = [s for s in sells if s['severity'] >= 2]
     mild = [s for s in sells if s['severity'] == 1]
     slope_only = [s for s in sells if s['severity'] == 0]
@@ -810,38 +951,39 @@ def _format_weekly_telegram(buys, sells, candidates, n_scanned, date_str, html_u
     lines.append(f"📋 {n_scanned} taranan | {len(buys)} AL / {len(sells)} SAT / {len(candidates)} ADAY")
     lines.append("")
 
-    # AL — Gate Acik (tam liste, Δ% ile)
-    if gated:
-        lines.append(f"<b>◆ AL — Onayli (Gate Acik) [{len(gated)}]</b>")
+    def _fmt_signal(s):
+        tb = s.get('tb_stage', '-')
+        prep = s.get('tb_prep', 0)
+        return (f"<b>{s['ticker']}</b> {s['close']:.2f} ◆{s['pivot']:.2f} "
+                f"Δ{s['delta_pct']:+.0f}% {tb} PREP:{prep}")
+
+    # HAZIR — Giris Sinyali
+    if hazir:
+        lines.append(f"<b>🟢 HAZIR — Giris Sinyali [{len(hazir)}]</b>")
         lines.append("─────────────────")
-        for b in gated:
-            fresh_tag = '★' if b['fresh'] == 'BUGUN' else ''
-            lines.append(
-                f"{fresh_tag}<b>{b['ticker']}</b> {b['close']:.2f} ◆{b['pivot']:.2f} "
-                f"Δ{b['delta_pct']:+.0f}% ADX:{b['adx']:.1f} [{b['signal_date']}]"
-            )
+        for s in hazir:
+            lines.append(_fmt_signal(s))
         lines.append("")
 
-    # AL — Gate Kapali (sadece sayi)
-    if ungated:
-        lines.append(f"◆ AL — Gate Kapali: {len(ungated)} hisse")
+    # IZLE — Tetik Bekleniyor
+    if izle:
+        lines.append(f"<b>🟡 IZLE — Tetik Bekleniyor [{len(izle)}]</b>")
+        lines.append("─────────────────")
+        shown = izle[:5]
+        for s in shown:
+            lines.append(_fmt_signal(s))
+        if len(izle) > 5:
+            lines.append(f"...ve {len(izle) - 5} hisse daha")
         lines.append("")
 
-    # ADAY — taze elmaslar (tam liste)
-    if candidates:
-        lines.append(f"<b>💎 ADAY — Taze Elmas [{len(candidates)}]</b>")
-        lines.append("─────────────────")
-        for c in candidates:
-            gate_tag = '⬡' if c['gate'] else ''
-            lines.append(
-                f"{gate_tag}<b>{c['ticker']}</b> {c['close']:.2f} ◆{c['pivot']:.2f} "
-                f"Δ{c['delta_pct']:+.0f}% {c['bars_since']}/5bar [{c['pivot_date']}]"
-            )
+    # BEKLE — Momentum Yok
+    if bekle:
+        lines.append(f"⚪ BEKLE — Momentum Yok ({len(bekle)} adet)")
         lines.append("")
 
     # SAT — Sert (tam liste)
     if severe:
-        lines.append(f"<b>◆ SAT — Sert (Severity ≥2) [{len(severe)}]</b>")
+        lines.append(f"<b>◆ SAT — Sert [{len(severe)}]</b>")
         lines.append("─────────────────")
         for s in severe:
             fresh_tag = '★' if s['fresh'] == 'BUGUN' else ''
@@ -916,7 +1058,7 @@ def main():
     if run_daily:
         print(f"\n  Gunluk tarama...")
         t1 = time.time()
-        d_buys, d_sells, d_cands, d_n, d_date = _scan(stock_dfs, debug_ticker)
+        d_buys, d_sells, d_cands, d_n, d_date = _scan(stock_dfs, debug_ticker, tf_label='daily')
         print(f"  Gunluk tamamlandi ({time.time() - t1:.1f}s)")
         _print_results(d_buys, d_sells, d_cands, d_n, d_date, 'GUNLUK')
         if args.csv:
@@ -928,8 +1070,13 @@ def main():
         t2 = time.time()
         weekly_dfs = {t: _to_weekly(df) for t, df in stock_dfs.items()}
         weekly_dfs = {t: df for t, df in weekly_dfs.items() if len(df) >= 30}
-        w_buys, w_sells, w_cands, w_n, w_date = _scan(weekly_dfs, debug_ticker)
-        print(f"  Haftalik tamamlandi ({time.time() - t2:.1f}s)")
+        w_buys, w_sells, w_cands, w_n, w_date = _scan(weekly_dfs, debug_ticker, tf_label='weekly')
+        # Haftalik AL + ADAY sinyallerini Trend Birth ile zenginlestir
+        print(f"  Trend Birth zenginlestirme...")
+        t2b = time.time()
+        w_buys = _enrich_with_trend_birth(w_buys, stock_dfs)
+        w_cands = _enrich_with_trend_birth(w_cands, stock_dfs)
+        print(f"  Haftalik tamamlandi ({time.time() - t2:.1f}s, TB: {time.time() - t2b:.1f}s)")
         _print_results(w_buys, w_sells, w_cands, w_n, w_date, 'HAFTALIK')
         if args.csv:
             _save_csv(w_buys, w_sells, w_date, args.output, suffix='_weekly')
