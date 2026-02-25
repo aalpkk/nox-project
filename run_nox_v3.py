@@ -331,6 +331,8 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
                 'rsi': round(b['rsi'], 1),
                 'gate': b['gate'],
                 'pivot_date': b['pivot_date'],
+                'signal_date': b['signal_date'],
+                'fresh': b['fresh'],
             })
         return rows
 
@@ -347,6 +349,8 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
                 'rsi': round(s['rsi'], 1),
                 'dd_pct': round(s['dd_pct'], 1),
                 'pivot_date': s['pivot_date'],
+                'signal_date': s['signal_date'],
+                'fresh': s['fresh'],
             })
         return rows
 
@@ -422,6 +426,12 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
   margin-left: 4px; vertical-align: middle;
 }}
 .dd-neg {{ color: var(--nox-red); }}
+.fresh-badge {{
+  display: inline-block; padding: 2px 6px; border-radius: var(--radius-sm);
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+}}
+.fresh-bugun {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
+.fresh-yakin {{ background: rgba(250,204,21,0.12); color: var(--nox-yellow); }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -435,6 +445,14 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
   <div><label>Gate</label>
   <select id="fGate" onchange="render()"><option value="">Tumü</option>
   <option value="open">Acik</option><option value="closed">Kapali</option></select></div>
+  <div><label>Fresh</label>
+  <select id="fFresh" onchange="render()"><option value="">Tumü</option>
+  <option value="BUGUN">Bugün</option><option value="YAKIN">Yakın</option></select></div>
+  <div><label>ADX≥</label><input type="number" id="fADX" value="0" step="5" min="0" oninput="render()"></div>
+  <div><label>RSI</label>
+  <select id="fRSI" onchange="render()"><option value="">Tumü</option>
+  <option value="low">≤30 (Asırı Satım)</option><option value="mid">30-70</option>
+  <option value="high">≥70 (Asırı Alım)</option></select></div>
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
 </div>
 
@@ -467,6 +485,9 @@ function switchTab(t){{
 function resetF(){{
   document.getElementById('fS').value='';
   document.getElementById('fGate').value='';
+  document.getElementById('fFresh').value='';
+  document.getElementById('fADX').value='0';
+  document.getElementById('fRSI').value='';
   render();
 }}
 
@@ -488,13 +509,32 @@ function doSort(tf, tbl, col){{
   render();
 }}
 
+function applyGlobalFilters(rows){{
+  const sr=document.getElementById('fS').value.toUpperCase();
+  const ff=document.getElementById('fFresh').value;
+  const minADX=parseFloat(document.getElementById('fADX').value)||0;
+  const fRSI=document.getElementById('fRSI').value;
+  return rows.filter(r=>{{
+    if(sr&&!r.ticker.includes(sr)) return false;
+    if(ff&&r.fresh!==ff) return false;
+    if(minADX>0&&r.adx<minADX) return false;
+    if(fRSI==='low'&&r.rsi>30) return false;
+    if(fRSI==='mid'&&(r.rsi<30||r.rsi>70)) return false;
+    if(fRSI==='high'&&r.rsi<70) return false;
+    return true;
+  }});
+}}
+function mkFreshBadge(fresh){{
+  if(fresh==='BUGUN') return '<span class="fresh-badge fresh-bugun">BUGÜN</span>';
+  return '<span class="fresh-badge fresh-yakin">YAKIN</span>';
+}}
+
 function mkBuyTable(buys, tf, label, cssClass){{
   const sk=sortState[tf+'-'+label];
   if(sk) buys=sortRows(buys, sk.col, sk.asc);
-  const sr=document.getElementById('fS').value.toUpperCase();
   const fg=document.getElementById('fGate').value;
+  buys=applyGlobalFilters(buys);
   buys=buys.filter(r=>{{
-    if(sr&&!r.ticker.includes(sr)) return false;
     if(fg==='open'&&!r.gate) return false;
     if(fg==='closed'&&r.gate) return false;
     return true;
@@ -504,7 +544,7 @@ function mkBuyTable(buys, tf, label, cssClass){{
   let h=`<div class="section-title"><span class="icon">${{cssClass==='cnt-gate'?'✅':'◆'}}</span>${{
     cssClass==='cnt-gate'?'ONAYLI (Gate Açık)':'Sadece Pivot (Gate Kapalı)'}}<span class="section-count ${{cssClass}}">${{buys.length}}</span></div>`;
   h+=`<div class="nox-table-wrap" style="margin-bottom:16px"><table><thead><tr>
-  <th ${{srt('ticker')}}>Hisse</th><th ${{srt('pivot_date')}}>Elmas</th>
+  <th ${{srt('ticker')}}>Hisse</th><th ${{srt('signal_date')}}>Sinyal</th><th ${{srt('pivot_date')}}>Elmas</th>
   <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>DipFiy</th>
   <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
@@ -517,6 +557,7 @@ function mkBuyTable(buys, tf, label, cssClass){{
     const rsiC=r.rsi<30?'var(--nox-green)':r.rsi>70?'var(--nox-red)':'var(--text-primary)';
     h+=`<tr${{r.gate?' class="hl"':''}}>
     <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a>${{ovB}}</td>
+    <td>${{r.signal_date}} ${{mkFreshBadge(r.fresh)}}</td>
     <td style="color:var(--text-muted)">${{r.pivot_date}}</td>
     <td>${{r.close}}</td><td>${{r.pivot}}</td>
     <td>${{r.rg}}</td><td>${{r.adx}}</td>
@@ -531,15 +572,14 @@ function mkBuyTable(buys, tf, label, cssClass){{
 function mkSellTable(sells, tf, label, cssClass){{
   const sk=sortState[tf+'-'+label];
   if(sk) sells=sortRows(sells, sk.col, sk.asc);
-  const sr=document.getElementById('fS').value.toUpperCase();
-  sells=sells.filter(r=>sr?r.ticker.includes(sr):true);
+  sells=applyGlobalFilters(sells);
   if(!sells.length) return '';
   const srt=(c)=>`onclick="doSort('${{tf}}','${{label}}','${{c}}')"`;
   const titles={{'sert':'SERT (Severity 2-3)','hafif':'Hafif (Severity 1)','slope':'Sadece Slope (Severity 0)'}};
   const icons={{'sert':'🔴','hafif':'🟡','slope':'⚪'}};
-  h=`<div class="section-title"><span class="icon">${{icons[label]||'◆'}}</span>PIVOT SAT — ${{titles[label]||label}}<span class="section-count ${{cssClass}}">${{sells.length}}</span></div>`;
+  let h=`<div class="section-title"><span class="icon">${{icons[label]||'◆'}}</span>PIVOT SAT — ${{titles[label]||label}}<span class="section-count ${{cssClass}}">${{sells.length}}</span></div>`;
   h+=`<div class="nox-table-wrap" style="margin-bottom:16px"><table><thead><tr>
-  <th ${{srt('ticker')}}>Hisse</th><th ${{srt('pivot_date')}}>Elmas</th>
+  <th ${{srt('ticker')}}>Hisse</th><th ${{srt('signal_date')}}>Sinyal</th><th ${{srt('pivot_date')}}>Elmas</th>
   <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>TepeFiy</th>
   <th ${{srt('severity')}}>Sev</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
@@ -549,6 +589,7 @@ function mkSellTable(sells, tf, label, cssClass){{
     const slopeC=r.slope>0?'var(--nox-green)':r.slope<-0.3?'var(--nox-red)':'var(--text-muted)';
     h+=`<tr>
     <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
+    <td>${{r.signal_date}} ${{mkFreshBadge(r.fresh)}}</td>
     <td style="color:var(--text-muted)">${{r.pivot_date}}</td>
     <td>${{r.close}}</td><td>${{r.pivot}}</td>
     <td><span class="sev-badge ${{sevC}}">${{r.severity}}</span></td>
@@ -635,9 +676,10 @@ def _format_weekly_telegram(buys, sells, n_scanned, date_str, html_url=None):
         lines.append(f"<b>◆ AL — Onayli (Gate Acik) [{len(gated)}]</b>")
         lines.append("─────────────────")
         for b in gated:
+            fresh_tag = '★' if b['fresh'] == 'BUGUN' else ''
             lines.append(
-                f"<b>{b['ticker']}</b> {b['close']:.2f} ◆{b['pivot']:.2f} "
-                f"RG:{b['rg']:.0f} ADX:{b['adx']:.1f}"
+                f"{fresh_tag}<b>{b['ticker']}</b> {b['close']:.2f} ◆{b['pivot']:.2f} "
+                f"RG:{b['rg']:.0f} ADX:{b['adx']:.1f} [{b['signal_date']}]"
             )
         lines.append("")
 
@@ -651,9 +693,10 @@ def _format_weekly_telegram(buys, sells, n_scanned, date_str, html_url=None):
         lines.append(f"<b>◆ SAT — Sert (Severity ≥2) [{len(severe)}]</b>")
         lines.append("─────────────────")
         for s in severe:
+            fresh_tag = '★' if s['fresh'] == 'BUGUN' else ''
             lines.append(
-                f"<b>{s['ticker']}</b> {s['close']:.2f} ◆{s['pivot']:.2f} "
-                f"Sev:{s['severity']} ADX:{s['adx']:.1f}"
+                f"{fresh_tag}<b>{s['ticker']}</b> {s['close']:.2f} ◆{s['pivot']:.2f} "
+                f"Sev:{s['severity']} ADX:{s['adx']:.1f} [{s['signal_date']}]"
             )
         lines.append("")
 
