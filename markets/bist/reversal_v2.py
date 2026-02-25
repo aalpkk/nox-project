@@ -409,11 +409,10 @@ class ReversalCandleModule:
         names = names.where(~mask_sabah, 'SABAH_YILDIZI')
 
         # --- DOJI_YILDIZ (Doji Star) ---
-        # Doji + önceki kırmızı + sonraki yeşil açılış (son bar doji ise bak)
+        # Doji + dip bölgesinde (önceki kırmızı şartı kaldırıldı — dip_context yeterli)
         doji = body_pct < 0.10
         doji_star = (
             doji &
-            is_red.shift(1) &
             dip_context
         )
         mask_doji = doji_star & (scores == 0)
@@ -423,7 +422,7 @@ class ReversalCandleModule:
         # --- TOPAC (Spinning Top) ---
         # Küçük gövde, iki tarafta uzun gölge, dipte
         topac = (
-            (body_pct < 0.30) &
+            (body_pct < 0.35) &
             (lower_shadow > body) &
             (upper_shadow > body) &
             dip_context
@@ -1319,7 +1318,16 @@ class ReversalScreenerV2:
                 close_latest = df['close'].iloc[-1]
                 rvwap_latest = rvwap_series.iloc[-1]
                 avwap_latest = avwap_series.iloc[-1]
-                candle_name_latest = candle_name.iloc[-1]
+                # Son 20 barda en güçlü dönüş mumu (dip bölgesinde oluşmuş olabilir)
+                recent_candle_scores = candle_score.iloc[-20:]
+                recent_candle_names = candle_name.iloc[-20:]
+                if (recent_candle_scores > 0).any():
+                    best_idx = recent_candle_scores.idxmax()
+                    candle_name_latest = recent_candle_names.loc[best_idx]
+                    candle_days_ago = len(recent_candle_scores) - 1 - list(recent_candle_scores.index).index(best_idx)
+                else:
+                    candle_name_latest = ''
+                    candle_days_ago = None
 
                 entries.append(SwingEntry(
                     ticker=ticker,
@@ -1341,6 +1349,7 @@ class ReversalScreenerV2:
                         'vwap_position': ('ABOVE' if close_latest > rvwap_latest else 'BELOW') if pd.notna(rvwap_latest) else None,
                         'avwap_position': ('ABOVE' if close_latest > avwap_latest else 'BELOW') if pd.notna(avwap_latest) else None,
                         'reversal_candle': candle_name_latest if candle_name_latest else None,
+                        'candle_days_ago': candle_days_ago,
                         'bounce_quality': round(bq_quality, 1),
                         'bounce_label': bq_label,
                     }
@@ -1517,8 +1526,13 @@ class ReversalScreenerV2:
                 vwap_pos = e.details.get('vwap_position')
                 vwap_str = '^' if vwap_pos == 'ABOVE' else ('v' if vwap_pos == 'BELOW' else '-')
 
-                # Dönüş mumu
-                candle = e.details.get('reversal_candle') or '-'
+                # Dönüş mumu (son 5 bar)
+                candle_raw = e.details.get('reversal_candle') or ''
+                candle_days = e.details.get('candle_days_ago')
+                if candle_raw:
+                    candle = f"{candle_raw}(-{candle_days}d)" if candle_days and candle_days > 0 else candle_raw
+                else:
+                    candle = '-'
 
                 # Bounce quality
                 bq = e.details.get('bounce_quality', 0)
