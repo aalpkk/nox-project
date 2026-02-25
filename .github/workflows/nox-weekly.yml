@@ -1,0 +1,27 @@
+name: NOX v3 Weekly Screener
+on:
+  schedule:
+    - cron: '0 15 * * 5'   # Cuma 15:00 UTC = 18:00 TR (BIST kapanis +15dk)
+  workflow_dispatch:         # Manuel tetikleme
+
+jobs:
+  weekly-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_nox_v3.py --weekly --csv --html --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weekly-signals-${{ github.run_number }}
+          path: |
+            output/nox_v3_signals_weekly_*.csv
+            output/nox_v3_pivot_*.html

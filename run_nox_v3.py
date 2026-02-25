@@ -30,7 +30,7 @@ import pandas as pd
 
 from markets.bist import data as data_mod
 from markets.bist.nox_v3_signals import compute_nox_v3
-from core.reports import _NOX_CSS, _sanitize
+from core.reports import _NOX_CSS, _sanitize, send_telegram, send_telegram_document, push_html_to_github
 
 
 # =============================================================================
@@ -62,6 +62,13 @@ def _to_weekly(df):
         'close': 'last',
         'volume': 'sum',
     }).dropna(subset=['close'])
+    # Son mum yarimsa at: W-FRI label = haftanin Cumasi.
+    # Veri o Cumaya kadar ulasmamissa mum yarimdir.
+    if len(weekly) > 0:
+        last_friday = weekly.index[-1]
+        last_data_date = df.index[-1]
+        if last_data_date < last_friday:  # Cuma kapanis verisi henuz yok
+            weekly = weekly.iloc[:-1]
     return weekly
 
 
@@ -608,6 +615,61 @@ def _save_html(html_content, date_str, output_dir):
 
 
 # =============================================================================
+# TELEGRAM FORMAT
+# =============================================================================
+
+def _format_weekly_telegram(buys, sells, n_scanned, date_str, html_url=None):
+    """Haftalik sinyal Telegram mesaji."""
+    gated = [b for b in buys if b['gate']]
+    ungated = [b for b in buys if not b['gate']]
+    severe = [s for s in sells if s['severity'] >= 2]
+    mild = [s for s in sells if s['severity'] == 1]
+    slope_only = [s for s in sells if s['severity'] == 0]
+
+    lines = [f"<b>⬡ NOX v3 Haftalik — {date_str}</b>", ""]
+    lines.append(f"📋 {n_scanned} taranan | {len(buys)} AL / {len(sells)} SAT")
+    lines.append("")
+
+    # AL — Gate Acik (tam liste)
+    if gated:
+        lines.append(f"<b>◆ AL — Onayli (Gate Acik) [{len(gated)}]</b>")
+        lines.append("─────────────────")
+        for b in gated:
+            lines.append(
+                f"<b>{b['ticker']}</b> {b['close']:.2f} ◆{b['pivot']:.2f} "
+                f"RG:{b['rg']:.0f} ADX:{b['adx']:.1f}"
+            )
+        lines.append("")
+
+    # AL — Gate Kapali (sadece sayi)
+    if ungated:
+        lines.append(f"◆ AL — Gate Kapali: {len(ungated)} hisse")
+        lines.append("")
+
+    # SAT — Sert (tam liste)
+    if severe:
+        lines.append(f"<b>◆ SAT — Sert (Severity ≥2) [{len(severe)}]</b>")
+        lines.append("─────────────────")
+        for s in severe:
+            lines.append(
+                f"<b>{s['ticker']}</b> {s['close']:.2f} ◆{s['pivot']:.2f} "
+                f"Sev:{s['severity']} ADX:{s['adx']:.1f}"
+            )
+        lines.append("")
+
+    # SAT — Hafif + Slope (sadece sayi)
+    mild_slope_cnt = len(mild) + len(slope_only)
+    if mild_slope_cnt:
+        lines.append(f"◆ SAT — Hafif/Slope: {mild_slope_cnt} hisse")
+        lines.append("")
+
+    if html_url:
+        lines.append(f"🔗 <a href=\"{html_url}\">NOX Rapor</a>")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -621,6 +683,7 @@ def main():
     parser.add_argument('--html', action='store_true', help='HTML rapor kaydet ve ac')
     parser.add_argument('--output', default='output', help='CSV/HTML cikti dizini')
     parser.add_argument('--debug', metavar='TICKER', help='Debug modu')
+    parser.add_argument('--notify', action='store_true', help='Telegram + GitHub Pages bildirim')
     args = parser.parse_args()
 
     # Her ikisi de belirtilmediyse, ikisini de calistir
@@ -691,6 +754,7 @@ def main():
             print(f"\n  ★ CAKISMA (Gunluk + Haftalik AL): {', '.join(sorted(overlap))}")
 
     # ── 6. HTML rapor ─────────────────────────────────────────────────────
+    html_path = None
     if args.html:
         html = _generate_html(
             d_buys if run_daily else [], d_sells if run_daily else [],
@@ -700,8 +764,18 @@ def main():
             overlap,
         )
         date_for_file = d_date if run_daily else w_date
-        path = _save_html(html, date_for_file, args.output)
-        subprocess.Popen(['open', path])
+        html_path = _save_html(html, date_for_file, args.output)
+        if not args.notify:
+            subprocess.Popen(['open', html_path])
+
+    # ── 7. Telegram + GitHub Pages bildirim ─────────────────────────────
+    if run_weekly and args.notify:
+        html_url = None
+        if args.html and html_path:
+            html_url = push_html_to_github(html, 'nox_v3_weekly.html', w_date)
+            send_telegram_document(html_path)
+        msg = _format_weekly_telegram(w_buys, w_sells, w_n, w_date, html_url)
+        send_telegram(msg)
 
     print(f"\n  NOX v3 tamamlandi.")
 
