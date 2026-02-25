@@ -83,9 +83,11 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
     Bu, TV'de gorunen son ~2 haftanin elmaslarini yakalar.
     Kirilmis pivotlar filtrelenir (fiyat pivot seviyesinin altina dustuyse).
     Ticker basina sadece en son sinyal raporlanir.
+    Ayrica ADAY (onaylanmamis) pivot low adaylarini da tarar.
     """
     buys = []
     sells = []
+    candidates = []  # ADAY: onaylanmamis pivot low adaylari
     n_scanned = 0
     last_date = None
     lb = 5
@@ -110,6 +112,7 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
             current_close = result['close'].iloc[last]
 
             # — AL: en son onaylanan ve KIRILMAMIS pivot low —
+            found_buy = False
             for i in range(last, scan_start - 1, -1):
                 if result['pivot_buy'].iloc[i]:
                     pivot_price = result['pivot_low_price'].iloc[i]
@@ -122,10 +125,12 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
                     pivot_date = df.index[pivot_bar_i].strftime('%Y-%m-%d') if pivot_bar_i >= 0 else '?'
                     signal_date = df.index[i].strftime('%Y-%m-%d')
                     fresh = 'BUGUN' if i == last else 'YAKIN'
+                    delta_pct = (current_close - pivot_price) / pivot_price * 100
                     buys.append({
                         'ticker': ticker,
                         'close': current_close,
                         'pivot': pivot_price,
+                        'delta_pct': round(delta_pct, 1),
                         'br': result['br_score'].iloc[i],
                         'rg': result['rg_score'].iloc[i],
                         'gate': bool(result['gate_open'].iloc[i]),
@@ -136,7 +141,41 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
                         'pivot_date': pivot_date,
                         'fresh': fresh,
                     })
+                    found_buy = True
                     break  # ticker basina en son gecerli sinyal
+
+            # — ADAY: onaylanmamis pivot low adaylari —
+            # Son lb barda (onay gelmemis bolge) olusmus potansiyel pivot low
+            if not found_buy:
+                zone_start = max(0, last - 2 * lb)
+                zone_lows = df['low'].iloc[zone_start:last + 1]
+                min_pos = int(zone_lows.values.argmin()) + zone_start
+                # Sadece onaylanmamis bolgede ise (son lb bar)
+                if min_pos > last - lb:
+                    candidate_price = df['low'].iloc[min_pos]
+                    # Sol taraf: lookback'ten dusuk olmali
+                    left_start = max(0, min_pos - lb)
+                    left_ok = (min_pos == left_start or
+                               candidate_price <= df['low'].iloc[left_start:min_pos].min())
+                    # Sag taraf: sonraki barlar kirilmamis olmali
+                    right_ok = (min_pos == last or
+                                candidate_price <= df['low'].iloc[min_pos + 1:last + 1].min())
+                    if left_ok and right_ok:
+                        delta_pct = (current_close - candidate_price) / candidate_price * 100
+                        bars_since = last - min_pos
+                        candidates.append({
+                            'ticker': ticker,
+                            'close': current_close,
+                            'pivot': candidate_price,
+                            'delta_pct': round(delta_pct, 1),
+                            'bars_since': bars_since,
+                            'rg': result['rg_score'].iloc[last],
+                            'gate': bool(result['gate_open'].iloc[last]),
+                            'adx': result['adx'].iloc[last],
+                            'slope': result['adx_slope'].iloc[last],
+                            'rsi': result['rsi'].iloc[last],
+                            'pivot_date': df.index[min_pos].strftime('%Y-%m-%d'),
+                        })
 
             # — SAT: en son onaylanan pivot high —
             for i in range(last, scan_start - 1, -1):
@@ -163,12 +202,13 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10):
             print(f"  ! {ticker}: {e}")
             continue
 
-    # Siralama: BUGUN oncelikli, sonra gate, sonra RSI
-    buys.sort(key=lambda x: (x['fresh'] != 'BUGUN', not x['gate'], x['rsi']))
+    # Siralama
+    buys.sort(key=lambda x: (x['fresh'] != 'BUGUN', not x['gate'], x['delta_pct']))
     sells.sort(key=lambda x: (x['fresh'] != 'BUGUN', -x['severity'], x['dd_pct']))
+    candidates.sort(key=lambda x: (-x['bars_since'], x['delta_pct']))
 
     date_str = last_date.strftime('%Y-%m-%d') if last_date else datetime.now().strftime('%Y-%m-%d')
-    return buys, sells, n_scanned, date_str
+    return buys, sells, candidates, n_scanned, date_str
 
 
 # =============================================================================
@@ -187,16 +227,16 @@ def _print_buy_group(label, items):
         print(f"\n  {label} (0)")
         return
     print(f"\n  {label} ({len(items)})")
-    print(f"  {'─' * 82}")
-    print(f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} "
+    print(f"  {'─' * 90}")
+    print(f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
           f"{'RG':>5} {'ADX':>5} {'Slope':>6} {'RSI':>5} {'':>6}")
-    print(f"  {'─' * 82}")
+    print(f"  {'─' * 90}")
     for b in items:
         tag = '★BUGN' if b.get('fresh') == 'BUGUN' else ''
         print(f"  {b['ticker']:<8} {b['pivot_date']:>10} "
-              f"{b['close']:>8.2f} {b['pivot']:>8.2f} "
+              f"{b['close']:>8.2f} {b['pivot']:>8.2f} {b['delta_pct']:>+5.1f}% "
               f"{b['rg']:>5.0f} {b['adx']:>5.1f} {b['slope']:>+6.2f} {b['rsi']:>5.1f} {tag:>6}")
-    print(f"  {'─' * 82}")
+    print(f"  {'─' * 90}")
 
 
 def _print_sell_group(label, items):
@@ -217,7 +257,25 @@ def _print_sell_group(label, items):
     print(f"  {'─' * 82}")
 
 
-def _print_results(buys, sells, n_scanned, date_str, tf_label):
+def _print_candidate_group(label, items):
+    if not items:
+        print(f"\n  {label} (0)")
+        return
+    print(f"\n  {label} ({len(items)})")
+    print(f"  {'─' * 90}")
+    print(f"  {'Hisse':<8} {'◆Elmas':>10} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
+          f"{'Bars':>4} {'RG':>5} {'ADX':>5} {'Slope':>6} {'RSI':>5}")
+    print(f"  {'─' * 90}")
+    for c in items:
+        gate_tag = '⬡' if c.get('gate') else ''
+        print(f"  {c['ticker']:<8} {c['pivot_date']:>10} "
+              f"{c['close']:>8.2f} {c['pivot']:>8.2f} {c['delta_pct']:>+5.1f}% "
+              f"{c['bars_since']:>4} {c['rg']:>5.0f} {c['adx']:>5.1f} "
+              f"{c['slope']:>+6.2f} {c['rsi']:>5.1f} {gate_tag}")
+    print(f"  {'─' * 90}")
+
+
+def _print_results(buys, sells, candidates, n_scanned, date_str, tf_label):
     _print_section(f"◆ NOX v3 [{tf_label}] — {date_str} — {n_scanned} hisse")
 
     # AL sinyallerini gate durumuna gore ayir
@@ -226,6 +284,9 @@ def _print_results(buys, sells, n_scanned, date_str, tf_label):
 
     _print_buy_group("◆ PIVOT AL — ONAYLI (Gate Acik)", gated)
     _print_buy_group("◆ PIVOT AL — Sadece Pivot (Gate Kapali)", ungated)
+
+    # ADAY: onaylanmamis pivot adaylari
+    _print_candidate_group("◆ ADAY — Taze Elmas (Onay Bekliyor)", candidates)
 
     # SAT sinyallerini severity'ye gore ayir
     severe = [s for s in sells if s['severity'] >= 2]
@@ -313,8 +374,8 @@ def _save_csv(buys, sells, date_str, output_dir, suffix=''):
 # HTML RAPOR
 # =============================================================================
 
-def _generate_html(d_buys, d_sells, d_n, d_date,
-                   w_buys, w_sells, w_n, w_date,
+def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
+                   w_buys, w_sells, w_cands, w_n, w_date,
                    overlap_tickers):
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
 
@@ -325,6 +386,7 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
                 'ticker': b['ticker'],
                 'close': round(b['close'], 2),
                 'pivot': round(b['pivot'], 2),
+                'delta_pct': b['delta_pct'],
                 'rg': round(b['rg'], 1),
                 'adx': round(b['adx'], 1),
                 'slope': round(b['slope'], 2),
@@ -354,15 +416,35 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
             })
         return rows
 
+    def _prep_candidates(cands):
+        rows = []
+        for c in cands:
+            rows.append({
+                'ticker': c['ticker'],
+                'close': round(c['close'], 2),
+                'pivot': round(c['pivot'], 2),
+                'delta_pct': c['delta_pct'],
+                'bars_since': c['bars_since'],
+                'rg': round(c['rg'], 1),
+                'adx': round(c['adx'], 1),
+                'slope': round(c['slope'], 2),
+                'rsi': round(c['rsi'], 1),
+                'gate': c['gate'],
+                'pivot_date': c['pivot_date'],
+            })
+        return rows
+
     data = {
         'daily': {
             'buys': _sanitize(_prep_buys(d_buys)) if d_buys else [],
             'sells': _sanitize(_prep_sells(d_sells)) if d_sells else [],
+            'candidates': _sanitize(_prep_candidates(d_cands)) if d_cands else [],
             'n': d_n or 0, 'date': d_date or '',
         },
         'weekly': {
             'buys': _sanitize(_prep_buys(w_buys)) if w_buys else [],
             'sells': _sanitize(_prep_sells(w_sells)) if w_sells else [],
+            'candidates': _sanitize(_prep_candidates(w_cands)) if w_cands else [],
             'n': w_n or 0, 'date': w_date or '',
         },
         'overlap': sorted(overlap_tickers) if overlap_tickers else [],
@@ -432,6 +514,10 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
 }}
 .fresh-bugun {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
 .fresh-yakin {{ background: rgba(250,204,21,0.12); color: var(--nox-yellow); }}
+.fresh-aday {{ background: rgba(34,211,238,0.15); color: var(--nox-cyan); }}
+.delta-lo {{ color: var(--nox-green); }}
+.delta-mid {{ color: var(--nox-yellow); }}
+.delta-hi {{ color: var(--nox-red); }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -448,6 +534,7 @@ def _generate_html(d_buys, d_sells, d_n, d_date,
   <div><label>Fresh</label>
   <select id="fFresh" onchange="render()"><option value="">Tumü</option>
   <option value="BUGUN">Bugün</option><option value="YAKIN">Yakın</option></select></div>
+  <div><label>Δ%≤</label><input type="number" id="fDelta" value="" step="5" min="0" placeholder="max" oninput="render()"></div>
   <div><label>ADX≥</label><input type="number" id="fADX" value="0" step="5" min="0" oninput="render()"></div>
   <div><label>RSI</label>
   <select id="fRSI" onchange="render()"><option value="">Tumü</option>
@@ -486,6 +573,7 @@ function resetF(){{
   document.getElementById('fS').value='';
   document.getElementById('fGate').value='';
   document.getElementById('fFresh').value='';
+  document.getElementById('fDelta').value='';
   document.getElementById('fADX').value='0';
   document.getElementById('fRSI').value='';
   render();
@@ -512,11 +600,13 @@ function doSort(tf, tbl, col){{
 function applyGlobalFilters(rows){{
   const sr=document.getElementById('fS').value.toUpperCase();
   const ff=document.getElementById('fFresh').value;
+  const maxDelta=parseFloat(document.getElementById('fDelta').value);
   const minADX=parseFloat(document.getElementById('fADX').value)||0;
   const fRSI=document.getElementById('fRSI').value;
   return rows.filter(r=>{{
     if(sr&&!r.ticker.includes(sr)) return false;
     if(ff&&r.fresh!==ff) return false;
+    if(!isNaN(maxDelta)&&maxDelta>0&&r.delta_pct!=null&&r.delta_pct>maxDelta) return false;
     if(minADX>0&&r.adx<minADX) return false;
     if(fRSI==='low'&&r.rsi>30) return false;
     if(fRSI==='mid'&&(r.rsi<30||r.rsi>70)) return false;
@@ -545,7 +635,7 @@ function mkBuyTable(buys, tf, label, cssClass){{
     cssClass==='cnt-gate'?'ONAYLI (Gate Açık)':'Sadece Pivot (Gate Kapalı)'}}<span class="section-count ${{cssClass}}">${{buys.length}}</span></div>`;
   h+=`<div class="nox-table-wrap" style="margin-bottom:16px"><table><thead><tr>
   <th ${{srt('ticker')}}>Hisse</th><th ${{srt('signal_date')}}>Sinyal</th><th ${{srt('pivot_date')}}>Elmas</th>
-  <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>DipFiy</th>
+  <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>DipFiy</th><th ${{srt('delta_pct')}}>Δ%</th>
   <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
   <th>Gate</th></tr></thead><tbody>`;
@@ -555,11 +645,13 @@ function mkBuyTable(buys, tf, label, cssClass){{
     const gateT=r.gate?'AÇIK':'KAPALI';
     const slopeC=r.slope>0?'var(--nox-green)':r.slope<-0.3?'var(--nox-red)':'var(--text-muted)';
     const rsiC=r.rsi<30?'var(--nox-green)':r.rsi>70?'var(--nox-red)':'var(--text-primary)';
+    const deltaC=r.delta_pct<=5?'delta-lo':r.delta_pct<=15?'delta-mid':'delta-hi';
     h+=`<tr${{r.gate?' class="hl"':''}}>
     <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a>${{ovB}}</td>
     <td>${{r.signal_date}} ${{mkFreshBadge(r.fresh)}}</td>
     <td style="color:var(--text-muted)">${{r.pivot_date}}</td>
     <td>${{r.close}}</td><td>${{r.pivot}}</td>
+    <td class="${{deltaC}}">${{r.delta_pct>0?'+':''}}${{r.delta_pct}}%</td>
     <td>${{r.rg}}</td><td>${{r.adx}}</td>
     <td style="color:${{slopeC}}">${{r.slope>0?'+':''}}${{r.slope}}</td>
     <td style="color:${{rsiC}}">${{r.rsi}}</td>
@@ -602,6 +694,50 @@ function mkSellTable(sells, tf, label, cssClass){{
   return h;
 }}
 
+function mkCandidateTable(cands, tf){{
+  const sk=sortState[tf+'-cand'];
+  if(sk) cands=sortRows(cands, sk.col, sk.asc);
+  const sr=document.getElementById('fS').value.toUpperCase();
+  const maxDelta=parseFloat(document.getElementById('fDelta').value);
+  const minADX=parseFloat(document.getElementById('fADX').value)||0;
+  cands=cands.filter(r=>{{
+    if(sr&&!r.ticker.includes(sr)) return false;
+    if(!isNaN(maxDelta)&&maxDelta>0&&r.delta_pct>maxDelta) return false;
+    if(minADX>0&&r.adx<minADX) return false;
+    return true;
+  }});
+  if(!cands.length) return '';
+  const srt=(c)=>`onclick="doSort('${{tf}}','cand','${{c}}')"`;
+  let h=`<div class="section-title"><span class="icon">💎</span>ADAY — Taze Elmas (Onay Bekliyor)<span class="section-count" style="background:rgba(34,211,238,0.12);color:var(--nox-cyan)">${{cands.length}}</span></div>`;
+  h+=`<div class="nox-table-wrap" style="margin-bottom:16px"><table><thead><tr>
+  <th ${{srt('ticker')}}>Hisse</th><th ${{srt('pivot_date')}}>Elmas</th>
+  <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>DipFiy</th><th ${{srt('delta_pct')}}>Δ%</th>
+  <th ${{srt('bars_since')}}>Bars</th>
+  <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
+  <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
+  <th>Gate</th></tr></thead><tbody>`;
+  cands.forEach(r=>{{
+    const deltaC=r.delta_pct<=5?'delta-lo':r.delta_pct<=15?'delta-mid':'delta-hi';
+    const slopeC=r.slope>0?'var(--nox-green)':r.slope<-0.3?'var(--nox-red)':'var(--text-muted)';
+    const rsiC=r.rsi<30?'var(--nox-green)':r.rsi>70?'var(--nox-red)':'var(--text-primary)';
+    const gateC=r.gate?'gate-open':'gate-closed';
+    const gateT=r.gate?'AÇIK':'KAPALI';
+    const barsLabel=r.bars_since+'/5';
+    h+=`<tr>
+    <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
+    <td>${{r.pivot_date}} <span class="fresh-badge fresh-aday">ADAY</span></td>
+    <td>${{r.close}}</td><td>${{r.pivot}}</td>
+    <td class="${{deltaC}}">${{r.delta_pct>0?'+':''}}${{r.delta_pct}}%</td>
+    <td style="color:var(--nox-cyan)">${{barsLabel}}</td>
+    <td>${{r.rg}}</td><td>${{r.adx}}</td>
+    <td style="color:${{slopeC}}">${{r.slope>0?'+':''}}${{r.slope}}</td>
+    <td style="color:${{rsiC}}">${{r.rsi}}</td>
+    <td class="${{gateC}}">${{gateT}}</td></tr>`;
+  }});
+  h+=`</tbody></table></div>`;
+  return h;
+}}
+
 function render(){{
   ['daily','weekly'].forEach(tf=>{{
     const td=D[tf];
@@ -615,6 +751,9 @@ function render(){{
     html+=`<div class="section-title" style="font-size:1rem;color:var(--nox-green)">PIVOT AL<span class="section-count cnt-buy">${{td.buys.length}}</span></div>`;
     html+=mkBuyTable(gated,tf,'gated','cnt-gate');
     html+=mkBuyTable(ungated,tf,'ungated','cnt-buy');
+
+    // ADAY
+    html+=mkCandidateTable(td.candidates||[],tf);
 
     // SAT
     const sert=td.sells.filter(r=>r.severity>=2);
@@ -659,7 +798,7 @@ def _save_html(html_content, date_str, output_dir):
 # TELEGRAM FORMAT
 # =============================================================================
 
-def _format_weekly_telegram(buys, sells, n_scanned, date_str, html_url=None):
+def _format_weekly_telegram(buys, sells, candidates, n_scanned, date_str, html_url=None):
     """Haftalik sinyal Telegram mesaji."""
     gated = [b for b in buys if b['gate']]
     ungated = [b for b in buys if not b['gate']]
@@ -668,10 +807,10 @@ def _format_weekly_telegram(buys, sells, n_scanned, date_str, html_url=None):
     slope_only = [s for s in sells if s['severity'] == 0]
 
     lines = [f"<b>⬡ NOX v3 Haftalik — {date_str}</b>", ""]
-    lines.append(f"📋 {n_scanned} taranan | {len(buys)} AL / {len(sells)} SAT")
+    lines.append(f"📋 {n_scanned} taranan | {len(buys)} AL / {len(sells)} SAT / {len(candidates)} ADAY")
     lines.append("")
 
-    # AL — Gate Acik (tam liste)
+    # AL — Gate Acik (tam liste, Δ% ile)
     if gated:
         lines.append(f"<b>◆ AL — Onayli (Gate Acik) [{len(gated)}]</b>")
         lines.append("─────────────────")
@@ -679,13 +818,25 @@ def _format_weekly_telegram(buys, sells, n_scanned, date_str, html_url=None):
             fresh_tag = '★' if b['fresh'] == 'BUGUN' else ''
             lines.append(
                 f"{fresh_tag}<b>{b['ticker']}</b> {b['close']:.2f} ◆{b['pivot']:.2f} "
-                f"RG:{b['rg']:.0f} ADX:{b['adx']:.1f} [{b['signal_date']}]"
+                f"Δ{b['delta_pct']:+.0f}% ADX:{b['adx']:.1f} [{b['signal_date']}]"
             )
         lines.append("")
 
     # AL — Gate Kapali (sadece sayi)
     if ungated:
         lines.append(f"◆ AL — Gate Kapali: {len(ungated)} hisse")
+        lines.append("")
+
+    # ADAY — taze elmaslar (tam liste)
+    if candidates:
+        lines.append(f"<b>💎 ADAY — Taze Elmas [{len(candidates)}]</b>")
+        lines.append("─────────────────")
+        for c in candidates:
+            gate_tag = '⬡' if c['gate'] else ''
+            lines.append(
+                f"{gate_tag}<b>{c['ticker']}</b> {c['close']:.2f} ◆{c['pivot']:.2f} "
+                f"Δ{c['delta_pct']:+.0f}% {c['bars_since']}/5bar [{c['pivot_date']}]"
+            )
         lines.append("")
 
     # SAT — Sert (tam liste)
@@ -765,9 +916,9 @@ def main():
     if run_daily:
         print(f"\n  Gunluk tarama...")
         t1 = time.time()
-        d_buys, d_sells, d_n, d_date = _scan(stock_dfs, debug_ticker)
+        d_buys, d_sells, d_cands, d_n, d_date = _scan(stock_dfs, debug_ticker)
         print(f"  Gunluk tamamlandi ({time.time() - t1:.1f}s)")
-        _print_results(d_buys, d_sells, d_n, d_date, 'GUNLUK')
+        _print_results(d_buys, d_sells, d_cands, d_n, d_date, 'GUNLUK')
         if args.csv:
             _save_csv(d_buys, d_sells, d_date, args.output)
 
@@ -777,9 +928,9 @@ def main():
         t2 = time.time()
         weekly_dfs = {t: _to_weekly(df) for t, df in stock_dfs.items()}
         weekly_dfs = {t: df for t, df in weekly_dfs.items() if len(df) >= 30}
-        w_buys, w_sells, w_n, w_date = _scan(weekly_dfs, debug_ticker)
+        w_buys, w_sells, w_cands, w_n, w_date = _scan(weekly_dfs, debug_ticker)
         print(f"  Haftalik tamamlandi ({time.time() - t2:.1f}s)")
-        _print_results(w_buys, w_sells, w_n, w_date, 'HAFTALIK')
+        _print_results(w_buys, w_sells, w_cands, w_n, w_date, 'HAFTALIK')
         if args.csv:
             _save_csv(w_buys, w_sells, w_date, args.output, suffix='_weekly')
 
@@ -801,8 +952,10 @@ def main():
     if args.html:
         html = _generate_html(
             d_buys if run_daily else [], d_sells if run_daily else [],
+            d_cands if run_daily else [],
             d_n if run_daily else 0, d_date if run_daily else '',
             w_buys if run_weekly else [], w_sells if run_weekly else [],
+            w_cands if run_weekly else [],
             w_n if run_weekly else 0, w_date if run_weekly else '',
             overlap,
         )
@@ -817,7 +970,7 @@ def main():
         if args.html and html_path:
             html_url = push_html_to_github(html, 'nox_v3_weekly.html', w_date)
             send_telegram_document(html_path)
-        msg = _format_weekly_telegram(w_buys, w_sells, w_n, w_date, html_url)
+        msg = _format_weekly_telegram(w_buys, w_sells, w_cands, w_n, w_date, html_url)
         send_telegram(msg)
 
     print(f"\n  NOX v3 tamamlandi.")
