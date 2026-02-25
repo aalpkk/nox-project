@@ -229,9 +229,17 @@ def _scan(stock_dfs, debug_ticker=None, scan_bars=10, tf_label='daily'):
 # HAFTALIK ZENGINLESTIRME — Trend Birth + Durum
 # =============================================================================
 
-def _enrich_with_trend_birth(signals, stock_dfs):
+def _enrich_with_trend_birth(signals, stock_dfs, ref_date_str=None):
     """Haftalik AL/ADAY sinyallerini gunluk Trend Birth verisiyle zenginlestirir.
-    Her sinyal icin tb_stage (OK/TRG/PREP/-) ve status (HAZIR/IZLE/BEKLE) ekler."""
+    Her sinyal icin tb_stage (OK/TRG/PREP/-) ve status (HAZIR/IZLE/BEKLE) ekler.
+    HAZIR icin sinyal son 4 hafta icerisinde olmali."""
+    from datetime import timedelta
+    if ref_date_str:
+        ref_date = datetime.strptime(ref_date_str, '%Y-%m-%d')
+    else:
+        ref_date = datetime.now()
+    max_age = timedelta(weeks=4)
+
     for sig in signals:
         ticker = sig['ticker']
         df = stock_dfs.get(ticker)
@@ -247,8 +255,17 @@ def _enrich_with_trend_birth(signals, stock_dfs):
 
             stage = 'OK' if conf else 'TRG' if trig >= 2 else 'PREP' if prep >= 40 else '-'
 
+            # Tazelik kontrolu: sinyal tarihi son 4 hafta icerisinde mi?
+            date_str = sig.get('signal_date') or sig.get('pivot_date', '')
+            try:
+                sig_date = datetime.strptime(date_str, '%Y-%m-%d')
+                is_fresh = (ref_date - sig_date) <= max_age
+            except (ValueError, TypeError):
+                is_fresh = False
+
             wk_mom = sig.get('wk_mom', False)
-            if wk_mom and stage in ('TRG', 'OK'):
+            delta = sig.get('delta_pct', 999)
+            if wk_mom and stage in ('TRG', 'OK') and delta <= 20 and is_fresh:
                 status = 'HAZIR'
             elif wk_mom:
                 status = 'İZLE'
@@ -1074,8 +1091,8 @@ def main():
         # Haftalik AL + ADAY sinyallerini Trend Birth ile zenginlestir
         print(f"  Trend Birth zenginlestirme...")
         t2b = time.time()
-        w_buys = _enrich_with_trend_birth(w_buys, stock_dfs)
-        w_cands = _enrich_with_trend_birth(w_cands, stock_dfs)
+        w_buys = _enrich_with_trend_birth(w_buys, stock_dfs, w_date)
+        w_cands = _enrich_with_trend_birth(w_cands, stock_dfs, w_date)
         print(f"  Haftalik tamamlandi ({time.time() - t2:.1f}s, TB: {time.time() - t2b:.1f}s)")
         _print_results(w_buys, w_sells, w_cands, w_n, w_date, 'HAFTALIK')
         if args.csv:
