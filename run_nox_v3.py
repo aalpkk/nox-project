@@ -423,23 +423,46 @@ def _print_debug(ticker, result):
 # CSV
 # =============================================================================
 
-def _save_csv(buys, sells, date_str, output_dir, suffix=''):
+def _save_csv(buys, sells, date_str, output_dir, suffix='', candidates=None):
     os.makedirs(output_dir, exist_ok=True)
     rows = []
     for b in buys:
-        rows.append({
+        row = {
             'signal': 'PIVOT_AL',
             'ticker': b['ticker'],
             'pivot_date': b['pivot_date'],
             'signal_date': b['signal_date'],
             'close': b['close'],
             'pivot_price': b['pivot'],
+            'delta_pct': b.get('delta_pct'),
             'gate_open': b['gate'],
             'rg_score': b['rg'],
             'adx': b['adx'],
             'adx_slope': b['slope'],
             'rsi': b['rsi'],
-        })
+            'wl_status': b.get('status', ''),
+            'tb_stage': b.get('tb_stage', ''),
+            'tb_prep': b.get('tb_prep', ''),
+        }
+        rows.append(row)
+    for c in (candidates or []):
+        row = {
+            'signal': 'ADAY',
+            'ticker': c['ticker'],
+            'pivot_date': c['pivot_date'],
+            'signal_date': c.get('pivot_date', ''),
+            'close': c['close'],
+            'pivot_price': c['pivot'],
+            'delta_pct': c.get('delta_pct'),
+            'gate_open': c.get('gate'),
+            'adx': c['adx'],
+            'adx_slope': c['slope'],
+            'rsi': c['rsi'],
+            'wl_status': c.get('status', ''),
+            'tb_stage': c.get('tb_stage', ''),
+            'tb_prep': c.get('tb_prep', ''),
+        }
+        rows.append(row)
     for s in sells:
         rows.append({
             'signal': 'PIVOT_SAT',
@@ -1096,7 +1119,7 @@ def main():
         print(f"  Haftalik tamamlandi ({time.time() - t2:.1f}s, TB: {time.time() - t2b:.1f}s)")
         _print_results(w_buys, w_sells, w_cands, w_n, w_date, 'HAFTALIK')
         if args.csv:
-            _save_csv(w_buys, w_sells, w_date, args.output, suffix='_weekly')
+            _save_csv(w_buys, w_sells, w_date, args.output, suffix='_weekly', candidates=w_cands)
 
     # ── 5. Ozet ─────────────────────────────────────────────────────────────
     print(f"\n{'=' * 80}")

@@ -2,14 +2,21 @@
 """
 NOX Forward Test Aracı
 =======================
-output/ klasöründeki tarama CSV çıktılarını (NOX v3, SMC, Pine, Divergence) okuyup,
-sinyal tarihinden itibaren gerçek fiyat getirilerini (1g, 3g, 5g) hesaplayarak
-NOX dark-theme interaktif HTML raporu oluşturur.
+Tüm tarama CSV çıktılarını (Trend, Dip, Sideways, Rejim v3, Combo,
+NOX v3, SMC, Pine, Divergence) okuyup, sinyal tarihinden itibaren
+gerçek fiyat getirilerini (1g, 3g, 5g) hesaplayarak NOX dark-theme
+interaktif HTML raporu oluşturur.
+
+Kaynaklar:
+  - output/   : NOX v3, SMC, Pine, Divergence CSV'leri
+  - proje kökü: main.py çıktıları (trend, dip, sideways)
+  - GitHub    : bist-tavan-screener artifact'leri (rejim_v3, combo) [--gh]
 
 Kullanım:
     python run_forward_test.py                  # en son CSV'ler
     python run_forward_test.py --date 20260220  # belirli tarih
     python run_forward_test.py --open           # raporu tarayıcıda aç
+    python run_forward_test.py --gh --open      # GitHub artifact + aç
 """
 
 import argparse
@@ -34,38 +41,63 @@ from core.reports import _NOX_CSS, _sanitize
 # =============================================================================
 
 # Dosya adı → screener tipi eşleştirme
-_CSV_PATTERNS = [
+# output/ dizini için pattern'lar
+_CSV_PATTERNS_OUTPUT = [
     (re.compile(r'^nox_v3_signals_weekly_(\d{8})\.csv$'), 'nox_v3_weekly'),
     (re.compile(r'^nox_v3_signals_(\d{8})\.csv$'),        'nox_v3_daily'),
     (re.compile(r'^nox_smc_signals_(\d{8})\.csv$'),       'smc'),
     (re.compile(r'^pine_signals_(\d{8})\.csv$'),          'pine'),
     (re.compile(r'^nox_divergence_(\d{8})\.csv$'),        'divergence'),
+    # GitHub artifact'leri de output/'a indirilir
+    (re.compile(r'^rejim_v3_signals_(\d{8})\.csv$'),      'rejim_v3'),
+    (re.compile(r'^combo_signals_(\d{8})\.csv$'),         'combo'),
+]
+
+# Proje kökü için pattern'lar (main.py çıktıları)
+_CSV_PATTERNS_ROOT = [
+    (re.compile(r'^nox_bist_trend_(\d{8})\.csv$'),    'trend'),
+    (re.compile(r'^nox_bist_dip_(\d{8})\.csv$'),       'dip'),
+    (re.compile(r'^nox_bist_sideways_(\d{8})\.csv$'),  'sideways'),
 ]
 
 
-def discover_csvs(output_dir, target_date=None):
-    """output/ dizinindeki CSV'leri keşfet ve screener tipine göre grupla.
-    target_date: 'YYYYMMDD' formatında; None ise en son tarih kullanılır."""
-    found = {}  # {screener: [(date_str, path), ...]}
-    for fname in os.listdir(output_dir):
-        for pat, screener in _CSV_PATTERNS:
+def _scan_dir(directory, patterns):
+    """Bir dizini verilen pattern listesiyle tara → {screener: [(date_str, path), ...]}"""
+    found = {}
+    if not os.path.isdir(directory):
+        return found
+    for fname in os.listdir(directory):
+        for pat, screener in patterns:
             m = pat.match(fname)
             if m:
                 date_str = m.group(1)
-                found.setdefault(screener, []).append((date_str, os.path.join(output_dir, fname)))
+                found.setdefault(screener, []).append((date_str, os.path.join(directory, fname)))
                 break
+    return found
 
-    # Tarih filtresi veya en son tarih
+
+def discover_csvs(output_dir, target_date=None):
+    """output/ ve proje kökündeki CSV'leri keşfet ve screener tipine göre grupla.
+    target_date: 'YYYYMMDD' formatında; None ise tüm tarihler dahil edilir.
+    Dönüş: {screener: [(date_str, path), ...]} — tarih sıralı (eskiden yeniye)."""
+    # İki dizini tara
+    found = _scan_dir(output_dir, _CSV_PATTERNS_OUTPUT)
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    root_found = _scan_dir(root_dir, _CSV_PATTERNS_ROOT)
+    # Birleştir
+    for scr, items in root_found.items():
+        found.setdefault(scr, []).extend(items)
+
+    # Tarih filtresi
     result = {}
-    if target_date:
-        for scr, items in found.items():
-            for d, p in items:
-                if d == target_date:
-                    result[scr] = (d, p)
-    else:
-        for scr, items in found.items():
-            items.sort(key=lambda x: x[0], reverse=True)
-            result[scr] = items[0]
+    for scr, items in found.items():
+        items.sort(key=lambda x: x[0])  # eskiden yeniye
+        if target_date:
+            filtered = [(d, p) for d, p in items if d == target_date]
+            if filtered:
+                result[scr] = filtered
+        else:
+            result[scr] = items
 
     return result
 
@@ -78,11 +110,13 @@ def _parse_nox_v3(path, screener_name):
         sig = str(row.get('signal', '')).strip()
         if sig == 'PIVOT_AL':
             direction = 'AL'
+        elif sig == 'ADAY':
+            direction = 'AL'
         elif sig == 'PIVOT_SAT':
             direction = 'SAT'
         else:
             continue
-        signals.append({
+        entry = {
             'screener': screener_name,
             'ticker': str(row['ticker']).strip(),
             'signal_date': str(row['signal_date']).strip(),
@@ -90,7 +124,14 @@ def _parse_nox_v3(path, screener_name):
             'signal_type': sig,
             'entry_price': float(row['close']),
             'quality': None,
-        })
+        }
+        # Haftalik watchlist alanlari
+        wl = str(row.get('wl_status', '')).strip()
+        if wl and wl != 'nan':
+            entry['wl_status'] = wl
+            entry['tb_stage'] = str(row.get('tb_stage', '')).strip()
+            entry['delta_pct'] = float(row['delta_pct']) if pd.notna(row.get('delta_pct')) else None
+        signals.append(entry)
     return signals
 
 
@@ -162,30 +203,158 @@ def _parse_divergence(path):
     return signals
 
 
+def _parse_trend_dip_sideways(path, screener_name, date_str):
+    """Trend/Dip/Sideways CSV parse → normalize sinyal listesi.
+    Dosya adındaki tarih kullanılır, tümü AL sinyali."""
+    df = pd.read_csv(path)
+    sig_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    signals = []
+    for _, row in df.iterrows():
+        signals.append({
+            'screener': screener_name,
+            'ticker': str(row['ticker']).strip(),
+            'signal_date': sig_date,
+            'direction': 'AL',
+            'signal_type': str(row.get('signal', '')).strip(),
+            'entry_price': float(row['close']),
+            'quality': int(row['quality']) if pd.notna(row.get('quality')) else None,
+        })
+    return signals
+
+
+def _parse_combo(path, date_str):
+    """Combo CSV parse → normalize sinyal listesi (basit format)."""
+    df = pd.read_csv(path)
+    sig_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    signals = []
+    for _, row in df.iterrows():
+        signals.append({
+            'screener': 'combo',
+            'ticker': str(row['ticker']).strip(),
+            'signal_date': sig_date,
+            'direction': 'AL',
+            'signal_type': str(row.get('signal', '')).strip(),
+            'entry_price': float(row['close']),
+            'quality': None,
+        })
+    return signals
+
+
 def parse_all_csvs(csv_map):
-    """Tüm CSV'leri parse et → birleşik sinyal listesi."""
+    """Tüm CSV'leri parse et → birleşik sinyal listesi.
+    csv_map: {screener: [(date_str, path), ...]}"""
     all_signals = []
-    for screener, (date_str, path) in csv_map.items():
-        try:
-            if screener in ('nox_v3_daily', 'nox_v3_weekly'):
-                sigs = _parse_nox_v3(path, screener)
-            elif screener == 'smc':
-                sigs = _parse_smc(path)
-            elif screener == 'pine':
-                sigs = _parse_pine(path, date_str)
-            elif screener == 'divergence':
-                sigs = _parse_divergence(path)
-            else:
-                continue
-            all_signals.extend(sigs)
-            print(f"  {screener}: {len(sigs)} sinyal ({path})")
-        except Exception as e:
-            print(f"  ! {screener} parse hata: {e}")
+    for screener, entries in csv_map.items():
+        scr_total = 0
+        for date_str, path in entries:
+            try:
+                if screener in ('nox_v3_daily', 'nox_v3_weekly'):
+                    sigs = _parse_nox_v3(path, screener)
+                elif screener == 'smc':
+                    sigs = _parse_smc(path)
+                elif screener == 'pine':
+                    sigs = _parse_pine(path, date_str)
+                elif screener == 'divergence':
+                    sigs = _parse_divergence(path)
+                elif screener in ('trend', 'dip', 'sideways', 'rejim_v3'):
+                    sigs = _parse_trend_dip_sideways(path, screener, date_str)
+                elif screener == 'combo':
+                    sigs = _parse_combo(path, date_str)
+                else:
+                    continue
+                all_signals.extend(sigs)
+                scr_total += len(sigs)
+            except Exception as e:
+                print(f"  ! {screener}/{date_str} parse hata: {e}")
+        if scr_total > 0:
+            n_dates = len(entries)
+            extra = f" ({n_dates} tarih)" if n_dates > 1 else ""
+            print(f"  {screener}: {scr_total} sinyal{extra}")
     return all_signals
 
 
 # =============================================================================
-# 2. VERİ ÇEKME
+# 2. GITHUB ARTİFACT İNDİRME
+# =============================================================================
+
+_GH_REPO = 'aalpkk/bist-tavan-screener'
+_GH_ARTIFACT_PREFIX = 'signals-'
+
+
+def fetch_github_csvs(output_dir):
+    """GitHub Actions'taki tüm signals-* artifact'lerinden CSV'leri indir.
+    rejim_v3_signals_YYYYMMDD.csv ve combo_signals_YYYYMMDD.csv → output_dir'a kopyalar.
+    Zaten mevcut dosyalar tekrar indirilmez."""
+    import shutil
+    import tempfile
+
+    print(f"\n  GitHub artifact'leri indiriliyor ({_GH_REPO})...")
+
+    # Tüm signals-* artifact ID'lerini al
+    try:
+        result = subprocess.run(
+            ['gh', 'api', f'repos/{_GH_REPO}/actions/artifacts',
+             '--paginate', '--jq',
+             r'.artifacts[] | select(.name | startswith("signals-")) | "\(.id)"'],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"  ! gh api hata: {result.stderr.strip()}")
+            return
+        artifact_ids = [x.strip() for x in result.stdout.strip().split('\n') if x.strip()]
+        if not artifact_ids:
+            print("  ! signals-* artifact bulunamadı.")
+            return
+        print(f"  {len(artifact_ids)} artifact bulundu")
+    except FileNotFoundError:
+        print("  ! gh CLI bulunamadı. GitHub artifact'leri için gh CLI gerekli.")
+        return
+    except Exception as e:
+        print(f"  ! GitHub artifact listesi alınamadı: {e}")
+        return
+
+    # Her artifact'i indir ve CSV'leri topla
+    copied = 0
+    for art_id in artifact_ids:
+        tmp_dir = tempfile.mkdtemp(prefix='nox_gh_')
+        try:
+            result = subprocess.run(
+                ['gh', 'api', f'repos/{_GH_REPO}/actions/artifacts/{art_id}/zip'],
+                capture_output=True, timeout=30,
+            )
+            if result.returncode != 0:
+                continue
+            zip_path = os.path.join(tmp_dir, 'a.zip')
+            with open(zip_path, 'wb') as f:
+                f.write(result.stdout)
+            # zip aç
+            subprocess.run(['unzip', '-qo', zip_path, '-d', tmp_dir],
+                           capture_output=True, timeout=15)
+            # CSV'leri kopyala (zaten varsa atla)
+            for fname in os.listdir(tmp_dir):
+                if not fname.endswith('.csv'):
+                    continue
+                if 'rejim_v3_signals_' not in fname and 'combo_signals_' not in fname:
+                    continue
+                dst = os.path.join(output_dir, fname)
+                if os.path.exists(dst):
+                    continue
+                shutil.copy2(os.path.join(tmp_dir, fname), dst)
+                print(f"    ← {fname}")
+                copied += 1
+        except Exception:
+            pass
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if copied == 0:
+        print("  Yeni CSV yok (hepsi zaten mevcut)")
+    else:
+        print(f"  {copied} yeni CSV indirildi → {output_dir}")
+
+
+# =============================================================================
+# 3. VERİ ÇEKME
 # =============================================================================
 
 def fetch_price_data(signals):
@@ -198,7 +367,7 @@ def fetch_price_data(signals):
 
 
 # =============================================================================
-# 3. FORWARD GETİRİ HESAPLAMA
+# 4. FORWARD GETİRİ HESAPLAMA
 # =============================================================================
 
 WINDOWS = [1, 3, 5]
@@ -276,13 +445,33 @@ def compute_forward_returns(signals, all_data, xu_df):
 
 
 # =============================================================================
-# 4. ÖZET İSTATİSTİKLER
+# 5. ÖZET İSTATİSTİKLER
 # =============================================================================
+
+def _calc_window_stats(subset, windows):
+    """Alt küme için pencere bazlı istatistikler hesapla."""
+    stats = {}
+    for w in windows:
+        key = f'ret_{w}d'
+        vals = [r[key] for r in subset if r.get(key) is not None]
+        if vals:
+            wins = sum(1 for v in vals if v > 0)
+            stats[f'n_{w}d'] = len(vals)
+            stats[f'wr_{w}d'] = round(wins / len(vals) * 100, 1)
+            stats[f'avg_{w}d'] = round(sum(vals) / len(vals), 2)
+            stats[f'med_{w}d'] = round(median(vals), 2)
+            stats[f'best_{w}d'] = round(max(vals), 2)
+            stats[f'worst_{w}d'] = round(min(vals), 2)
+        else:
+            stats[f'n_{w}d'] = 0
+            for k in ['wr', 'avg', 'med', 'best', 'worst']:
+                stats[f'{k}_{w}d'] = None
+    return stats
+
 
 def compute_summary(results):
     """Screener bazlı özet istatistikler."""
     summary = {}
-    # Genel
     all_screeners = sorted(set(r['screener'] for r in results))
 
     for scr in ['genel'] + all_screeners:
@@ -295,25 +484,7 @@ def compute_summary(results):
             continue
 
         stats = {'screener': scr, 'n': len(subset)}
-
-        for w in WINDOWS:
-            key = f'ret_{w}d'
-            vals = [r[key] for r in subset if r.get(key) is not None]
-            if vals:
-                wins = sum(1 for v in vals if v > 0)
-                stats[f'n_{w}d'] = len(vals)
-                stats[f'wr_{w}d'] = round(wins / len(vals) * 100, 1)
-                stats[f'avg_{w}d'] = round(sum(vals) / len(vals), 2)
-                stats[f'med_{w}d'] = round(median(vals), 2)
-                stats[f'best_{w}d'] = round(max(vals), 2)
-                stats[f'worst_{w}d'] = round(min(vals), 2)
-            else:
-                stats[f'n_{w}d'] = 0
-                stats[f'wr_{w}d'] = None
-                stats[f'avg_{w}d'] = None
-                stats[f'med_{w}d'] = None
-                stats[f'best_{w}d'] = None
-                stats[f'worst_{w}d'] = None
+        stats.update(_calc_window_stats(subset, WINDOWS))
 
         # AL/SAT ayrımı
         for d in ['AL', 'SAT']:
@@ -329,30 +500,67 @@ def compute_summary(results):
 
         summary[scr] = stats
 
+    # Haftalik watchlist durum bazli kirilim (HAZIR/IZLE/BEKLE)
+    wl_results = [r for r in results if r.get('wl_status')]
+    if wl_results:
+        for wl_st in ['HAZIR', 'İZLE', 'BEKLE']:
+            wl_sub = [r for r in wl_results if r.get('wl_status') == wl_st]
+            if not wl_sub:
+                continue
+            key = f'wl_{wl_st}'
+            stats = {'screener': key, 'n': len(wl_sub)}
+            stats.update(_calc_window_stats(wl_sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in wl_sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[key] = stats
+
     return summary
 
 
 # =============================================================================
-# 5. HTML RAPOR
+# 6. HTML RAPOR
 # =============================================================================
 
 _SCREENER_LABELS = {
     'genel': 'Genel',
+    'trend': 'Trend',
+    'dip': 'Dip',
+    'sideways': 'Sideways',
+    'rejim_v3': 'Rejim v3',
+    'combo': 'Combo',
     'nox_v3_daily': 'NOX v3 Günlük',
     'nox_v3_weekly': 'NOX v3 Haftalık',
+    'wl_HAZIR': 'WL HAZIR',
+    'wl_İZLE': 'WL İZLE',
+    'wl_BEKLE': 'WL BEKLE',
     'smc': 'SMC',
     'pine': 'Pine',
     'divergence': 'Uyumsuzluk',
 }
 
-_SCREENER_TAB_ORDER = ['genel', 'nox_v3_daily', 'nox_v3_weekly', 'smc', 'pine', 'divergence']
+_SCREENER_TAB_ORDER = [
+    'genel', 'trend', 'dip', 'sideways', 'rejim_v3', 'combo',
+    'nox_v3_daily', 'nox_v3_weekly', 'wl_HAZIR', 'wl_İZLE', 'wl_BEKLE',
+    'smc', 'pine', 'divergence',
+]
 
 
 def generate_html(results, summary, csv_map):
     """NOX dark-theme interaktif HTML rapor."""
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
-    dates = sorted(set(d for d, _ in csv_map.values()))
-    date_label = ', '.join(dates)
+    all_dates = sorted(set(d for entries in csv_map.values() for d, _ in entries))
+    if len(all_dates) <= 3:
+        date_label = ', '.join(all_dates)
+    else:
+        date_label = f"{all_dates[0]} → {all_dates[-1]} ({len(all_dates)} gün)"
 
     # Tab'ları oluştur (veri olan screener'lar)
     active_tabs = [t for t in _SCREENER_TAB_ORDER if t in summary]
@@ -425,6 +633,17 @@ def generate_html(results, summary, csv_map):
 .status-tamam {{ color: var(--nox-green); }}
 .status-kismi {{ color: var(--nox-yellow); }}
 .status-bekliyor {{ color: var(--text-muted); }}
+.wl-badge {{
+  display: inline-block; padding: 2px 6px; border-radius: 4px;
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+}}
+.wl-hazir {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
+.wl-izle  {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
+.wl-bekle {{ background: rgba(113,113,122,0.15); color: var(--text-muted); }}
+.tb-ok   {{ color: var(--nox-green); font-weight: 700; }}
+.tb-trg  {{ color: var(--nox-cyan); font-weight: 700; }}
+.tb-prep {{ color: var(--nox-yellow); }}
+.tb-none {{ color: var(--text-muted); }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -450,6 +669,10 @@ def generate_html(results, summary, csv_map):
   <select id="fSt" onchange="af()"><option value="">Tümü</option>
   <option value="tamam">Tamam</option><option value="kısmi">Kısmi</option>
   <option value="bekliyor">Bekliyor</option></select></div>
+  <div><label>WL</label>
+  <select id="fWL" onchange="af()"><option value="">Tümü</option>
+  <option value="HAZIR">HAZIR</option><option value="İZLE">İZLE</option>
+  <option value="BEKLE">BEKLE</option></select></div>
   <div><button class="nox-btn" onclick="resetF()">Sıfırla</button></div>
 </div>
 
@@ -465,11 +688,14 @@ def generate_html(results, summary, csv_map):
 <th onclick="sb('direction')">Yön</th>
 <th onclick="sb('signal_date')">Tarih</th>
 <th onclick="sb('entry_price')">Giriş</th>
+<th onclick="sb('delta_pct')">Δ%</th>
 <th onclick="sb('ret_1d')">1G%</th>
 <th onclick="sb('ret_3d')">3G%</th>
 <th onclick="sb('ret_5d')">5G%</th>
 <th onclick="sb('xu_5d')">XU100 5G</th>
 <th onclick="sb('excess_5d')">Fazla 5G</th>
+<th onclick="sb('wl_status')">WL</th>
+<th onclick="sb('tb_stage')">TB</th>
 <th onclick="sb('status')">Durum</th>
 </tr></thead><tbody id="tb"></tbody></table>
 </div>
@@ -493,6 +719,7 @@ function initTabs(){{
     d.className='nox-tab'+(t==='genel'?' active':'');
     d.id='tab-'+t;
     const n=t==='genel'?D.length:D.filter(r=>r.screener===t).length;
+    if(t.startsWith('wl_')) n=D.filter(r=>r.wl_status===t.replace('wl_','')).length;
     d.innerHTML=(LBL[t]||t)+' <span class="cnt">'+n+'</span>';
     d.onclick=()=>{{curTab=t;
       document.querySelectorAll('.nox-tab').forEach(x=>x.classList.remove('active'));
@@ -559,11 +786,17 @@ function af(){{
   const sr=document.getElementById('fS').value.toUpperCase();
   const fd=document.getElementById('fDir').value;
   const fs=document.getElementById('fSt').value;
+  const fwl=document.getElementById('fWL').value;
   let f=D.filter(r=>{{
-    if(curTab!=='genel'&&r.screener!==curTab)return false;
+    if(curTab!=='genel'&&!curTab.startsWith('wl_')&&r.screener!==curTab)return false;
+    if(curTab.startsWith('wl_')){{
+      const wlKey=curTab.replace('wl_','');
+      if(r.wl_status!==wlKey)return false;
+    }}
     if(sr&&!r.ticker.includes(sr))return false;
     if(fd&&r.direction!==fd)return false;
     if(fs&&r.status!==fs)return false;
+    if(fwl&&r.wl_status!==fwl)return false;
     return true;
   }});
   f.sort((a,b)=>{{
@@ -582,6 +815,7 @@ function resetF(){{
   document.getElementById('fS').value='';
   document.getElementById('fDir').value='';
   document.getElementById('fSt').value='';
+  document.getElementById('fWL').value='';
   af();
 }}
 
@@ -592,6 +826,17 @@ function retCell(v){{
   return '<td style="color:'+c+';font-weight:600">'+(v>0?'+':'')+v.toFixed(2)+'%</td>';
 }}
 
+function mkWlBadge(s){{
+  if(!s)return'<td>—</td>';
+  const cls=s==='HAZIR'?'wl-hazir':s==='İZLE'?'wl-izle':'wl-bekle';
+  return '<td><span class="wl-badge '+cls+'">'+s+'</span></td>';
+}}
+function mkTbCell(s){{
+  if(!s)return'<td style="color:var(--text-muted)">—</td>';
+  const cls=s==='OK'?'tb-ok':s==='TRG'?'tb-trg':s==='PREP'?'tb-prep':'tb-none';
+  return '<td class="'+cls+'">'+s+'</td>';
+}}
+
 function render(data){{
   const tb=document.getElementById('tb');tb.innerHTML='';
   data.forEach(r=>{{
@@ -599,14 +844,19 @@ function render(data){{
     const dirC=r.direction==='AL'?'dir-al':'dir-sat';
     const stC='status-'+(r.status==='tamam'?'tamam':r.status==='kısmi'?'kismi':'bekliyor');
     const stL=r.status==='tamam'?'Tamam':r.status==='kısmi'?'Kısmi':'Bekliyor';
+    const deltaCell=r.delta_pct!=null?
+      '<td style="color:'+(r.delta_pct<=10?'var(--nox-green)':r.delta_pct<=20?'var(--nox-yellow)':'var(--nox-red)')+'">'+
+      (r.delta_pct>0?'+':'')+r.delta_pct.toFixed(1)+'%</td>':'<td style="color:var(--text-muted)">—</td>';
     tr.innerHTML=`<td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
       <td style="color:var(--text-muted);font-size:.68rem">${{LBL[r.screener]||r.screener}}</td>
       <td style="font-size:.68rem">${{r.signal_type}}</td>
       <td class="${{dirC}}">${{r.direction}}</td>
       <td style="color:var(--text-muted)">${{r.signal_date}}</td>
       <td>${{r.entry_price.toFixed(2)}}</td>
+      ${{deltaCell}}
       ${{retCell(r.ret_1d)}}${{retCell(r.ret_3d)}}${{retCell(r.ret_5d)}}
       ${{retCell(r.xu_5d)}}${{retCell(r.excess_5d)}}
+      ${{mkWlBadge(r.wl_status)}}${{mkTbCell(r.tb_stage)}}
       <td class="${{stC}}" style="font-size:.7rem;font-weight:600">${{stL}}</td>`;
     tb.appendChild(tr);
   }});
@@ -623,7 +873,7 @@ af();
 
 
 # =============================================================================
-# 6. CLI
+# 7. CLI
 # =============================================================================
 
 def main():
@@ -631,6 +881,8 @@ def main():
     parser.add_argument('--output', default='output', help='CSV/HTML dizini (default: output)')
     parser.add_argument('--date', help='Belirli tarih (YYYYMMDD)')
     parser.add_argument('--open', action='store_true', help='Raporu tarayıcıda aç')
+    parser.add_argument('--gh', action='store_true',
+                        help='GitHub artifact\'lerini indir (rejim_v3, combo)')
     args = parser.parse_args()
 
     output_dir = args.output
@@ -638,14 +890,22 @@ def main():
         print(f"  HATA: {output_dir} dizini bulunamadı!")
         sys.exit(1)
 
+    # ── 0. GitHub Artifact'leri ──
+    if args.gh:
+        fetch_github_csvs(output_dir)
+
     # ── 1. CSV Keşfet ──
-    print(f"\n  CSV dosyaları taranıyor ({output_dir})...")
+    print(f"\n  CSV dosyaları taranıyor ({output_dir} + proje kökü)...")
     csv_map = discover_csvs(output_dir, args.date)
     if not csv_map:
         print("  HATA: Hiçbir CSV bulunamadı!")
         sys.exit(1)
-    for scr, (d, p) in csv_map.items():
-        print(f"  {scr}: {d} → {os.path.basename(p)}")
+    for scr, entries in csv_map.items():
+        dates_list = [d for d, _ in entries]
+        if len(entries) == 1:
+            print(f"  {scr}: {dates_list[0]} → {os.path.basename(entries[0][1])}")
+        else:
+            print(f"  {scr}: {len(entries)} dosya ({dates_list[0]}..{dates_list[-1]})")
 
     # ── 2. Parse ──
     print(f"\n  CSV'ler parse ediliyor...")
@@ -680,8 +940,8 @@ def main():
 
     # ── 6. HTML ──
     html = generate_html(results, summary, csv_map)
-    dates = sorted(set(d for d, _ in csv_map.values()))
-    date_str = dates[0] if dates else datetime.now().strftime('%Y%m%d')
+    all_dates = sorted(set(d for entries in csv_map.values() for d, _ in entries))
+    date_str = all_dates[-1] if all_dates else datetime.now().strftime('%Y%m%d')
     os.makedirs(output_dir, exist_ok=True)
     fname = f"forward_test_{date_str}.html"
     path = os.path.join(output_dir, fname)
