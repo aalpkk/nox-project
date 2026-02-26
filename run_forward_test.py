@@ -125,6 +125,10 @@ def _parse_nox_v3(path, screener_name):
             'entry_price': float(row['close']),
             'quality': None,
         }
+        # Tetik tipi (iki katmanli sistem)
+        tt = str(row.get('trigger_type', '')).strip()
+        if tt and tt != 'nan':
+            entry['trigger_type'] = tt
         # Haftalik watchlist alanlari
         wl = str(row.get('wl_status', '')).strip()
         if wl and wl != 'nan':
@@ -639,6 +643,52 @@ def compute_summary(results):
                     stats[f'avg_5d_{d}'] = None
             summary[fkey] = stats
 
+    # NOX v3 weekly tetik tipi bazli kirilim
+    nw_results = [r for r in results if r.get('screener') == 'nox_v3_weekly']
+    if nw_results:
+        # Yön bazli kirilim: sadece AL, sadece SAT
+        for dkey, dlabel in [('nw_AL', 'AL'), ('nw_SAT', 'SAT')]:
+            sub = [r for r in nw_results if r['direction'] == dlabel]
+            if not sub:
+                continue
+            stats = {'screener': dkey, 'n': len(sub)}
+            stats.update(_calc_window_stats(sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[dkey] = stats
+
+        # Tetik tipi bazli kirilim
+        trigger_types = sorted(set(
+            r.get('trigger_type', '') for r in nw_results
+            if r.get('trigger_type')
+        ))
+        for tt in trigger_types:
+            sub = [r for r in nw_results if r.get('trigger_type') == tt]
+            if not sub:
+                continue
+            fkey = f'nwt_{tt}'
+            stats = {'screener': fkey, 'n': len(sub)}
+            stats.update(_calc_window_stats(sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[fkey] = stats
+
     return summary
 
 
@@ -670,6 +720,11 @@ _SCREENER_LABELS = {
     'combo': 'Combo',
     'nox_v3_daily': 'NOX v3 Günlük',
     'nox_v3_weekly': 'NOX v3 Haftalık',
+    'nw_AL': 'NW AL',
+    'nw_SAT': 'NW SAT',
+    'nwt_BOS': 'NW BOS',
+    'nwt_HC2': 'NW HC2',
+    'nwt_EMA_R': 'NW EMA_R',
     'wl_HAZIR': 'WL HAZIR',
     'wl_İZLE': 'WL İZLE',
     'wl_BEKLE': 'WL BEKLE',
@@ -684,7 +739,9 @@ _SCREENER_TAB_ORDER = [
     'r3s_GUCLU', 'r3s_CMB', 'r3s_CMB+', 'r3s_BILESEN', 'r3s_ZAYIF',
     'r3s_ERKEN', 'r3s_DONUS', 'r3s_MR', 'r3s_PB',
     'combo',
-    'nox_v3_daily', 'nox_v3_weekly', 'wl_HAZIR', 'wl_İZLE', 'wl_BEKLE',
+    'nox_v3_daily', 'nox_v3_weekly',
+    'nw_AL', 'nw_SAT', 'nwt_BOS', 'nwt_HC2', 'nwt_EMA_R',
+    'wl_HAZIR', 'wl_İZLE', 'wl_BEKLE',
     'smc', 'pine', 'divergence',
 ]
 
@@ -854,6 +911,7 @@ def generate_html(results, summary, csv_map):
 <th onclick="sb('ticker')">Hisse</th>
 <th onclick="sb('screener')">Tarama</th>
 <th onclick="sb('signal_type')">Sinyal</th>
+<th onclick="sb('trigger_type')">Tetik</th>
 <th onclick="sb('direction')">Yön</th>
 <th onclick="sb('signal_date')">Tarih</th>
 <th onclick="sb('entry_price')">Giriş</th>
@@ -904,18 +962,29 @@ const R3F={{
   'r3s_PB':r=>r.signal_type==='PB',
 }};
 
+// NW (nox_v3_weekly) yon + tetik tipi filtreleri
+const NWF={{
+  'nw_AL':r=>r.direction==='AL',
+  'nw_SAT':r=>r.direction==='SAT',
+  'nwt_BOS':r=>r.trigger_type==='BOS',
+  'nwt_HC2':r=>r.trigger_type==='HC2',
+  'nwt_EMA_R':r=>r.trigger_type==='EMA_R',
+}};
+
 // ── TABS ──
 function initTabs(){{
   const el=document.getElementById('tabs');
   TABS.forEach(t=>{{
     const d=document.createElement('div');
     const isR3=t.startsWith('r3_');
-    d.className='nox-tab'+(t==='genel'?' active':'')+(isR3?' r3-sub':'');
+    const isNW=t.startsWith('nw_')||t.startsWith('nwt_');
+    d.className='nox-tab'+(t==='genel'?' active':'')+(isR3?' r3-sub':'')+(isNW?' nw-sub':'');
     d.id='tab-'+t;
     let n;
     if(t==='genel') n=D.length;
     else if(t.startsWith('wl_')) n=D.filter(r=>r.wl_status===t.replace('wl_','')).length;
     else if(R3F[t]) n=D.filter(r=>r.screener==='rejim_v3'&&R3F[t](r)).length;
+    else if(NWF[t]) n=D.filter(r=>r.screener==='nox_v3_weekly'&&NWF[t](r)).length;
     else n=D.filter(r=>r.screener===t).length;
     d.innerHTML=(LBL[t]||t)+' <span class="cnt">'+n+'</span>';
     d.onclick=()=>{{curTab=t;
@@ -966,6 +1035,8 @@ function renderStats(){{
   if(curTab==='genel') tabs=TABS;
   else if(curTab==='rejim_v3') tabs=['genel','rejim_v3',...Object.keys(R3F).filter(k=>S[k])];
   else if(R3F[curTab]) tabs=['genel','rejim_v3',curTab];
+  else if(curTab==='nox_v3_weekly') tabs=['genel','nox_v3_weekly',...Object.keys(NWF).filter(k=>S[k])];
+  else if(NWF[curTab]) tabs=['genel','nox_v3_weekly',curTab];
   else tabs=['genel',curTab];
   tabs.forEach(t=>{{
     const s=S[t];if(!s)return;
@@ -1002,6 +1073,9 @@ function af(){{
     if(R3F[curTab]){{
       if(r.screener!=='rejim_v3')return false;
       if(!R3F[curTab](r))return false;
+    }}else if(NWF[curTab]){{
+      if(r.screener!=='nox_v3_weekly')return false;
+      if(!NWF[curTab](r))return false;
     }}else if(curTab.startsWith('wl_')){{
       const wlKey=curTab.replace('wl_','');
       if(r.wl_status!==wlKey)return false;
@@ -1089,6 +1163,7 @@ function render(data){{
     tr.innerHTML=`<td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
       <td style="color:var(--text-muted);font-size:.68rem">${{LBL[r.screener]||r.screener}}</td>
       <td style="font-size:.68rem">${{r.signal_type}}</td>
+      <td style="font-size:.68rem;color:var(--nox-cyan)">${{r.trigger_type||'—'}}</td>
       <td class="${{dirC}}">${{r.direction}}</td>
       <td style="color:var(--text-muted)">${{r.signal_date}}</td>
       <td>${{r.entry_price.toFixed(2)}}</td>
