@@ -24,8 +24,8 @@ NOX_V3_TRIGGER = {
     'daily_pivot_lb': 3,    # BOS icin gunluk swing high lb
     'hc2_count': 2,         # Ardisik higher close sayisi
     'ema_len': 21,          # EMA Reclaim periyodu
-    'vol_sma_len': 20,      # Hacim SMA periyodu
-    'vol_mult': 1.3,        # Hacim carpani
+    'vol_sma_len': 30,      # Hacim SMA periyodu
+    'vol_mult': 1.3,        # EMA_R icin hacim carpani (BOS/HC2 icin 1.0)
     'max_delta_pct': 15.0,  # Pivot zonundan max uzaklik (%)
 }
 
@@ -493,6 +493,7 @@ def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
     vol_sma = sma(daily_df['volume'], C['vol_sma_len'])
 
     closes = daily_df['close'].values
+    opens = daily_df['open'].values
     highs = daily_df['high'].values
     volumes = daily_df['volume'].values
     ema21_vals = ema21.values
@@ -511,6 +512,9 @@ def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
             last_swing_high = swing_highs.iloc[i]
 
         c = closes[i]
+        o = opens[i]
+        v = volumes[i]
+        vs = vol_sma_vals[i]
 
         # Zone proximity kontrolu
         delta_pct = (c - pivot_price) / pivot_price * 100
@@ -521,8 +525,13 @@ def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
             # Zondan cok uzak, atla
             continue
 
-        # — Tetik 1: BOS (Break of Structure) —
-        if pd.notna(last_swing_high) and c > last_swing_high:
+        # Hacim + yesil mum kontrolleri (BOS ve EMA_R icin)
+        is_green = c > o
+        vol_above_sma = pd.notna(vs) and v > vs
+
+        # — Tetik 1: BOS (Break of Structure) + yesil mum + hacim —
+        if (pd.notna(last_swing_high) and c > last_swing_high
+                and is_green and vol_above_sma):
             return {
                 'triggered': True,
                 'trigger_type': 'BOS',
@@ -531,7 +540,7 @@ def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
                 'delta_pct_at_trigger': round(delta_pct, 2),
             }
 
-        # — Tetik 2: HC2 (2 ardisik higher close) —
+        # — Tetik 2: HC2 (2 ardisik higher close) — hacimsiz —
         if i >= C['hc2_count']:
             hc_ok = True
             for k in range(1, C['hc2_count'] + 1):
@@ -547,16 +556,14 @@ def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
                     'delta_pct_at_trigger': round(delta_pct, 2),
                 }
 
-        # — Tetik 3: EMA_R (EMA21 Reclaim + hacim) —
+        # — Tetik 3: EMA_R (EMA21 Reclaim + yesil mum + 1.3x hacim) —
         e = ema21_vals[i]
-        v = volumes[i]
-        vs = vol_sma_vals[i]
         if (i >= 1 and pd.notna(e) and pd.notna(ema21_vals[i - 1])
-                and pd.notna(vs)):
+                and is_green and vol_above_sma):
             prev_below = closes[i - 1] < ema21_vals[i - 1]
             now_above = c > e
-            vol_ok = v > vs * C['vol_mult']
-            if prev_below and now_above and vol_ok:
+            vol_extra = v > vs * C['vol_mult']
+            if prev_below and now_above and vol_extra:
                 return {
                     'triggered': True,
                     'trigger_type': 'EMA_R',
