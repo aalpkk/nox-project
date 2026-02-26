@@ -11,6 +11,8 @@ Kullanim:
     python run_regime_transition.py --html                 # HTML rapor
     python run_regime_transition.py --csv                  # CSV kaydet
     python run_regime_transition.py --transitions          # sadece gecisler
+    python run_regime_transition.py --backtest 60           # son 60 bar backtest
+    python run_regime_transition.py --backtest 60 --csv     # backtest + CSV
 """
 
 import argparse
@@ -27,9 +29,10 @@ import pandas as pd
 from markets.bist import data as data_mod
 from markets.bist.regime_transition import (
     scan_regime_transition, find_last_transition,
-    compute_trailing_stop,
+    compute_trailing_stop, _find_pivot_lows,
     RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
 )
+from collections import Counter
 from core.reports import _NOX_CSS, _sanitize
 
 
@@ -138,32 +141,34 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
 
             entry_score = 0
             entry_parts = []
+            atr_pct = (atr_val / current_close * 100) if current_close > 0 else 0
             if direction == 'AL':
-                # 1. Fiyat stop ustunde
-                if eff_stop > 0 and current_close > eff_stop:
+                # Stop mesafesi hesapla
+                stop_dist_pct = (current_close - eff_stop) / current_close * 100 if eff_stop > 0 and current_close > 0 else 0
+                # 1. Dusuk volatilite (ATR% < 3)
+                if atr_pct < 3.0:
                     entry_score += 1
-                    entry_parts.append('Stop ustunde: \u2713')
+                    entry_parts.append('Vol dusuk: \u2713')
                 else:
-                    entry_parts.append('Stop ustunde: \u2717')
-                # 2. Regime guclu (exit_stage <= 1)
-                if exit_stage_val <= 1:
+                    entry_parts.append('Vol dusuk: \u2717')
+                # 2. Erken giris (ADX slope < 0 — yapisal gecis, momentum henuz gelmemis)
+                if adx_slope_val < 0:
                     entry_score += 1
-                    entry_parts.append('Regime guclu: \u2713')
+                    entry_parts.append('Erken giris: \u2713')
                 else:
-                    entry_parts.append('Regime guclu: \u2717')
-                # 3. Cok uzaklasmamis (gain < 2*ATR%)
-                atr_pct = (atr_val / current_close * 100) if current_close > 0 else 0
-                if gain_pct < 2 * atr_pct:
+                    entry_parts.append('Erken giris: \u2717')
+                # 3. Buyume odasi (regime <= 2 — henuz FULL degil)
+                if regime_val <= 2:
                     entry_score += 1
-                    entry_parts.append('Mesafe OK: \u2713')
+                    entry_parts.append('Buyume odasi: \u2713')
                 else:
-                    entry_parts.append('Mesafe OK: \u2717')
-                # 4. Momentum devam (CMF > 0 VE adx_slope > 0)
-                if cmf_val > 0 and adx_slope_val > 0:
+                    entry_parts.append('Buyume odasi: \u2717')
+                # 4. Stop makul (%3-15 arasi)
+                if 3.0 <= stop_dist_pct < 15.0:
                     entry_score += 1
-                    entry_parts.append('Momentum: \u2713')
+                    entry_parts.append('Stop makul: \u2713')
                 else:
-                    entry_parts.append('Momentum: \u2717')
+                    entry_parts.append('Stop makul: \u2717')
             entry_detail = ' | '.join(entry_parts)
 
             sig = RegimeTransitionSignal(
@@ -272,7 +277,7 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
         print(f"  {'─' * w}")
 
     if transitions_sat:
-        print(f"\n  ▼ SAT GECISLERI ({len(transitions_sat)})")
+        print(f"\n  ▼ SAT GECISLERI ({len(transitions_sat)}) — ZAYIF (backtest WR <%50, bilgi amacli)")
         print(f"  {'─' * w}")
         print(hdr)
         print(f"  {'─' * w}")
@@ -715,6 +720,410 @@ def _save_html(html_content, date_str, output_dir):
 
 
 # =============================================================================
+# BACKTEST
+# =============================================================================
+
+def _run_backtest(stock_dfs, weekly_dfs, N):
+    """Son N bar'daki AL/SAT sinyallerini cikar, forward return hesapla.
+    Her ticker 1 kez scan edilir (O(ticker) karmasiklik).
+
+    Returns: (signals_list, summary_dict)
+    """
+    signals = []
+    n_scanned = 0
+    last_date = None
+    lb = RT_CFG['stop_swing_lb']
+
+    for ticker, df in stock_dfs.items():
+        if len(df) < 100:
+            continue
+        if _is_halted(df):
+            continue
+
+        try:
+            wk_df = weekly_dfs.get(ticker) if weekly_dfs else None
+            out = scan_regime_transition(df, weekly_df=wk_df)
+            n_scanned += 1
+
+            if last_date is None and len(df) > 0:
+                last_date = df.index[-1]
+
+            # Pivot lows (stop referansi icin)
+            pivot_lows = _find_pivot_lows(df['low'], lb)
+
+            n_bars = len(df)
+            start_idx = max(0, n_bars - N)
+
+            direction_s = out['direction']
+            transition_s = out['transition']
+            regime_s = out['regime']
+            prev_regime_s = out['prev_regime']
+            close_s = df['close']
+            low_s = df['low']
+            atr_s = out['atr']
+            adx_s = out['adx']
+            adx_slope_s = out['adx_slope']
+            cmf_s = out['cmf']
+            exit_stage_s = out['exit_stage']
+            trend_score_s = out['trend_score']
+            part_score_s = out['participation_score']
+            exp_score_s = out['expansion_score']
+
+            for i in range(start_idx, n_bars):
+                d = str(direction_s.iloc[i])
+                if d == 'TUT':
+                    continue
+
+                entry_price = float(close_s.iloc[i])
+                if entry_price <= 0:
+                    continue
+
+                sig_date = df.index[i]
+                trans = str(transition_s.iloc[i])
+                regime_val = int(regime_s.iloc[i])
+                prev_regime_val = int(prev_regime_s.iloc[i])
+                atr_val = float(atr_s.iloc[i]) if pd.notna(atr_s.iloc[i]) else 0.0
+                adx_val = float(adx_s.iloc[i]) if pd.notna(adx_s.iloc[i]) else 0.0
+                adx_slope_val = float(adx_slope_s.iloc[i]) if pd.notna(adx_slope_s.iloc[i]) else 0.0
+                cmf_val = float(cmf_s.iloc[i]) if pd.notna(cmf_s.iloc[i]) else 0.0
+                exit_stage_val = int(exit_stage_s.iloc[i])
+                t_score = int(trend_score_s.iloc[i])
+                p_score = int(part_score_s.iloc[i])
+                e_score = int(exp_score_s.iloc[i])
+                atr_pct = (atr_val / entry_price * 100) if entry_price > 0 else 0.0
+
+                # Stop: son pivot_low (bar i'den once) - 0.5 * ATR
+                valid_pivots = pivot_lows.iloc[:i].dropna()
+                if len(valid_pivots) > 0:
+                    swing_low = float(valid_pivots.iloc[-1])
+                else:
+                    swing_low = float(low_s.iloc[max(0, i - 20):i].min())
+                stop = swing_low - RT_CFG['stop_atr_initial'] * atr_val
+                stop_dist_pct = (entry_price - stop) / entry_price * 100 if entry_price > 0 else 0.0
+
+                # Entry Score (veri-odakli kriterler)
+                entry_score = 0
+                # 1. Dusuk volatilite (ATR% < 3 — en guclu tekil filtre)
+                if atr_pct < 3.0:
+                    entry_score += 1
+                # 2. Erken giris (ADX slope < 0 — yapisal gecis, buyume odasi)
+                if adx_slope_val < 0:
+                    entry_score += 1
+                # 3. Buyume odasi (regime <= 2 — henuz FULL degil)
+                if regime_val <= 2:
+                    entry_score += 1
+                # 4. Stop makul (%3-15 arasi)
+                if 3.0 <= stop_dist_pct < 15.0:
+                    entry_score += 1
+
+                # Forward returns
+                ret_5d = None
+                ret_10d = None
+                ret_20d = None
+                for window, key in [(5, 'ret_5d'), (10, 'ret_10d'), (20, 'ret_20d')]:
+                    end_idx = i + window
+                    if end_idx < n_bars:
+                        r = (float(close_s.iloc[end_idx]) - entry_price) / entry_price * 100
+                        if d == 'SAT':
+                            r = -r
+                        if key == 'ret_5d':
+                            ret_5d = round(r, 2)
+                        elif key == 'ret_10d':
+                            ret_10d = round(r, 2)
+                        else:
+                            ret_20d = round(r, 2)
+
+                # Stop hit (sadece AL icin, 5G icerisinde)
+                stop_hit = False
+                stop_hit_bar = None
+                if d == 'AL' and stop > 0:
+                    for j in range(i + 1, min(i + 6, n_bars)):
+                        if float(low_s.iloc[j]) < stop:
+                            stop_hit = True
+                            stop_hit_bar = j - i
+                            break
+
+                signals.append({
+                    'ticker': ticker,
+                    'signal_date': sig_date.strftime('%Y-%m-%d') if hasattr(sig_date, 'strftime') else str(sig_date),
+                    'direction': d,
+                    'transition': trans,
+                    'regime': regime_val,
+                    'prev_regime': prev_regime_val,
+                    'entry_price': round(entry_price, 2),
+                    'stop': round(stop, 2),
+                    'stop_dist_pct': round(stop_dist_pct, 2),
+                    'entry_score': entry_score,
+                    'trend_score': t_score,
+                    'participation_score': p_score,
+                    'expansion_score': e_score,
+                    'exit_stage': exit_stage_val,
+                    'adx': round(adx_val, 2),
+                    'adx_slope': round(adx_slope_val, 3),
+                    'cmf': round(cmf_val, 4),
+                    'atr_pct': round(atr_pct, 2),
+                    'ret_5d': ret_5d,
+                    'ret_10d': ret_10d,
+                    'ret_20d': ret_20d,
+                    'stop_hit': stop_hit,
+                    'stop_hit_bar': stop_hit_bar,
+                })
+
+        except Exception as e:
+            print(f"  ! {ticker}: {e}")
+            continue
+
+    date_str = last_date.strftime('%Y-%m-%d') if last_date else datetime.now().strftime('%Y-%m-%d')
+    summary = _compute_backtest_summary(signals)
+    summary['n_scanned'] = n_scanned
+    summary['date_str'] = date_str
+    return signals, summary
+
+
+def _compute_backtest_summary(signals):
+    """Backtest sinyallerinden istatistik ozet cikar."""
+    if not signals:
+        return {'total': 0}
+
+    df = pd.DataFrame(signals)
+    summary = {'total': len(df)}
+
+    al = df[df['direction'] == 'AL']
+    sat = df[df['direction'] == 'SAT']
+    summary['n_al'] = len(al)
+    summary['n_sat'] = len(sat)
+
+    # Genel pencere istatistikleri
+    for window in ['5d', '10d', '20d']:
+        col = f'ret_{window}'
+        valid = df[df[col].notna()][col]
+        n = len(valid)
+        if n > 0:
+            wr = (valid > 0).sum() / n * 100
+            summary[f'all_{window}'] = {
+                'n': n, 'wr': round(wr, 1),
+                'avg': round(valid.mean(), 2),
+                'med': round(valid.median(), 2),
+            }
+        else:
+            summary[f'all_{window}'] = {'n': 0, 'wr': 0, 'avg': 0, 'med': 0}
+
+    # Stop hit orani (AL, 5G icinde)
+    al_with_5d = al[al['ret_5d'].notna()]
+    if len(al_with_5d) > 0:
+        summary['stop_pct_5d'] = round(al_with_5d['stop_hit'].sum() / len(al_with_5d) * 100, 1)
+    else:
+        summary['stop_pct_5d'] = 0.0
+
+    # Yon bazinda
+    summary['by_dir'] = {}
+    for d_name, d_df in [('AL', al), ('SAT', sat)]:
+        d_stats = {}
+        for window in ['5d', '10d', '20d']:
+            col = f'ret_{window}'
+            valid = d_df[d_df[col].notna()][col]
+            n = len(valid)
+            if n > 0:
+                wr = (valid > 0).sum() / n * 100
+                d_stats[window] = {'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2)}
+            else:
+                d_stats[window] = {'n': 0, 'wr': 0, 'avg': 0}
+        d_stats['total'] = len(d_df)
+        summary['by_dir'][d_name] = d_stats
+
+    # Gecis tipi bazinda (AL, top 5)
+    summary['by_transition_al'] = {}
+    if len(al) > 0:
+        trans_counts = al['transition'].value_counts()
+        for trans_name in trans_counts.index[:8]:
+            t_df = al[al['transition'] == trans_name]
+            valid_5 = t_df[t_df['ret_5d'].notna()]['ret_5d']
+            n = len(valid_5)
+            if n >= 3:
+                summary['by_transition_al'][trans_name] = {
+                    'n': n,
+                    'wr': round((valid_5 > 0).sum() / n * 100, 1),
+                    'avg': round(valid_5.mean(), 2),
+                }
+
+    # Giris skoru bazinda (AL)
+    summary['by_score_al'] = {}
+    if len(al) > 0:
+        for score in [4, 3, 2]:
+            s_df = al[al['entry_score'] == score]
+            valid_5 = s_df[s_df['ret_5d'].notna()]
+            n = len(valid_5)
+            if n > 0:
+                wr = (valid_5['ret_5d'] > 0).sum() / n * 100
+                stop_r = valid_5['stop_hit'].sum() / n * 100
+                summary['by_score_al'][score] = {
+                    'n': n, 'wr': round(wr, 1),
+                    'avg': round(valid_5['ret_5d'].mean(), 2),
+                    'stop_pct': round(stop_r, 1),
+                }
+        # <=1 grubu
+        s_df = al[al['entry_score'] <= 1]
+        valid_5 = s_df[s_df['ret_5d'].notna()]
+        n = len(valid_5)
+        if n > 0:
+            wr = (valid_5['ret_5d'] > 0).sum() / n * 100
+            stop_r = valid_5['stop_hit'].sum() / n * 100
+            summary['by_score_al']['<=1'] = {
+                'n': n, 'wr': round(wr, 1),
+                'avg': round(valid_5['ret_5d'].mean(), 2),
+                'stop_pct': round(stop_r, 1),
+            }
+
+    # Exit stage bazinda (AL)
+    summary['by_exit_al'] = {}
+    if len(al) > 0:
+        for exit_val in [0, 1]:
+            e_df = al[al['exit_stage'] == exit_val]
+            valid_5 = e_df[e_df['ret_5d'].notna()]
+            n = len(valid_5)
+            if n > 0:
+                wr = (valid_5['ret_5d'] > 0).sum() / n * 100
+                stop_r = valid_5['stop_hit'].sum() / n * 100
+                summary['by_exit_al'][exit_val] = {
+                    'n': n, 'wr': round(wr, 1),
+                    'avg': round(valid_5['ret_5d'].mean(), 2),
+                    'stop_pct': round(stop_r, 1),
+                }
+        # >=2 grubu
+        e_df = al[al['exit_stage'] >= 2]
+        valid_5 = e_df[e_df['ret_5d'].notna()]
+        n = len(valid_5)
+        if n > 0:
+            wr = (valid_5['ret_5d'] > 0).sum() / n * 100
+            stop_r = valid_5['stop_hit'].sum() / n * 100
+            summary['by_exit_al']['>=2'] = {
+                'n': n, 'wr': round(wr, 1),
+                'avg': round(valid_5['ret_5d'].mean(), 2),
+                'stop_pct': round(stop_r, 1),
+            }
+
+    # Filtreli (AL, Score>=3, Exit<=1)
+    if len(al) > 0:
+        filt = al[(al['entry_score'] >= 3) & (al['exit_stage'] <= 1)]
+        summary['filtered_al'] = {}
+        for window in ['5d', '10d', '20d']:
+            col = f'ret_{window}'
+            valid = filt[filt[col].notna()][col]
+            n = len(valid)
+            if n > 0:
+                wr = (valid > 0).sum() / n * 100
+                summary['filtered_al'][window] = {
+                    'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2),
+                }
+            else:
+                summary['filtered_al'][window] = {'n': 0, 'wr': 0, 'avg': 0}
+        summary['filtered_al']['total'] = len(filt)
+    else:
+        summary['filtered_al'] = {'total': 0}
+
+    return summary
+
+
+def _print_backtest_summary(summary, N, n_scanned, date_str):
+    """Backtest ozet ciktisi."""
+    w = 70
+    print(f"\n{'═' * w}")
+    print(f"  REGIME TRANSITION BACKTEST — Son {N} bar")
+    print(f"{'═' * w}")
+    print(f"  {n_scanned} hisse, {summary['total']} sinyal "
+          f"(AL:{summary.get('n_al', 0)}, SAT:{summary.get('n_sat', 0)})")
+
+    # Genel
+    print(f"\n  GENEL")
+    print(f"  {'Pencere':<10} {'N':>6} {'WR%':>7} {'Ort%':>8} {'Med%':>8}")
+    print(f"  {'─' * 45}")
+    for window in ['5d', '10d', '20d']:
+        s = summary.get(f'all_{window}', {})
+        n = s.get('n', 0)
+        if n > 0:
+            print(f"  {window.upper():<10} {n:>6} {s['wr']:>6.1f}% {s['avg']:>+7.2f} {s['med']:>+7.2f}")
+        else:
+            print(f"  {window.upper():<10} {n:>6}    —       —       —")
+
+    # Yon bazinda
+    by_dir = summary.get('by_dir', {})
+    if by_dir:
+        print(f"\n  YON BAZINDA")
+        print(f"  {'Yon':<6} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9} {'10G WR%':>9} {'10G Ort%':>10}")
+        print(f"  {'─' * 55}")
+        for d_name in ['AL', 'SAT']:
+            d = by_dir.get(d_name, {})
+            total = d.get('total', 0)
+            s5 = d.get('5d', {})
+            s10 = d.get('10d', {})
+            if total > 0:
+                warn = '  ** ZAYIF' if d_name == 'SAT' and s5.get('wr', 0) < 50 else ''
+                print(f"  {d_name:<6} {total:>5} "
+                      f"{s5.get('wr', 0):>7.1f}% {s5.get('avg', 0):>+8.2f} "
+                      f"{s10.get('wr', 0):>8.1f}% {s10.get('avg', 0):>+9.2f}{warn}")
+
+    # Gecis tipi (AL, top entries)
+    by_trans = summary.get('by_transition_al', {})
+    if by_trans:
+        print(f"\n  GECIS TIPI (AL, Top {min(5, len(by_trans))})")
+        print(f"  {'Gecis':<28} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9}")
+        print(f"  {'─' * 55}")
+        sorted_trans = sorted(by_trans.items(), key=lambda x: x[1]['n'], reverse=True)
+        for trans_name, ts in sorted_trans[:5]:
+            print(f"  {trans_name:<28} {ts['n']:>5} {ts['wr']:>7.1f}% {ts['avg']:>+8.2f}")
+
+    # Giris skoru (AL)
+    by_score = summary.get('by_score_al', {})
+    if by_score:
+        print(f"\n  GIRIS SKORU (AL)")
+        print(f"  {'Skor':<6} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9} {'Stop%':>7}")
+        print(f"  {'─' * 45}")
+        for score_key in [4, 3, 2, '<=1']:
+            s = by_score.get(score_key)
+            if s:
+                label = str(score_key)
+                print(f"  {label:<6} {s['n']:>5} {s['wr']:>7.1f}% {s['avg']:>+8.2f} {s['stop_pct']:>6.1f}%")
+
+    # Exit stage (AL)
+    by_exit = summary.get('by_exit_al', {})
+    if by_exit:
+        print(f"\n  EXIT STAGE (AL)")
+        print(f"  {'Exit':<6} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9} {'Stop%':>7}")
+        print(f"  {'─' * 45}")
+        for exit_key in [0, 1, '>=2']:
+            s = by_exit.get(exit_key)
+            if s:
+                label = str(exit_key)
+                print(f"  {label:<6} {s['n']:>5} {s['wr']:>7.1f}% {s['avg']:>+8.2f} {s['stop_pct']:>6.1f}%")
+
+    # Filtreli
+    filt = summary.get('filtered_al', {})
+    filt_total = filt.get('total', 0)
+    if filt_total > 0:
+        f5 = filt.get('5d', {})
+        f10 = filt.get('10d', {})
+        print(f"\n  FILTRELI (AL, Score>=3, Exit<=1)")
+        print(f"  N: {filt_total}  "
+              f"5G: WR {f5.get('wr', 0):.1f}% Ort {f5.get('avg', 0):+.2f}%  "
+              f"10G: WR {f10.get('wr', 0):.1f}% Ort {f10.get('avg', 0):+.2f}%")
+
+    print(f"{'═' * w}")
+
+
+def _save_backtest_csv(signals, date_str, output_dir):
+    """Backtest sinyallerini CSV'ye kaydet."""
+    if not signals:
+        print(f"\n  Sinyal yok, CSV olusturulmadi.")
+        return
+    os.makedirs(output_dir, exist_ok=True)
+    csv_df = pd.DataFrame(signals)
+    fname = f"regime_transition_backtest_{date_str.replace('-', '')}.csv"
+    path = os.path.join(output_dir, fname)
+    csv_df.to_csv(path, index=False)
+    print(f"\n  Backtest CSV: {path} ({len(signals)} sinyal)")
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -727,6 +1136,8 @@ def main():
     parser.add_argument('--output', default='output', help='Cikti dizini')
     parser.add_argument('--transitions', action='store_true',
                         help='Sadece gecis olan hisseleri goster')
+    parser.add_argument('--backtest', type=int, metavar='N',
+                        help='Backtest: son N bar icin forward return hesapla')
     args = parser.parse_args()
 
     w = 80
@@ -761,25 +1172,36 @@ def main():
     weekly_dfs = {t: _to_weekly(df) for t, df in stock_dfs.items()}
     weekly_dfs = {t: df for t, df in weekly_dfs.items() if len(df) >= 25}
 
-    # ── 5. Tarama ────────────────────────────────────────────────────────────
-    print(f"\n  Regime transition taramasi...")
-    t1 = time.time()
-    results, n_scanned, date_str, regime_dist = _scan_all(stock_dfs, weekly_dfs)
-    print(f"  {n_scanned} hisse tarandi ({time.time() - t1:.1f}s)")
+    # ── 5. Backtest veya normal tarama ──────────────────────────────────────
+    if args.backtest:
+        print(f"\n  Backtest modu: son {args.backtest} bar...")
+        t1 = time.time()
+        signals, summary = _run_backtest(stock_dfs, weekly_dfs, args.backtest)
+        n_scanned = summary.get('n_scanned', 0)
+        date_str = summary.get('date_str', datetime.now().strftime('%Y-%m-%d'))
+        print(f"  {n_scanned} hisse tarandi, {len(signals)} sinyal ({time.time() - t1:.1f}s)")
+        _print_backtest_summary(summary, args.backtest, n_scanned, date_str)
+        if args.csv:
+            _save_backtest_csv(signals, date_str, args.output)
+    else:
+        print(f"\n  Regime transition taramasi...")
+        t1 = time.time()
+        results, n_scanned, date_str, regime_dist = _scan_all(stock_dfs, weekly_dfs)
+        print(f"  {n_scanned} hisse tarandi ({time.time() - t1:.1f}s)")
 
-    # ── 6. Rapor ─────────────────────────────────────────────────────────────
-    _print_results(results, n_scanned, date_str, regime_dist,
-                   transitions_only=args.transitions)
+        # ── 6. Rapor ─────────────────────────────────────────────────────────
+        _print_results(results, n_scanned, date_str, regime_dist,
+                       transitions_only=args.transitions)
 
-    # ── 7. CSV ───────────────────────────────────────────────────────────────
-    if args.csv:
-        _save_csv(results, date_str, args.output)
+        # ── 7. CSV ───────────────────────────────────────────────────────────
+        if args.csv:
+            _save_csv(results, date_str, args.output)
 
-    # ── 8. HTML ──────────────────────────────────────────────────────────────
-    if args.html:
-        html = _generate_html(results, n_scanned, date_str, regime_dist)
-        html_path = _save_html(html, date_str, args.output)
-        subprocess.Popen(['open', html_path])
+        # ── 8. HTML ──────────────────────────────────────────────────────────
+        if args.html:
+            html = _generate_html(results, n_scanned, date_str, regime_dist)
+            html_path = _save_html(html, date_str, args.output)
+            subprocess.Popen(['open', html_path])
 
     print(f"\n  Toplam sure: {time.time() - t0:.1f}s")
     print(f"  NOX Regime Transition tamamlandi.\n")
