@@ -174,8 +174,9 @@ if regime_up and not in_trade
 if in_trade and close < ema21
     in_trade := false
 
-is_al  = in_trade and not nz(in_trade[1], false)   // trade baslangici
-is_sat = not in_trade and nz(in_trade[1], false)    // trade bitisi
+// in_trade var bool oldugundan [1] hic na olmaz (init = false)
+is_al  = in_trade and not in_trade[1]    // trade baslangici
+is_sat = not in_trade and in_trade[1]    // trade bitisi
 
 bars_since_al = ta.barssince(is_al)
 
