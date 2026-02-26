@@ -552,12 +552,90 @@ Bu liste <b>simdi girilebilir</b> hisseleri gosterir — trade kapanmis hisseler
 5. Hisse adina tikla → TradingView'da grafigi kontrol et<br>
 6. Stop = tablodaki Stop fiyati (swing low - 0.5*ATR)<br>
 <br>
-<b style="color:var(--nox-cyan)">Backtest Sonuclari (250 bar, 537 hisse)</b><br>
-&#8226; <b>AL genel</b>: 5G WR %51, Ort +1.03% (N=12051)<br>
-&#8226; <b>Score 4</b>: 5G WR %63, Ort +1.75% (N=595)<br>
-&#8226; <b>Score>=3, Exit<=1</b>: 5G WR %54, Ort +1.35% (N=3851)<br>
-&#8226; <b>CHOPPY→GRI</b>: WR %52 | <b>CHOPPY→TREND</b>: WR %50 | <b>GRI→FULL</b>: WR %50<br>
-&#8226; <b>SAT (bilgi)</b>: 5G WR %49 → zayif, kullanma<br>
+<b style="color:var(--nox-cyan)">Backtest Sonuclari (250 bar, 537 hisse, N=12051 AL)</b><br>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Giris Skoru</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score 4</b></td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %63</td>
+  <td style="padding:2px 6px">Ort +1.75%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=595</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score 3</b></td>
+  <td style="padding:2px 6px">WR %52</td>
+  <td style="padding:2px 6px">Ort +1.22%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=3180</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score 2</b></td>
+  <td style="padding:2px 6px">WR %51</td>
+  <td style="padding:2px 6px">Ort +1.09%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=3518</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score 1</b></td>
+  <td style="padding:2px 6px">WR %50</td>
+  <td style="padding:2px 6px">Ort +0.87%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=3471</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 6px"><b>Score 0</b></td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %47</td>
+  <td style="padding:2px 6px">Ort +0.39%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=1110</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis Tipi</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>CHOPPY→GRI</b></td>
+  <td style="padding:2px 6px">WR %52</td>
+  <td style="padding:2px 6px">Ort +1.20%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=2587</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>CHOPPY→TREND</b></td>
+  <td style="padding:2px 6px">WR %50</td>
+  <td style="padding:2px 6px">Ort +1.18%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=1455</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>CHOPPY→FULL</b></td>
+  <td style="padding:2px 6px">WR %50</td>
+  <td style="padding:2px 6px">Ort +0.61%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=997</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>GRI→TREND</b></td>
+  <td style="padding:2px 6px">WR %51</td>
+  <td style="padding:2px 6px">Ort +1.06%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=1903</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>GRI→FULL</b></td>
+  <td style="padding:2px 6px">WR %48</td>
+  <td style="padding:2px 6px">Ort +0.79%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=919</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 6px"><b>TREND→FULL</b></td>
+  <td style="padding:2px 6px">WR %52</td>
+  <td style="padding:2px 6px">Ort +1.00%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=4013</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Filtreli Kombinasyonlar</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score4 + Exit0</b></td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %65</td>
+  <td style="padding:2px 6px">Ort +2.18%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=347</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score>=3 + Exit0</b></td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %56</td>
+  <td style="padding:2px 6px">Ort +1.73%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=1754</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 6px"><b>Score>=3 + Exit<=1</b></td>
+  <td style="padding:2px 6px">WR %54</td>
+  <td style="padding:2px 6px">Ort +1.30%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=3775</td></tr>
+<tr>
+  <td style="padding:2px 6px"><b>Score>=2 + Exit0</b></td>
+  <td style="padding:2px 6px">WR %54</td>
+  <td style="padding:2px 6px">Ort +1.45%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=4283</td></tr>
+</table>
 <br>
 <b style="color:var(--nox-red)">OE (Overextended) Uyarisi</b><br>
 &#8226; OE 0-1 = Guvenli | OE 2 = Dikkat | OE 3-4 = Riskli (geri cekilme beklenir)<br>
