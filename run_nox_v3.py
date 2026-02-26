@@ -962,7 +962,59 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
 &#8226; Elmas ne kadar tazeyse destek o kadar güvenilir (>2 ay → aşınmış olabilir)<br>
 <br>
 <b style="color:var(--nox-red)">SAT Sinyalleri</b><br>
-&#8226; Sev 2-3 → pozisyon kapat/daralt | Sev 1 → stop sıkılaştır | Sev 0 → bilgi amaçlı
+&#8226; Sev 2-3 → pozisyon kapat/daralt | Sev 1 → stop sıkılaştır | Sev 0 → bilgi amaçlı<br>
+<br>
+<b style="color:var(--nox-yellow)">Kolon Açıklamaları</b>
+<table style="width:100%;font-size:0.74rem;margin-top:6px;border-collapse:collapse">
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700;white-space:nowrap">Hisse</td>
+  <td style="padding:3px 6px">Ticker (tıkla → TradingView). <b>D+W</b> badge = günlük+haftalık çakışma</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Sinyal</td>
+  <td style="padding:3px 6px">Günlük tetik (BOS/HC2/EMA_R) ateşlenme tarihi = giriş günü. BUGÜN/YAKIN etiketi tazeliği gösterir. >2 hafta → atla</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Elmas</td>
+  <td style="padding:3px 6px">Haftalık pivot low (◆) oluşum tarihi. Yapısal destek seviyesi. Taze elmas daha güvenilir, >2 ay → aşınmış olabilir</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Fiyat</td>
+  <td style="padding:3px 6px">Tetik günü kapanış fiyatı (giriş fiyatı)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">DipFiy</td>
+  <td style="padding:3px 6px">Pivot low fiyatı (destek seviyesi). Stop loss için referans: %2-3 altı</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Δ%</td>
+  <td style="padding:3px 6px">Fiyatın pivot üzerindeki uzaklığı. Düşük = zona yakın, iyi risk/ödül. Yeşil ≤5% | Sarı ≤15% | Kırmızı >15%</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">RG</td>
+  <td style="padding:3px 6px">Regime Gate skoru (0-100). Trend gücü ve yönü. Yüksek = güçlü trend ortamı</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">ADX</td>
+  <td style="padding:3px 6px">Günlük ADX (14). Trend gücü. >25 = trend var, <20 = yatay piyasa</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Slope</td>
+  <td style="padding:3px 6px">ADX 5-bar eğimi. Yeşil (+) = momentum artıyor | Kırmızı (-) = momentum azalıyor</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">RSI</td>
+  <td style="padding:3px 6px">RSI (14). <30 yeşil (aşırı satım, dönüş potansiyeli) | >70 kırmızı (aşırı alım)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">RS</td>
+  <td style="padding:3px 6px">Relative Strength vs XU100 (20G). Yeşil >1 = endeksten güçlü | Kırmızı ≤1 = zayıf. Pivot AL'da RS≤1 daha iyi (WR %72 vs %29) — geri kalmış hisse destek bulunca güçlü döner</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Gate</td>
+  <td style="padding:3px 6px">Breadth + Regime onayı. AÇIK = piyasa koşulları uygun, sinyal güvenilir. KAPALI = dikkatli ol</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Mom</td>
+  <td style="padding:3px 6px">Haftalık momentum. ✓ = son hafta pozitif kapanış | ✗ = negatif</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">TB</td>
+  <td style="padding:3px 6px">Trend Birth aşaması. OK = trend doğmuş | TRG = tetik aşaması | PREP = hazırlık | - = yok</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Prep</td>
+  <td style="padding:3px 6px">Trend Birth hazırlık skoru (0-100). Yüksek = trend doğuşuna yakın</td></tr>
+<tr>
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Durum</td>
+  <td style="padding:3px 6px">Watchlist durumu. <b style="color:var(--nox-green)">HAZIR</b> (WR %78) → trade et | <b style="color:var(--nox-yellow)">İZLE</b> (WR %69) → takipte tut | BEKLE (WR %60) → erken</td></tr>
+</table>
 </div>
 </details>
 
