@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from markets.bist import data as data_mod
-from markets.bist.nox_v3_signals import compute_nox_v3
+from markets.bist.nox_v3_signals import compute_nox_v3, detect_daily_triggers, calc_adx_with_di, _pine_rsi
 from markets.bist.trend_birth import scan_trend_birth
 from core.reports import _NOX_CSS, _sanitize, send_telegram, send_telegram_document, push_html_to_github
 
@@ -37,6 +37,19 @@ from core.reports import _NOX_CSS, _sanitize, send_telegram, send_telegram_docum
 # =============================================================================
 # YARDIMCI
 # =============================================================================
+
+def _get_past_fridays(n, last_date):
+    """Son n Cumayi dondur (eskiden yeniye).
+    last_date: verinin son gununun date objesi."""
+    from datetime import timedelta
+    d = last_date
+    # Cuma = 4 (weekday)
+    days_since_friday = (d.weekday() - 4) % 7
+    last_fri = d - timedelta(days=days_since_friday)
+    fridays = []
+    for i in range(n):
+        fridays.append(last_fri - timedelta(weeks=i))
+    return sorted(fridays)  # eskiden yeniye
 
 def _to_lower_cols(df):
     return df.rename(columns={
@@ -279,8 +292,215 @@ def _enrich_with_trend_birth(signals, stock_dfs, ref_date_str=None):
 
 
 # =============================================================================
+# GUNLUK TETIK — Haftalik pivot + gunluk tetik iki katmanli sistem
+# =============================================================================
+
+def _apply_daily_triggers(weekly_buys, weekly_candidates, daily_dfs,
+                          max_delta_pct=15.0):
+    """
+    Her haftalik AL/ADAY sinyali icin gunluk tetik ara.
+    Tetik bulunursa → triggered, bulunamazsa → zone_only.
+
+    Returns: (triggered, zone_only)
+    """
+    triggered = []
+    zone_only = []
+
+    for sig in weekly_buys + weekly_candidates:
+        ticker = sig['ticker']
+        daily_df = daily_dfs.get(ticker)
+        if daily_df is None or len(daily_df) < 30:
+            zone_only.append(sig)
+            continue
+
+        # Pivot confirm date = signal_date (haftalik onay bari)
+        confirm_date = sig.get('signal_date') or sig.get('pivot_date', '')
+        pivot_price = sig['pivot']
+
+        result = detect_daily_triggers(
+            daily_df, pivot_price, confirm_date, max_delta_pct
+        )
+
+        if result['triggered']:
+            # Tetik bulundu: signal_date ve close'u tetik gununun degerleriyle guncelle
+            sig['trigger_type'] = result['trigger_type']
+            sig['trigger_date'] = result['trigger_date']
+            sig['orig_signal_date'] = sig.get('signal_date', sig.get('pivot_date', ''))
+            sig['signal_date'] = result['trigger_date']
+            sig['close'] = result['trigger_close']
+            sig['delta_pct_at_trigger'] = result['delta_pct_at_trigger']
+            # Gunluk indikatörler
+            _add_daily_indicators(sig, daily_df, result['trigger_date'])
+            triggered.append(sig)
+        else:
+            zone_only.append(sig)
+
+    return triggered, zone_only
+
+
+def _add_daily_indicators(entry, daily_df, trigger_date_str):
+    """Tetik barindaki gunluk ADX, ADX slope, RSI hesapla."""
+    try:
+        trigger_ts = pd.Timestamp(trigger_date_str)
+        idx = daily_df.index.get_loc(trigger_ts)
+    except (KeyError, TypeError):
+        # Tam eslesme yoksa en yakin bari bul
+        try:
+            trigger_ts = pd.Timestamp(trigger_date_str)
+            idx = daily_df.index.searchsorted(trigger_ts)
+            if idx >= len(daily_df):
+                idx = len(daily_df) - 1
+        except Exception:
+            return
+
+    try:
+        adx, _, _ = calc_adx_with_di(daily_df)
+        rsi = _pine_rsi(daily_df['close'], 14)
+        adx_slope = (adx - adx.shift(5)) / 5
+
+        entry['d_adx'] = round(float(adx.iloc[idx]), 1) if pd.notna(adx.iloc[idx]) else None
+        entry['d_adx_slope'] = round(float(adx_slope.iloc[idx]), 2) if pd.notna(adx_slope.iloc[idx]) else None
+        entry['d_rsi'] = round(float(rsi.iloc[idx]), 1) if pd.notna(rsi.iloc[idx]) else None
+    except Exception:
+        entry['d_adx'] = None
+        entry['d_adx_slope'] = None
+        entry['d_rsi'] = None
+
+
+def _save_csv_v2(triggered, sells, date_str, output_dir, suffix='',
+                 zone_only=None):
+    """
+    Yeni CSV kaydet: triggered → PIVOT_AL, zone_only → ZONE_ONLY, sells → PIVOT_SAT.
+    Ayni dosya adi pattern'i: nox_v3_signals{suffix}_{YYYYMMDD}.csv
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    rows = []
+    for b in triggered:
+        row = {
+            'signal': 'PIVOT_AL',
+            'ticker': b['ticker'],
+            'pivot_date': b.get('pivot_date', ''),
+            'signal_date': b['signal_date'],
+            'close': b['close'],
+            'pivot_price': b['pivot'],
+            'delta_pct': b.get('delta_pct'),
+            'gate_open': b.get('gate'),
+            'rg_score': b.get('rg'),
+            'adx': b.get('adx'),
+            'adx_slope': b.get('slope'),
+            'rsi': b.get('rsi'),
+            'trigger_type': b.get('trigger_type', ''),
+            'trigger_date': b.get('trigger_date', ''),
+            'delta_pct_at_trigger': b.get('delta_pct_at_trigger'),
+            'd_adx': b.get('d_adx'),
+            'd_adx_slope': b.get('d_adx_slope'),
+            'd_rsi': b.get('d_rsi'),
+            'wl_status': b.get('status', ''),
+            'tb_stage': b.get('tb_stage', ''),
+            'tb_prep': b.get('tb_prep', ''),
+        }
+        rows.append(row)
+    for z in (zone_only or []):
+        row = {
+            'signal': 'ZONE_ONLY',
+            'ticker': z['ticker'],
+            'pivot_date': z.get('pivot_date', ''),
+            'signal_date': z.get('signal_date', z.get('pivot_date', '')),
+            'close': z['close'],
+            'pivot_price': z['pivot'],
+            'delta_pct': z.get('delta_pct'),
+            'gate_open': z.get('gate'),
+            'rg_score': z.get('rg'),
+            'adx': z.get('adx'),
+            'adx_slope': z.get('slope'),
+            'rsi': z.get('rsi'),
+            'wl_status': z.get('status', ''),
+            'tb_stage': z.get('tb_stage', ''),
+            'tb_prep': z.get('tb_prep', ''),
+        }
+        rows.append(row)
+    for s in sells:
+        rows.append({
+            'signal': 'PIVOT_SAT',
+            'ticker': s['ticker'],
+            'pivot_date': s['pivot_date'],
+            'signal_date': s['signal_date'],
+            'close': s['close'],
+            'pivot_price': s['pivot'],
+            'severity': s['severity'],
+            'adx': s['adx'],
+            'adx_slope': s['slope'],
+            'rsi': s['rsi'],
+            'drawdown_pct': s['dd_pct'],
+        })
+    if rows:
+        csv_df = pd.DataFrame(rows)
+        fname = f"nox_v3_signals{suffix}_{date_str.replace('-', '')}.csv"
+        path = os.path.join(output_dir, fname)
+        csv_df.to_csv(path, index=False)
+        print(f"\n  CSV: {path}")
+
+
+# =============================================================================
 # RAPOR
 # =============================================================================
+
+def _print_triggered_results(triggered, sells, zone_only, n_scanned, date_str):
+    """Tetik bazli konsol ciktisi — haftalik iki katmanli sistem icin."""
+    _print_section(f"◆ NOX v3 [HAFTALIK+TETIK] — {date_str} — {n_scanned} hisse")
+
+    if triggered:
+        # Gate durumuna gore ayir
+        gated = [t for t in triggered if t.get('gate')]
+        ungated = [t for t in triggered if not t.get('gate')]
+
+        for label, items in [("◆ PIVOT AL+TETIK — ONAYLI (Gate Acik)", gated),
+                             ("◆ PIVOT AL+TETIK — Sadece Pivot (Gate Kapali)", ungated)]:
+            if not items:
+                print(f"\n  {label} (0)")
+                continue
+            print(f"\n  {label} ({len(items)})")
+            w = 130
+            print(f"  {'─' * w}")
+            print(f"  {'Hisse':<8} {'TetikTrh':>10} {'Tetik':>5} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
+                  f"{'RG':>5} {'dADX':>5} {'dSlp':>6} {'dRSI':>5} "
+                  f"{'Mom':>4} {'TB':>4} {'Durum':>6}")
+            print(f"  {'─' * w}")
+            for b in items:
+                mom = '✓' if b.get('wk_mom') else '✗'
+                tb = b.get('tb_stage', '-')
+                status = b.get('status', 'BEKLE')
+                d_adx = f"{b['d_adx']:.1f}" if b.get('d_adx') is not None else '-'
+                d_slp = f"{b['d_adx_slope']:+.2f}" if b.get('d_adx_slope') is not None else '-'
+                d_rsi = f"{b['d_rsi']:.1f}" if b.get('d_rsi') is not None else '-'
+                delta = b.get('delta_pct_at_trigger', b.get('delta_pct', 0))
+                print(f"  {b['ticker']:<8} {b['signal_date']:>10} {b.get('trigger_type','?'):>5} "
+                      f"{b['close']:>8.2f} {b['pivot']:>8.2f} {delta:>+5.1f}% "
+                      f"{b.get('rg', 0):>5.0f} {d_adx:>5} {d_slp:>6} {d_rsi:>5} "
+                      f"{mom:>4} {tb:>4} {status:>6}")
+            print(f"  {'─' * w}")
+    else:
+        print(f"\n  ◆ PIVOT AL+TETIK (0)")
+
+    # Zone-only
+    if zone_only:
+        print(f"\n  ◆ ZONE_ONLY — Tetik Bekleniyor ({len(zone_only)} hisse)")
+        for z in zone_only[:10]:
+            print(f"    {z['ticker']:<8} ◆{z['pivot']:.2f} Δ{z.get('delta_pct', 0):+.1f}%")
+        if len(zone_only) > 10:
+            print(f"    ...ve {len(zone_only) - 10} hisse daha")
+    else:
+        print(f"\n  ◆ ZONE_ONLY (0)")
+
+    # SAT
+    severe = [s for s in sells if s['severity'] >= 2]
+    mild = [s for s in sells if s['severity'] == 1]
+    slope_only = [s for s in sells if s['severity'] == 0]
+    _print_sell_group("◆ PIVOT SAT — SERT (Severity 2-3)", severe)
+    _print_sell_group("◆ PIVOT SAT — Hafif (Severity 1)", mild)
+    if slope_only:
+        print(f"\n  ◆ PIVOT SAT — Sadece Slope ({len(slope_only)} hisse, listelenmedi)")
+
 
 def _print_section(title):
     w = 80
@@ -1060,6 +1280,8 @@ def main():
     parser.add_argument('--output', default='output', help='CSV/HTML cikti dizini')
     parser.add_argument('--debug', metavar='TICKER', help='Debug modu')
     parser.add_argument('--notify', action='store_true', help='Telegram + GitHub Pages bildirim')
+    parser.add_argument('--backtest', type=int, metavar='N',
+                        help='Son N Cuma icin haftalik CSV uret (backtest modu)')
     args = parser.parse_args()
 
     # Her ikisi de belirtilmediyse, ikisini de calistir
@@ -1094,6 +1316,47 @@ def main():
 
     stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in all_data.items()}
 
+    # ── 2b. BACKTEST MODU ───────────────────────────────────────────────────
+    if args.backtest:
+        if not args.csv:
+            print("  HATA: --backtest icin --csv gerekli!")
+            sys.exit(1)
+        # Backtest sadece haftalik calisir, weekly'yi zorla ac
+        run_weekly = True
+    if args.backtest and run_weekly and args.csv:
+        last_data_date = stock_dfs[next(iter(stock_dfs))].index[-1].date()
+        fridays = _get_past_fridays(args.backtest, last_data_date)
+        print(f"\n  Backtest: {args.backtest} Cuma icin CSV uretiliyor...")
+        print(f"  Tarihler: {fridays[0]} → {fridays[-1]}")
+        for fri in fridays:
+            cutoff = pd.Timestamp(fri)
+            # Gunluk veriyi kes
+            cut_dfs = {t: df[df.index <= cutoff] for t, df in stock_dfs.items()}
+            cut_dfs = {t: df for t, df in cut_dfs.items() if len(df) >= 60}
+            # Haftalik resample
+            wk_dfs = {t: _to_weekly(df) for t, df in cut_dfs.items()}
+            wk_dfs = {t: df for t, df in wk_dfs.items() if len(df) >= 30}
+            # Tarama
+            wb, ws, wc, wn, wd = _scan(wk_dfs, tf_label='weekly')
+            # Gunluk tetik uygula
+            triggered, zone_only = _apply_daily_triggers(wb, wc, cut_dfs)
+            # TB zenginlestirme (triggered sinyallere)
+            triggered = _enrich_with_trend_birth(triggered, cut_dfs, wd)
+            zone_only = _enrich_with_trend_birth(zone_only, cut_dfs, wd)
+            # CSV kaydet (yeni format)
+            _save_csv_v2(triggered, ws, wd, args.output, suffix='_weekly',
+                         zone_only=zone_only)
+            n_trig = len(triggered)
+            n_zone = len(zone_only)
+            trig_types = {}
+            for t in triggered:
+                tt = t.get('trigger_type', '?')
+                trig_types[tt] = trig_types.get(tt, 0) + 1
+            trig_str = ' '.join(f"{k}:{v}" for k, v in sorted(trig_types.items()))
+            print(f"    {wd}: {wn} hisse, {n_trig} TETIK + {n_zone} ZONE + {len(ws)} SAT | {trig_str}")
+        print(f"\n  Backtest tamamlandi. ({time.time() - t0:.1f}s)")
+        return
+
     # ── 3. GUNLUK TARAMA ────────────────────────────────────────────────────
     if run_daily:
         print(f"\n  Gunluk tarama...")
@@ -1104,22 +1367,30 @@ def main():
         if args.csv:
             _save_csv(d_buys, d_sells, d_date, args.output)
 
-    # ── 4. HAFTALIK TARAMA ──────────────────────────────────────────────────
+    # ── 4. HAFTALIK TARAMA + GUNLUK TETIK ──────────────────────────────────
+    w_triggered = []
+    w_zone_only = []
     if run_weekly:
         print(f"\n  Haftalik resample + tarama...")
         t2 = time.time()
         weekly_dfs = {t: _to_weekly(df) for t, df in stock_dfs.items()}
         weekly_dfs = {t: df for t, df in weekly_dfs.items() if len(df) >= 30}
         w_buys, w_sells, w_cands, w_n, w_date = _scan(weekly_dfs, debug_ticker, tf_label='weekly')
-        # Haftalik AL + ADAY sinyallerini Trend Birth ile zenginlestir
+        # Gunluk tetik uygula
+        print(f"  Gunluk tetik taramasi...")
+        t2t = time.time()
+        w_triggered, w_zone_only = _apply_daily_triggers(w_buys, w_cands, stock_dfs)
+        print(f"  Tetik tamamlandi ({time.time() - t2t:.1f}s): {len(w_triggered)} tetik, {len(w_zone_only)} zone-only")
+        # TB zenginlestirme (triggered sinyallere)
         print(f"  Trend Birth zenginlestirme...")
         t2b = time.time()
-        w_buys = _enrich_with_trend_birth(w_buys, stock_dfs, w_date)
-        w_cands = _enrich_with_trend_birth(w_cands, stock_dfs, w_date)
+        w_triggered = _enrich_with_trend_birth(w_triggered, stock_dfs, w_date)
+        w_zone_only = _enrich_with_trend_birth(w_zone_only, stock_dfs, w_date)
         print(f"  Haftalik tamamlandi ({time.time() - t2:.1f}s, TB: {time.time() - t2b:.1f}s)")
-        _print_results(w_buys, w_sells, w_cands, w_n, w_date, 'HAFTALIK')
+        _print_triggered_results(w_triggered, w_sells, w_zone_only, w_n, w_date)
         if args.csv:
-            _save_csv(w_buys, w_sells, w_date, args.output, suffix='_weekly', candidates=w_cands)
+            _save_csv_v2(w_triggered, w_sells, w_date, args.output,
+                         suffix='_weekly', zone_only=w_zone_only)
 
     # ── 5. Ozet ─────────────────────────────────────────────────────────────
     print(f"\n{'=' * 80}")
@@ -1129,7 +1400,7 @@ def main():
     overlap = set()
     if run_daily and run_weekly:
         d_tickers = {b['ticker'] for b in d_buys}
-        w_tickers = {b['ticker'] for b in w_buys}
+        w_tickers = {b['ticker'] for b in w_triggered}
         overlap = d_tickers & w_tickers
         if overlap:
             print(f"\n  ★ CAKISMA (Gunluk + Haftalik AL): {', '.join(sorted(overlap))}")
@@ -1141,8 +1412,8 @@ def main():
             d_buys if run_daily else [], d_sells if run_daily else [],
             d_cands if run_daily else [],
             d_n if run_daily else 0, d_date if run_daily else '',
-            w_buys if run_weekly else [], w_sells if run_weekly else [],
-            w_cands if run_weekly else [],
+            w_triggered if run_weekly else [], w_sells if run_weekly else [],
+            w_zone_only if run_weekly else [],
             w_n if run_weekly else 0, w_date if run_weekly else '',
             overlap,
         )
@@ -1157,7 +1428,7 @@ def main():
         if args.html and html_path:
             html_url = push_html_to_github(html, 'nox_v3_weekly.html', w_date)
             send_telegram_document(html_path)
-        msg = _format_weekly_telegram(w_buys, w_sells, w_cands, w_n, w_date, html_url)
+        msg = _format_weekly_telegram(w_triggered, w_sells, w_zone_only, w_n, w_date, html_url)
         send_telegram(msg)
 
     print(f"\n  NOX v3 tamamlandi.")

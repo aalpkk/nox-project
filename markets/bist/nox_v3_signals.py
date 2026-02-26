@@ -20,6 +20,16 @@ from core.indicators import ema, sma
 # CONSTANTS — PineScript input parametreleri
 # =============================================================================
 
+NOX_V3_TRIGGER = {
+    'daily_pivot_lb': 3,    # BOS icin gunluk swing high lb
+    'hc2_count': 2,         # Ardisik higher close sayisi
+    'ema_len': 21,          # EMA Reclaim periyodu
+    'vol_sma_len': 20,      # Hacim SMA periyodu
+    'vol_mult': 1.3,        # Hacim carpani
+    'max_delta_pct': 15.0,  # Pivot zonundan max uzaklik (%)
+}
+
+
 NOX_V3 = {
     'pivot_lb': 5,
     'adx_len': 14,
@@ -427,3 +437,132 @@ def compute_nox_v3(df, require_gate=False, min_sell_severity=0):
         'phase': phase,
         'drawdown_pct': drawdown_pct,
     }
+
+
+# =============================================================================
+# 8. GUNLUK TETIK — Pivot zona yakinken ates eden tetikler
+# =============================================================================
+
+def _no_trigger():
+    """Tetik bulunamadi sentinel."""
+    return {
+        'triggered': False,
+        'trigger_type': None,
+        'trigger_date': None,
+        'trigger_close': None,
+        'delta_pct_at_trigger': None,
+    }
+
+
+def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
+                          max_delta_pct=None):
+    """
+    Haftalik pivot zonuna yakinken gunluk tetik ara.
+
+    Pivot confirm tarihinden sonraki gunluk barlarda:
+      1. BOS  — close, son daily swing high'i kiriyor
+      2. HC2  — 2 ardisik higher close
+      3. EMA_R — close EMA21'i hacimli geri aliyor
+
+    Args:
+        daily_df: Gunluk DataFrame (lowercase kolonlar)
+        pivot_price: Haftalik pivot low fiyati
+        pivot_confirm_date: Pivot onay tarihi (str 'YYYY-MM-DD' veya Timestamp)
+        max_delta_pct: Pivot zonundan max uzaklik (%), None ise default
+
+    Returns: dict (triggered, trigger_type, trigger_date, trigger_close, delta_pct_at_trigger)
+    """
+    C = NOX_V3_TRIGGER
+    if max_delta_pct is None:
+        max_delta_pct = C['max_delta_pct']
+
+    if len(daily_df) < 30:
+        return _no_trigger()
+
+    # Pivot confirm tarihinden sonraki barlari filtrele
+    confirm_ts = pd.Timestamp(pivot_confirm_date)
+    mask = daily_df.index > confirm_ts
+    if not mask.any():
+        return _no_trigger()
+
+    start_idx = int(np.argmax(mask))  # ilk True indeksi
+
+    # Onceden hesapla: swing highs, EMA, volume SMA, consecutive higher close
+    swing_highs = find_pivot_highs(daily_df['high'], C['daily_pivot_lb'])
+    ema21 = ema(daily_df['close'], C['ema_len'])
+    vol_sma = sma(daily_df['volume'], C['vol_sma_len'])
+
+    closes = daily_df['close'].values
+    highs = daily_df['high'].values
+    volumes = daily_df['volume'].values
+    ema21_vals = ema21.values
+    vol_sma_vals = vol_sma.values
+
+    # Son bilinen swing high takibi
+    last_swing_high = np.nan
+    for i in range(start_idx):
+        if pd.notna(swing_highs.iloc[i]):
+            last_swing_high = swing_highs.iloc[i]
+
+    # Tarama
+    for i in range(start_idx, len(daily_df)):
+        # Swing high guncelle (mevcut bar dahil)
+        if pd.notna(swing_highs.iloc[i]):
+            last_swing_high = swing_highs.iloc[i]
+
+        c = closes[i]
+
+        # Zone proximity kontrolu
+        delta_pct = (c - pivot_price) / pivot_price * 100
+        if delta_pct < 0:
+            # Fiyat pivot altinda, bu bari atla ama aramaya devam et
+            continue
+        if delta_pct > max_delta_pct:
+            # Zondan cok uzak, atla
+            continue
+
+        # — Tetik 1: BOS (Break of Structure) —
+        if pd.notna(last_swing_high) and c > last_swing_high:
+            return {
+                'triggered': True,
+                'trigger_type': 'BOS',
+                'trigger_date': daily_df.index[i].strftime('%Y-%m-%d'),
+                'trigger_close': float(c),
+                'delta_pct_at_trigger': round(delta_pct, 2),
+            }
+
+        # — Tetik 2: HC2 (2 ardisik higher close) —
+        if i >= C['hc2_count']:
+            hc_ok = True
+            for k in range(1, C['hc2_count'] + 1):
+                if closes[i - k + 1] <= closes[i - k]:
+                    hc_ok = False
+                    break
+            if hc_ok:
+                return {
+                    'triggered': True,
+                    'trigger_type': 'HC2',
+                    'trigger_date': daily_df.index[i].strftime('%Y-%m-%d'),
+                    'trigger_close': float(c),
+                    'delta_pct_at_trigger': round(delta_pct, 2),
+                }
+
+        # — Tetik 3: EMA_R (EMA21 Reclaim + hacim) —
+        e = ema21_vals[i]
+        v = volumes[i]
+        vs = vol_sma_vals[i]
+        if (i >= 1 and pd.notna(e) and pd.notna(ema21_vals[i - 1])
+                and pd.notna(vs)):
+            prev_below = closes[i - 1] < ema21_vals[i - 1]
+            now_above = c > e
+            vol_ok = v > vs * C['vol_mult']
+            if prev_below and now_above and vol_ok:
+                return {
+                    'triggered': True,
+                    'trigger_type': 'EMA_R',
+                    'trigger_date': daily_df.index[i].strftime('%Y-%m-%d'),
+                    'trigger_close': float(c),
+                    'delta_pct_at_trigger': round(delta_pct, 2),
+                }
+
+    return _no_trigger()
