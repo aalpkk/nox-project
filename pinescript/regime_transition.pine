@@ -1,0 +1,319 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © NOX Project — Regime Transition Indicator v1.0
+// Python regime_transition.py birebir Pine Script v6 replika.
+
+//@version=6
+indicator("NOX Regime Transition", shorttitle="NOX RT", overlay=true, max_labels_count=500,
+     max_bars_back=500)
+
+// =============================================================================
+// INPUTS — RT_CFG eslesmeleri
+// =============================================================================
+
+// Trend
+i_ema_fast       = input.int(21,   "EMA Fast",          group="Trend")
+i_st_period      = input.int(10,   "SuperTrend Period",  group="Trend")
+i_st_mult        = input.float(3.0,"SuperTrend Mult",    group="Trend", step=0.5)
+i_weekly_ema_len = input.int(21,   "Weekly EMA Length",   group="Trend")
+
+// Participation
+i_cmf_period     = input.int(20,   "CMF Period",          group="Participation")
+i_rvol_period    = input.int(20,   "RVOL Period",         group="Participation")
+i_obv_ema_len    = input.int(10,   "OBV EMA Length",      group="Participation")
+i_obv_slope_len  = input.int(5,    "OBV Slope Length",    group="Participation")
+
+// Expansion
+i_adx_len        = input.int(14,   "ADX Length",          group="Expansion")
+i_adx_slope_len  = input.int(5,    "ADX Slope Length",    group="Expansion")
+i_atr_len        = input.int(14,   "ATR Length",          group="Expansion")
+i_atr_sma_len    = input.int(20,   "ATR SMA Length",      group="Expansion")
+i_atr_expand     = input.float(1.05,"ATR Expand Mult",    group="Expansion", step=0.01)
+i_di_thresh      = input.float(5.0, "DI Spread Thresh",   group="Expansion", step=1.0)
+
+// Exit
+i_exit_ema_len       = input.int(21, "Exit EMA Length",        group="Exit")
+i_exit_close_bars    = input.int(2,  "Exit Close Below Bars",  group="Exit")
+i_exit_adx_slope_bars= input.int(3,  "Exit ADX Slope Bars",   group="Exit")
+
+// Stop
+i_stop_swing_lb  = input.int(10,   "Stop Swing Lookback", group="Stop")
+i_stop_atr_init  = input.float(0.5,"Stop ATR Initial",    group="Stop", step=0.1)
+i_stop_atr_trail = input.float(2.0,"Stop ATR Trail",      group="Stop", step=0.1)
+
+// Gorseller
+i_show_table     = input.bool(true, "Bilgi Tablosu",       group="Gorseller")
+i_show_st        = input.bool(true, "SuperTrend Cizgisi",  group="Gorseller")
+i_show_ema       = input.bool(true, "EMA21 Cizgisi",       group="Gorseller")
+i_show_stop      = input.bool(true, "Stop Cizgisi",        group="Gorseller")
+
+// =============================================================================
+// YARDIMCI FONKSIYONLAR
+// =============================================================================
+
+// linreg slope: ta.change(ta.linreg(...)) ≈ bar-to-bar slope
+slope(src, len) =>
+    ta.change(ta.linreg(src, len, 0))
+
+// =============================================================================
+// BILESEN 1 — TREND SCORE (0-3)
+// =============================================================================
+
+// EMA21
+ema21 = ta.ema(close, i_ema_fast)
+ema_bull = close > ema21 ? 1 : 0
+
+// SuperTrend
+[st_value, st_dir] = ta.supertrend(i_st_mult, i_st_period)
+// Pine: st_dir > 0 = bearish (fiyat altinda), st_dir < 0 = bullish (fiyat ustunde)
+// Python'da: 1 = bullish, -1 = bearish
+// Pine ta.supertrend direction: negatif = bullish, pozitif = bearish
+st_bull = st_dir < 0 ? 1 : 0
+
+// Haftalik EMA trend up
+w_ema = request.security(syminfo.tickerid, "W", ta.ema(close, i_weekly_ema_len))
+wk_trend_up = w_ema > w_ema[1] ? 1 : 0
+
+trend_score = ema_bull + st_bull + wk_trend_up
+
+// =============================================================================
+// BILESEN 2 — PARTICIPATION SCORE (0-3)
+// =============================================================================
+
+// CMF (Chaikin Money Flow)
+hl_range = high - low
+clv = hl_range != 0 ? ((close - low) - (high - close)) / hl_range : 0.0
+money_flow_vol = clv * volume
+cmf_val = math.sum(volume, i_cmf_period) != 0 ?
+     math.sum(money_flow_vol, i_cmf_period) / math.sum(volume, i_cmf_period) : 0.0
+cmf_pos = cmf_val > 0 ? 1 : 0
+
+// RVOL
+vol_avg = ta.sma(volume, i_rvol_period)
+rvol_val = vol_avg != 0 ? volume / vol_avg : 0.0
+rvol_high = rvol_val >= 1.0 ? 1 : 0
+
+// OBV EMA slope
+obv_val = ta.obv
+obv_ema = ta.ema(obv_val, i_obv_ema_len)
+obv_slope_val = slope(obv_ema, i_obv_slope_len)
+obv_slope_pos = obv_slope_val > 0 ? 1 : 0
+
+participation_score = cmf_pos + rvol_high + obv_slope_pos
+
+// =============================================================================
+// BILESEN 3 — EXPANSION SCORE (0-3)
+// =============================================================================
+
+// ADX + DI
+[di_plus, di_minus, adx_val] = ta.dmi(i_adx_len, i_adx_len)
+
+// ADX slope
+adx_slope_val = slope(adx_val, i_adx_slope_len)
+adx_slope_pos = adx_slope_val > 0 ? 1 : 0
+
+// ATR expanding
+atr_val = ta.atr(i_atr_len)
+atr_sma = ta.sma(atr_val, i_atr_sma_len)
+atr_expanding = atr_val > atr_sma * i_atr_expand ? 1 : 0
+
+// DI spread
+di_spread = di_plus - di_minus
+di_bull = di_spread > i_di_thresh ? 1 : 0
+
+expansion_score = adx_slope_pos + atr_expanding + di_bull
+
+// =============================================================================
+// REGIME BELIRLEME
+// =============================================================================
+
+// base_regime: ts < 2 → CHOPPY(0), ts>=2: p>=2&e>=2 → FULL(3), p>=1&e>=1 → TREND(2), else → GRI(1)
+base_regime = trend_score < 2 ? 0 :
+     (participation_score >= 2 and expansion_score >= 2) ? 3 :
+     (participation_score >= 1 and expansion_score >= 1) ? 2 : 1
+
+// =============================================================================
+// 3 ASAMALI CIKIS
+// =============================================================================
+
+// Stage 1: Structure Break — 2 gun ust uste close < EMA21 VEYA SuperTrend bearish
+close_below_ema = close < ema21
+var int cb_count = 0
+cb_count := close_below_ema ? cb_count[1] + 1 : 0
+stage1 = (cb_count >= i_exit_close_bars or st_dir > 0) ? 1 : 0
+// st_dir > 0 = bearish in Pine
+
+// Stage 2: Momentum Decay — ADX slope < 0 (3 bar ust uste) VE CMF < 0
+adx_slope_neg = adx_slope_val < 0
+var int as_count = 0
+as_count := adx_slope_neg ? as_count[1] + 1 : 0
+stage2 = (as_count >= i_exit_adx_slope_bars and cmf_val < 0) ? 1 : 0
+
+// Stage 3: Regime Collapse — trend_score < 2
+stage3 = trend_score < 2 ? 1 : 0
+
+exit_stage = stage1 + stage2 + stage3
+
+// Exit ile regime duzeltmesi
+regime = exit_stage == 0 ? base_regime :
+     exit_stage == 1 ? math.max(base_regime - 1, 0) : 0
+
+// =============================================================================
+// GECIS TESPITI
+// =============================================================================
+
+prev_regime = nz(regime[1], 0)
+is_al  = regime > prev_regime
+is_sat = regime < prev_regime
+
+bars_since_transition = ta.barssince(is_al or is_sat)
+
+// =============================================================================
+// ENTRY SCORE (0-4, sadece AL)
+// =============================================================================
+
+atr_pct = close != 0 ? atr_val / close * 100 : 0.0
+entry_score = 0
+entry_score += (atr_pct < 3.0) ? 1 : 0        // Dusuk volatilite
+entry_score += (adx_slope_val < 0) ? 1 : 0     // Erken giris
+entry_score += (regime <= 2) ? 1 : 0            // Buyume odasi
+entry_score += (rvol_val < 2.0) ? 1 : 0         // Pump filtresi
+
+// =============================================================================
+// ENTRY WINDOW
+// =============================================================================
+
+bst = nz(bars_since_transition, 999)
+entry_window = bst <= 1 ? "TAZE" :
+     bst <= 7 ? "BEKLE" :
+     bst <= 20 ? "2.DALGA" : "GEC"
+
+// =============================================================================
+// STOP SEVIYESI
+// =============================================================================
+
+pivot_low = ta.pivotlow(low, i_stop_swing_lb, i_stop_swing_lb)
+last_pivot = ta.valuewhen(not na(pivot_low), pivot_low, 0)
+
+// Fallback: pivot yoksa son 20 barin minimumunu kullan
+eff_pivot = na(last_pivot) ? ta.lowest(low, 20) : last_pivot
+
+initial_stop = eff_pivot - i_stop_atr_init * atr_val
+trailing_stop = close - i_stop_atr_trail * atr_val
+eff_stop = math.max(initial_stop, trailing_stop)
+
+// =============================================================================
+// GORSEL — Arka plan rengi (rejime gore)
+// =============================================================================
+
+regime_color = regime == 0 ? color.new(color.gray, 90) :
+     regime == 1 ? color.new(color.yellow, 88) :
+     regime == 2 ? color.new(color.aqua, 85) :
+     color.new(color.green, 85)
+bgcolor(regime_color, title="Regime Arka Plan")
+
+// =============================================================================
+// GORSEL — AL / SAT oklari
+// =============================================================================
+
+plotshape(is_al, style=shape.triangleup, location=location.belowbar,
+     color=color.green, size=size.small, title="AL Gecis", text="AL")
+plotshape(is_sat, style=shape.triangledown, location=location.abovebar,
+     color=color.red, size=size.small, title="SAT Gecis", text="SAT")
+
+// =============================================================================
+// GORSEL — EMA21
+// =============================================================================
+
+plot(i_show_ema ? ema21 : na, color=color.new(color.gray, 50), linewidth=1, title="EMA21")
+
+// =============================================================================
+// GORSEL — SuperTrend
+// =============================================================================
+
+st_color = st_dir < 0 ? color.green : color.red
+plot(i_show_st ? st_value : na, color=st_color, linewidth=2, title="SuperTrend")
+
+// =============================================================================
+// GORSEL — Stop cizgisi (AL aktifken)
+// =============================================================================
+
+// Son gecis AL mi (regime yukselmis durumda)?
+is_in_trade = regime >= 2 and regime >= prev_regime
+plot(i_show_stop and is_in_trade ? eff_stop : na,
+     color=color.new(color.red, 30), style=plot.style_circles,
+     linewidth=1, title="Stop")
+
+// =============================================================================
+// BILGI TABLOSU (sag ust kose)
+// =============================================================================
+
+if i_show_table and barstate.islast
+    regime_names = array.from("CHOPPY", "GRI_BOLGE", "TREND", "FULL_TREND")
+    regime_name = array.get(regime_names, math.min(regime, 3))
+
+    entry_labels = array.from("GEC", "GEC", "RISKLI", "FIRSAT", "GIR")
+    entry_label = is_al ? array.get(entry_labels, math.min(entry_score, 4)) : "—"
+
+    var tbl = table.new(position.top_right, 2, 8,
+         bgcolor=color.new(color.black, 20), border_width=1,
+         border_color=color.new(color.gray, 70))
+
+    // Regime rengi
+    r_color = regime == 0 ? color.gray :
+         regime == 1 ? color.yellow :
+         regime == 2 ? color.aqua : color.green
+
+    table.cell(tbl, 0, 0, "REGIME", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 0, regime_name + " (" + str.tostring(regime) + ")",
+         text_color=r_color, text_size=size.small)
+
+    table.cell(tbl, 0, 1, "Skorlar", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, "T:" + str.tostring(trend_score) + " P:" +
+         str.tostring(participation_score) + " E:" + str.tostring(expansion_score) +
+         " Exit:" + str.tostring(exit_stage), text_color=color.white, text_size=size.small)
+
+    table.cell(tbl, 0, 2, "Giris", text_color=color.gray, text_size=size.small)
+    e_color = entry_score >= 4 ? color.green : entry_score >= 3 ? color.aqua :
+         entry_score >= 2 ? color.yellow : color.red
+    table.cell(tbl, 1, 2, entry_label + " " + str.tostring(entry_score) + "/4",
+         text_color=e_color, text_size=size.small)
+
+    table.cell(tbl, 0, 3, "Pencere", text_color=color.gray, text_size=size.small)
+    w_color = entry_window == "TAZE" ? color.green :
+         entry_window == "BEKLE" ? color.yellow :
+         entry_window == "2.DALGA" ? color.aqua : color.gray
+    table.cell(tbl, 1, 3, entry_window + " (" + str.tostring(bst) + "g)",
+         text_color=w_color, text_size=size.small)
+
+    table.cell(tbl, 0, 4, "Stop", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 4, str.tostring(math.round(eff_stop, 2)),
+         text_color=color.red, text_size=size.small)
+
+    table.cell(tbl, 0, 5, "ADX", text_color=color.gray, text_size=size.small)
+    adx_color = adx_slope_val > 0 ? color.green : color.red
+    table.cell(tbl, 1, 5, str.tostring(math.round(adx_val, 1)) + "  Slope: " +
+         str.tostring(math.round(adx_slope_val, 2)), text_color=adx_color, text_size=size.small)
+
+    table.cell(tbl, 0, 6, "CMF", text_color=color.gray, text_size=size.small)
+    cmf_color = cmf_val > 0 ? color.green : color.red
+    table.cell(tbl, 1, 6, str.tostring(math.round(cmf_val, 3)) + "  RVOL: " +
+         str.tostring(math.round(rvol_val, 2)), text_color=cmf_color, text_size=size.small)
+
+    table.cell(tbl, 0, 7, "DI±", text_color=color.gray, text_size=size.small)
+    di_color = di_spread > i_di_thresh ? color.green :
+         di_spread < -i_di_thresh ? color.red : color.gray
+    table.cell(tbl, 1, 7, str.tostring(math.round(di_spread, 1)),
+         text_color=di_color, text_size=size.small)
+
+// =============================================================================
+// ALERT KOSULLARI
+// =============================================================================
+
+alertcondition(is_al and entry_score >= 3, "RT AL (Score>=3)",
+     "{{ticker}} AL gecis — Score " + str.tostring(entry_score) + "/4")
+alertcondition(is_al and entry_score == 4, "RT GIR (Score=4)",
+     "{{ticker}} GIR — Tum kriterler tamam")
+alertcondition(is_sat, "RT SAT",
+     "{{ticker}} SAT gecis")
+alertcondition(exit_stage >= 2, "RT Exit Stage >= 2",
+     "{{ticker}} Cikis asamasi " + str.tostring(exit_stage) + "/3")
