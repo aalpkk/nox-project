@@ -329,6 +329,9 @@ def _apply_daily_triggers(weekly_buys, weekly_candidates, daily_dfs,
             sig['signal_date'] = result['trigger_date']
             sig['close'] = result['trigger_close']
             sig['delta_pct_at_trigger'] = result['delta_pct_at_trigger']
+            # fresh etiketini tetik tarihine göre güncelle
+            last_trading_day = daily_df.index[-1].strftime('%Y-%m-%d')
+            sig['fresh'] = 'BUGUN' if result['trigger_date'] == last_trading_day else 'YAKIN'
             # Gunluk indikatörler
             _add_daily_indicators(sig, daily_df, result['trigger_date'])
             triggered.append(sig)
