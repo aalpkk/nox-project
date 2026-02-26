@@ -88,21 +88,24 @@ class RegimeTransitionSignal:
     participation_score: int
     expansion_score: int
     exit_stage: int             # 0-3
-    transition: str             # "CHOPPY→TREND", "TUT", vs.
-    direction: str              # 'AL', 'SAT', 'TUT'
+    transition: str             # "CHOPPY→TREND" vs.
     close: float
     # Gecis bilgisi
-    transition_date: object = None      # gecis gunu
-    transition_close: float = 0.0       # gecis gunundeki fiyat
-    gain_since_pct: float = 0.0         # gecisten bugune getiri %
-    days_since: int = 0                 # gecisten bu yana gun
+    transition_date: object = None      # AL baslangic gunu
+    transition_close: float = 0.0       # AL gunundeki fiyat
+    gain_since_pct: float = 0.0         # AL'dan bugune getiri %
+    days_since: int = 0                 # AL'dan bu yana gun
     prev_regime: int = 0
     # Stop
     stop: float = 0.0
     trailing_stop: float = 0.0
     # Gec giris
-    entry_score: int = 0        # 0-4, sadece AL icin anlamli
+    entry_score: int = 0        # 0-4
     entry_detail: str = ''       # tooltip icin detay
+    # OE (Overextended)
+    oe_score: int = 0           # 0-4
+    oe_tags: list = field(default_factory=list)
+    oe_warning: bool = False
     # Meta
     atr: float = 0.0
     adx: float = 0.0
@@ -718,7 +721,128 @@ def scan_regime_transition(df, weekly_df=None, cfg=None):
         'ema_bull': trend_data['ema_bull'],
         'st_bull': trend_data['st_bull'],
         'wk_trend_up': trend_data['wk_trend_up'],
+        'ema21': trend_data['ema_fast'],
         # Stop
         'initial_stop': initial_stop,
         'trailing_stop': trailing_stop,
+    }
+
+
+# =============================================================================
+# STICKY AL — TRADE STATE
+# =============================================================================
+
+def compute_trade_state(regime, close, ema21):
+    """
+    Sticky AL: rejim yükselince trade baslar, close < EMA21 olunca biter.
+
+    Returns: dict
+      - in_trade: Series[bool] — her bar trade aktif mi
+      - trade_start_idx: Series[int] — aktif trade'in baslangic bar indexi (NaN = trade yok)
+      - al_signal: Series[bool] — trade'in ilk bari (AL ok)
+      - sat_signal: Series[bool] — trade'in bitis bari (SAT ok)
+    """
+    n = len(regime)
+    in_trade = pd.Series(False, index=regime.index)
+    trade_start = pd.Series(np.nan, index=regime.index)
+
+    current_start = None
+    for i in range(1, n):
+        prev_r = int(regime.iloc[i - 1])
+        curr_r = int(regime.iloc[i])
+        c = float(close.iloc[i])
+        e = float(ema21.iloc[i]) if pd.notna(ema21.iloc[i]) else 0.0
+
+        if current_start is not None:
+            # Trade aktif — EMA21 altina kapanana kadar devam
+            if e > 0 and c < e:
+                current_start = None  # trade bitti
+            else:
+                in_trade.iloc[i] = True
+                trade_start.iloc[i] = current_start
+
+        if current_start is None and curr_r > prev_r:
+            # Yeni AL: rejim yukseldi
+            current_start = i
+            in_trade.iloc[i] = True
+            trade_start.iloc[i] = current_start
+
+    al_signal = in_trade & ~in_trade.shift(1).fillna(False)
+    sat_signal = ~in_trade & in_trade.shift(1).fillna(False)
+
+    return {
+        'in_trade': in_trade,
+        'trade_start_idx': trade_start,
+        'al_signal': al_signal,
+        'sat_signal': sat_signal,
+    }
+
+
+# =============================================================================
+# OE (OVEREXTENDED) SKORU
+# =============================================================================
+
+def calc_oe_score(df, ema21):
+    """
+    Overextended skoru (0-4). Trade aktifken bugun girmek ne kadar riskli?
+    +1: RSI(14) > 80
+    +1: Fiyat > Ust BB(20, 2.0)
+    +1: Son 5 gunde > %8 yukselis
+    +1: EMA21'den > %5 uzak
+
+    Returns: dict (son bar degerleri)
+      - oe_score: int 0-4
+      - oe_tags: list[str]
+      - oe_warning: bool (score >= 3)
+    """
+    close = df['close']
+    last = len(df) - 1
+    last_close = float(close.iloc[last])
+
+    tags = []
+    score = 0
+
+    # 1. RSI(14) > 80
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = _pine_rma(gain, 14)
+    avg_loss = _pine_rma(loss, 14)
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - 100 / (1 + rs)
+    last_rsi = float(rsi.iloc[last]) if pd.notna(rsi.iloc[last]) else 50.0
+    if last_rsi > 80:
+        score += 1
+        tags.append(f'RSI {last_rsi:.0f}')
+
+    # 2. Fiyat > Ust BB(20, 2.0)
+    bb_sma = close.rolling(20).mean()
+    bb_std = close.rolling(20).std()
+    bb_upper = bb_sma + 2.0 * bb_std
+    last_bb = float(bb_upper.iloc[last]) if pd.notna(bb_upper.iloc[last]) else 0.0
+    if last_bb > 0 and last_close > last_bb:
+        score += 1
+        tags.append('BB ustu')
+
+    # 3. Son 5 gunde > %8 yukselis
+    if last > 4:
+        close_5ago = float(close.iloc[last - 5])
+        if close_5ago > 0:
+            momentum_5g = (last_close - close_5ago) / close_5ago * 100
+            if momentum_5g > 8:
+                score += 1
+                tags.append(f'5G +{momentum_5g:.1f}%')
+
+    # 4. EMA21'den > %5 uzak
+    last_ema = float(ema21.iloc[last]) if pd.notna(ema21.iloc[last]) else 0.0
+    if last_ema > 0:
+        ema_dist = (last_close - last_ema) / last_ema * 100
+        if ema_dist > 5:
+            score += 1
+            tags.append(f'EMA +{ema_dist:.1f}%')
+
+    return {
+        'oe_score': score,
+        'oe_tags': tags,
+        'oe_warning': score >= 3,
     }

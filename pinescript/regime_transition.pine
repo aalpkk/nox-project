@@ -1,6 +1,6 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © NOX Project — Regime Transition Indicator v1.0
-// Python regime_transition.py birebir Pine Script v6 replika.
+// © NOX Project — Regime Transition Indicator v2.0
+// Sticky AL + EMA21 SAT + OE Skoru. Python regime_transition.py ile uyumlu.
 
 //@version=6
 indicator("NOX Regime Transition", shorttitle="NOX RT", overlay=true, max_labels_count=500,
@@ -83,8 +83,9 @@ trend_score = ema_bull + st_bull + wk_trend_up
 hl_range = high - low
 clv = hl_range != 0 ? ((close - low) - (high - close)) / hl_range : 0.0
 money_flow_vol = clv * volume
-cmf_val = math.sum(volume, i_cmf_period) != 0 ?
-     math.sum(money_flow_vol, i_cmf_period) / math.sum(volume, i_cmf_period) : 0.0
+sum_mfv = math.sum(money_flow_vol, i_cmf_period)
+sum_vol = math.sum(volume, i_cmf_period)
+cmf_val = sum_vol != 0 ? sum_mfv / sum_vol : 0.0
 cmf_pos = cmf_val > 0 ? 1 : 0
 
 // RVOL
@@ -158,17 +159,28 @@ regime = exit_stage == 0 ? base_regime :
      exit_stage == 1 ? math.max(base_regime - 1, 0) : 0
 
 // =============================================================================
-// GECIS TESPITI
+// STICKY AL — TRADE STATE
 // =============================================================================
 
-prev_regime = nz(regime[1], 0)
-is_al  = regime > prev_regime
-is_sat = regime < prev_regime
+// Sticky trade state: rejim yukselirse trade basla, close < EMA21 olunca cik
+var bool in_trade = false
 
-bars_since_transition = ta.barssince(is_al or is_sat)
+// AL: rejim yukselirse trade basla
+regime_up = regime > nz(regime[1], 0)
+if regime_up and not in_trade
+    in_trade := true
+
+// SAT: trade aktifken close < EMA21 → cik
+if in_trade and close < ema21
+    in_trade := false
+
+is_al  = in_trade and not nz(in_trade[1], false)   // trade baslangici
+is_sat = not in_trade and nz(in_trade[1], false)    // trade bitisi
+
+bars_since_al = ta.barssince(is_al)
 
 // =============================================================================
-// ENTRY SCORE (0-4, sadece AL)
+// ENTRY SCORE (0-4)
 // =============================================================================
 
 atr_pct = close != 0 ? atr_val / close * 100 : 0.0
@@ -179,10 +191,27 @@ entry_score += (regime <= 2) ? 1 : 0            // Buyume odasi
 entry_score += (rvol_val < 2.0) ? 1 : 0         // Pump filtresi
 
 // =============================================================================
+// OE SKORU (0-4, Overextended)
+// =============================================================================
+
+rsi_val = ta.rsi(close, 14)
+bb_basis = ta.sma(close, 20)
+bb_dev = 2.0 * ta.stdev(close, 20)
+bb_upper = bb_basis + bb_dev
+mom_5g = close[5] != 0 ? (close - close[5]) / close[5] * 100 : 0.0
+ema_dist_pct = ema21 != 0 ? (close - ema21) / ema21 * 100 : 0.0
+
+oe_score = 0
+oe_score += (rsi_val > 80) ? 1 : 0
+oe_score += (close > bb_upper) ? 1 : 0
+oe_score += (mom_5g > 8) ? 1 : 0
+oe_score += (ema_dist_pct > 5) ? 1 : 0
+
+// =============================================================================
 // ENTRY WINDOW
 // =============================================================================
 
-bst = nz(bars_since_transition, 999)
+bst = nz(bars_since_al, 999)
 entry_window = bst <= 1 ? "TAZE" :
      bst <= 7 ? "BEKLE" :
      bst <= 20 ? "2.DALGA" : "GEC"
@@ -195,14 +224,15 @@ pivot_low = ta.pivotlow(low, i_stop_swing_lb, i_stop_swing_lb)
 last_pivot = ta.valuewhen(not na(pivot_low), pivot_low, 0)
 
 // Fallback: pivot yoksa son 20 barin minimumunu kullan
-eff_pivot = na(last_pivot) ? ta.lowest(low, 20) : last_pivot
+lowest_20 = ta.lowest(low, 20)
+eff_pivot = na(last_pivot) ? lowest_20 : last_pivot
 
 initial_stop = eff_pivot - i_stop_atr_init * atr_val
 trailing_stop = close - i_stop_atr_trail * atr_val
 eff_stop = math.max(initial_stop, trailing_stop)
 
 // =============================================================================
-// GORSEL — Arka plan rengi (rejime gore)
+// GORSEL — Arka plan rengi (ham rejime gore, trade state degil)
 // =============================================================================
 
 regime_color = regime == 0 ? color.new(color.gray, 90) :
@@ -218,13 +248,14 @@ bgcolor(regime_color, title="Regime Arka Plan")
 plotshape(is_al, style=shape.triangleup, location=location.belowbar,
      color=color.green, size=size.small, title="AL Gecis", text="AL")
 plotshape(is_sat, style=shape.triangledown, location=location.abovebar,
-     color=color.red, size=size.small, title="SAT Gecis", text="SAT")
+     color=color.red, size=size.small, title="SAT (EMA21)", text="SAT")
 
 // =============================================================================
 // GORSEL — EMA21
 // =============================================================================
 
-plot(i_show_ema ? ema21 : na, color=color.new(color.gray, 50), linewidth=1, title="EMA21")
+ema_color = in_trade ? color.new(color.green, 40) : color.new(color.gray, 50)
+plot(i_show_ema ? ema21 : na, color=ema_color, linewidth=1, title="EMA21")
 
 // =============================================================================
 // GORSEL — SuperTrend
@@ -234,12 +265,10 @@ st_color = st_dir < 0 ? color.green : color.red
 plot(i_show_st ? st_value : na, color=st_color, linewidth=2, title="SuperTrend")
 
 // =============================================================================
-// GORSEL — Stop cizgisi (AL aktifken)
+// GORSEL — Stop cizgisi (trade aktifken)
 // =============================================================================
 
-// Son gecis AL mi (regime yukselmis durumda)?
-is_in_trade = regime >= 2 and regime >= prev_regime
-plot(i_show_stop and is_in_trade ? eff_stop : na,
+plot(i_show_stop and in_trade ? eff_stop : na,
      color=color.new(color.red, 30), style=plot.style_circles,
      linewidth=1, title="Stop")
 
@@ -252,9 +281,12 @@ if i_show_table and barstate.islast
     regime_name = array.get(regime_names, math.min(regime, 3))
 
     entry_labels = array.from("GEC", "GEC", "RISKLI", "FIRSAT", "GIR")
-    entry_label = is_al ? array.get(entry_labels, math.min(entry_score, 4)) : "—"
+    entry_label = in_trade ? array.get(entry_labels, math.min(entry_score, 4)) : "—"
 
-    var tbl = table.new(position.top_right, 2, 8,
+    oe_labels = array.from("OK", "OK", "DIKKAT", "RISKLI", "RISKLI")
+    oe_label = in_trade ? array.get(oe_labels, math.min(oe_score, 4)) : "—"
+
+    var tbl = table.new(position.top_right, 2, 9,
          bgcolor=color.new(color.black, 20), border_width=1,
          border_color=color.new(color.gray, 70))
 
@@ -267,42 +299,47 @@ if i_show_table and barstate.islast
     table.cell(tbl, 1, 0, regime_name + " (" + str.tostring(regime) + ")",
          text_color=r_color, text_size=size.small)
 
-    table.cell(tbl, 0, 1, "Skorlar", text_color=color.gray, text_size=size.small)
-    table.cell(tbl, 1, 1, "T:" + str.tostring(trend_score) + " P:" +
+    // Trade durumu
+    trade_str = in_trade ? "AKTIF" : "KAPALI"
+    trade_color = in_trade ? color.green : color.gray
+    table.cell(tbl, 0, 1, "Trade", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, trade_str + (in_trade ? " (" + str.tostring(bst) + "g)" : ""),
+         text_color=trade_color, text_size=size.small)
+
+    table.cell(tbl, 0, 2, "Skorlar", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 2, "T:" + str.tostring(trend_score) + " P:" +
          str.tostring(participation_score) + " E:" + str.tostring(expansion_score) +
          " Exit:" + str.tostring(exit_stage), text_color=color.white, text_size=size.small)
 
-    table.cell(tbl, 0, 2, "Giris", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 0, 3, "Giris", text_color=color.gray, text_size=size.small)
     e_color = entry_score >= 4 ? color.green : entry_score >= 3 ? color.aqua :
          entry_score >= 2 ? color.yellow : color.red
-    table.cell(tbl, 1, 2, entry_label + " " + str.tostring(entry_score) + "/4",
+    table.cell(tbl, 1, 3, entry_label + " " + str.tostring(entry_score) + "/4",
          text_color=e_color, text_size=size.small)
 
-    table.cell(tbl, 0, 3, "Pencere", text_color=color.gray, text_size=size.small)
-    w_color = entry_window == "TAZE" ? color.green :
-         entry_window == "BEKLE" ? color.yellow :
-         entry_window == "2.DALGA" ? color.aqua : color.gray
-    table.cell(tbl, 1, 3, entry_window + " (" + str.tostring(bst) + "g)",
-         text_color=w_color, text_size=size.small)
+    table.cell(tbl, 0, 4, "OE", text_color=color.gray, text_size=size.small)
+    oe_color = oe_score <= 1 ? color.green : oe_score == 2 ? color.yellow : color.red
+    table.cell(tbl, 1, 4, oe_label + " " + str.tostring(oe_score) + "/4",
+         text_color=oe_color, text_size=size.small)
 
-    table.cell(tbl, 0, 4, "Stop", text_color=color.gray, text_size=size.small)
-    table.cell(tbl, 1, 4, str.tostring(math.round(eff_stop, 2)),
+    table.cell(tbl, 0, 5, "Stop", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 5, in_trade ? str.tostring(math.round(eff_stop, 2)) : "—",
          text_color=color.red, text_size=size.small)
 
-    table.cell(tbl, 0, 5, "ADX", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 0, 6, "ADX", text_color=color.gray, text_size=size.small)
     adx_color = adx_slope_val > 0 ? color.green : color.red
-    table.cell(tbl, 1, 5, str.tostring(math.round(adx_val, 1)) + "  Slope: " +
+    table.cell(tbl, 1, 6, str.tostring(math.round(adx_val, 1)) + "  Slope: " +
          str.tostring(math.round(adx_slope_val, 2)), text_color=adx_color, text_size=size.small)
 
-    table.cell(tbl, 0, 6, "CMF", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 0, 7, "CMF", text_color=color.gray, text_size=size.small)
     cmf_color = cmf_val > 0 ? color.green : color.red
-    table.cell(tbl, 1, 6, str.tostring(math.round(cmf_val, 3)) + "  RVOL: " +
+    table.cell(tbl, 1, 7, str.tostring(math.round(cmf_val, 3)) + "  RVOL: " +
          str.tostring(math.round(rvol_val, 2)), text_color=cmf_color, text_size=size.small)
 
-    table.cell(tbl, 0, 7, "DI±", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 0, 8, "DI±", text_color=color.gray, text_size=size.small)
     di_color = di_spread > i_di_thresh ? color.green :
          di_spread < -i_di_thresh ? color.red : color.gray
-    table.cell(tbl, 1, 7, str.tostring(math.round(di_spread, 1)),
+    table.cell(tbl, 1, 8, str.tostring(math.round(di_spread, 1)),
          text_color=di_color, text_size=size.small)
 
 // =============================================================================
@@ -310,10 +347,10 @@ if i_show_table and barstate.islast
 // =============================================================================
 
 alertcondition(is_al and entry_score >= 3, "RT AL (Score>=3)",
-     "{{ticker}} AL gecis — Score " + str.tostring(entry_score) + "/4")
+     "{{ticker}} AL gecis — Score>=3")
 alertcondition(is_al and entry_score == 4, "RT GIR (Score=4)",
      "{{ticker}} GIR — Tum kriterler tamam")
-alertcondition(is_sat, "RT SAT",
-     "{{ticker}} SAT gecis")
-alertcondition(exit_stage >= 2, "RT Exit Stage >= 2",
-     "{{ticker}} Cikis asamasi " + str.tostring(exit_stage) + "/3")
+alertcondition(is_sat, "RT SAT (EMA21)",
+     "{{ticker}} SAT — close < EMA21")
+alertcondition(in_trade and oe_score >= 3, "RT OE Uyari",
+     "{{ticker}} Overextended — OE skoru >= 3")
