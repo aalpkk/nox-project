@@ -142,9 +142,8 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
             entry_score = 0
             entry_parts = []
             atr_pct = (atr_val / current_close * 100) if current_close > 0 else 0
+            rvol_val = float(out['rvol'].iloc[last]) if pd.notna(out['rvol'].iloc[last]) else 0.0
             if direction == 'AL':
-                # Stop mesafesi hesapla
-                stop_dist_pct = (current_close - eff_stop) / current_close * 100 if eff_stop > 0 and current_close > 0 else 0
                 # 1. Dusuk volatilite (ATR% < 3)
                 if atr_pct < 3.0:
                     entry_score += 1
@@ -163,12 +162,12 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
                     entry_parts.append('Buyume odasi: \u2713')
                 else:
                     entry_parts.append('Buyume odasi: \u2717')
-                # 4. Stop makul (%3-15 arasi)
-                if 3.0 <= stop_dist_pct < 15.0:
+                # 4. Pump filtresi (RVOL < 2 — asiri hacim = pump tuzagi)
+                if rvol_val < 2.0:
                     entry_score += 1
-                    entry_parts.append('Stop makul: \u2713')
+                    entry_parts.append('Pump yok: \u2713')
                 else:
-                    entry_parts.append('Stop makul: \u2717')
+                    entry_parts.append('Pump yok: \u2717')
             entry_detail = ' | '.join(entry_parts)
 
             sig = RegimeTransitionSignal(
@@ -764,6 +763,7 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
             adx_s = out['adx']
             adx_slope_s = out['adx_slope']
             cmf_s = out['cmf']
+            rvol_s = out['rvol']
             exit_stage_s = out['exit_stage']
             trend_score_s = out['trend_score']
             part_score_s = out['participation_score']
@@ -786,6 +786,7 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
                 adx_val = float(adx_s.iloc[i]) if pd.notna(adx_s.iloc[i]) else 0.0
                 adx_slope_val = float(adx_slope_s.iloc[i]) if pd.notna(adx_slope_s.iloc[i]) else 0.0
                 cmf_val = float(cmf_s.iloc[i]) if pd.notna(cmf_s.iloc[i]) else 0.0
+                rvol_val = float(rvol_s.iloc[i]) if pd.notna(rvol_s.iloc[i]) else 0.0
                 exit_stage_val = int(exit_stage_s.iloc[i])
                 t_score = int(trend_score_s.iloc[i])
                 p_score = int(part_score_s.iloc[i])
@@ -812,8 +813,8 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
                 # 3. Buyume odasi (regime <= 2 — henuz FULL degil)
                 if regime_val <= 2:
                     entry_score += 1
-                # 4. Stop makul (%3-15 arasi)
-                if 3.0 <= stop_dist_pct < 15.0:
+                # 4. Pump filtresi (RVOL < 2 — asiri hacim = pump tuzagi)
+                if rvol_val < 2.0:
                     entry_score += 1
 
                 # Forward returns
@@ -862,6 +863,7 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
                     'adx_slope': round(adx_slope_val, 3),
                     'cmf': round(cmf_val, 4),
                     'atr_pct': round(atr_pct, 2),
+                    'rvol': round(rvol_val, 2),
                     'ret_5d': ret_5d,
                     'ret_10d': ret_10d,
                     'ret_20d': ret_20d,
