@@ -534,6 +534,86 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
 </div>
 
+<details class="trade-guide" style="margin-bottom:14px;padding:10px 14px;border-radius:8px;
+  background:rgba(34,211,238,0.06);border:1px solid rgba(34,211,238,0.15);
+  font-size:0.78rem;color:var(--text-secondary);line-height:1.6">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-cyan);font-size:0.82rem">
+  Trade Rehberi</summary>
+<div style="margin-top:8px">
+<b style="color:var(--nox-green)">Sticky AL Mantigi</b><br>
+Rejim yukselince trade baslar, fiyat EMA21 altina kapanana kadar aktif kalir.<br>
+Bu liste <b>simdi girilebilir</b> hisseleri gosterir — trade kapanmis hisseler listede yoktur.<br>
+<br>
+<b style="color:var(--nox-green)">AL Checklist</b><br>
+1. <b>Giris skoru 3-4/4</b> filtrele (Score4 WR %63, Score3 WR %52)<br>
+2. <b>OE skoru 0-1</b> olanları sec (overextended degil)<br>
+3. <b>Pencere: TAZE/BEKLE</b> → erken giris firsati<br>
+4. <b>Exit Stage 0</b> → cikis riski yok<br>
+5. Hisse adina tikla → TradingView'da grafigi kontrol et<br>
+6. Stop = tablodaki Stop fiyati (swing low - 0.5*ATR)<br>
+<br>
+<b style="color:var(--nox-cyan)">Backtest Sonuclari (250 bar, 537 hisse)</b><br>
+&#8226; <b>AL genel</b>: 5G WR %51, Ort +1.03% (N=12051)<br>
+&#8226; <b>Score 4</b>: 5G WR %63, Ort +1.75% (N=595)<br>
+&#8226; <b>Score>=3, Exit<=1</b>: 5G WR %54, Ort +1.35% (N=3851)<br>
+&#8226; <b>CHOPPY→GRI</b>: WR %52 | <b>CHOPPY→TREND</b>: WR %50 | <b>GRI→FULL</b>: WR %50<br>
+&#8226; <b>SAT (bilgi)</b>: 5G WR %49 → zayif, kullanma<br>
+<br>
+<b style="color:var(--nox-red)">OE (Overextended) Uyarisi</b><br>
+&#8226; OE 0-1 = Guvenli | OE 2 = Dikkat | OE 3-4 = Riskli (geri cekilme beklenir)<br>
+&#8226; Kriterler: RSI>80, BB ustu, 5G>%8 yukselis, EMA21'den >%5 uzak<br>
+<br>
+<b style="color:var(--nox-yellow)">Kolon Aciklamalari</b>
+<table style="width:100%;font-size:0.74rem;margin-top:6px;border-collapse:collapse">
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700;white-space:nowrap">Hisse</td>
+  <td style="padding:3px 6px">Ticker (tikla → TradingView)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Regime</td>
+  <td style="padding:3px 6px">Bugunki rejim seviyesi. CHOPPY(0) → GRI(1) → TREND(2) → FULL(3). Trade aktifken rejim dusebilir ama EMA21 ustundeyse trade devam eder</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Gecis</td>
+  <td style="padding:3px 6px">Trade basladigi andaki rejim degisimi (orn. CHOPPY→TREND)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Tarih</td>
+  <td style="padding:3px 6px">Trade baslangic tarihi</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Gun</td>
+  <td style="padding:3px 6px">Trade kac gundur aktif</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Pencere</td>
+  <td style="padding:3px 6px">TAZE (0-1g) → en iyi giris | BEKLE (3-7g) → pullback bekle | 2.DALGA (10-20g) → ikinci sans | GEC (30+g) → gec kalmis</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Giris</td>
+  <td style="padding:3px 6px">Entry Score (0-4). GIR(4) / FIRSAT(3) / RISKLI(2) / GEC(0-1). Kriterler: dusuk vol, erken giris, buyume odasi, pump filtresi</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">OE</td>
+  <td style="padding:3px 6px">Overextended skoru (0-4). Yuksek = asiri uzamis, geri cekilme riski. Kriterler: RSI>80, BB ustu, 5G momentum>%8, EMA21 uzakligi>%5</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">T / P / E</td>
+  <td style="padding:3px 6px">Trend(0-3) / Participation(0-3) / Expansion(0-3) skorlari. Rejimi belirleyen 3 bilesen</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Exit</td>
+  <td style="padding:3px 6px">Cikis asamasi (0-3). 0=temiz, 1=structure break, 2+=momentum decay. Dusuk = daha guvenli</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">Stop</td>
+  <td style="padding:3px 6px">Efektif stop fiyati = max(swing_low - 0.5*ATR, close - 2*ATR). Turuncu = fiyata cok yakin (%2 alti)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">ADX / Slope</td>
+  <td style="padding:3px 6px">ADX(14) trend gucu + 5-bar slope. ADX>25 = trend var. Slope yesil = momentum artiyor</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">CMF</td>
+  <td style="padding:3px 6px">Chaikin Money Flow (20). Pozitif = birikim, negatif = dagilim</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">RVOL</td>
+  <td style="padding:3px 6px">Relative Volume (20G ortalamaya gore). >=1.5 yesil = yuksek ilgi | <1.0 gri = dusuk hacim</td></tr>
+<tr>
+  <td style="padding:3px 6px;color:var(--nox-cyan);font-weight:700">DI±</td>
+  <td style="padding:3px 6px">DI+ minus DI-. >5 yesil = boga baskisi | <-5 kirmizi = ayi baskisi</td></tr>
+</table>
+</div>
+</details>
+
 <div id="dist-bar"></div>
 <div id="content"></div>
 <div class="nox-status" id="st"></div>
