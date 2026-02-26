@@ -55,6 +55,20 @@ def _is_halted(df, n=3):
     return (tail['high'] == tail['low']).all()
 
 
+def _entry_window(days_since):
+    """Gecisten bu yana gecen gune gore giris penceresi etiketi.
+    Backtest verisi: 0-1g WR %63 (Score4), 3-7g WR %52-54, 10-20g WR %58-60, 30+g dusuyor.
+    """
+    if days_since <= 1:
+        return 'TAZE'       # En iyi giris penceresi
+    elif days_since <= 7:
+        return 'BEKLE'      # Konsolidasyon/pullback bolge
+    elif days_since <= 20:
+        return '2.DALGA'    # Ikinci firsat penceresi
+    else:
+        return 'GEC'        # Sinyal eskimis
+
+
 def _to_weekly(df):
     weekly = df.resample('W-FRI').agg({
         'open': 'first',
@@ -257,7 +271,7 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
     transitions_al = [s for s in results if s.direction == 'AL']
     transitions_sat = [s for s in results if s.direction == 'SAT']
 
-    hdr = (f"  {'Hisse':<8} {'Gecis':<22} {'Tarih':>6} {'Gun':>4} {'Fiyat':>8} "
+    hdr = (f"  {'Hisse':<8} {'Gecis':<22} {'Tarih':>6} {'Gun':>4} {'Pencere':>8} {'Fiyat':>8} "
            f"{'Getiri':>7} {'T':>2} {'P':>2} {'E':>2} "
            f"{'Exit':>4} {'ADX':>6} {'Slope':>7} {'CMF':>6} {'RVOL':>5} {'DI±':>6}")
 
@@ -268,8 +282,9 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
         print(f"  {'─' * w}")
         for s in transitions_al:
             gain_str = f"{s.gain_since_pct:>+6.1f}%" if s.gain_since_pct != 0 else '   NEW'
+            window = _entry_window(s.days_since)
             print(f"  {s.ticker:<8} {s.transition:<22} {_fmt_date(s.transition_date):>6} "
-                  f"{s.days_since:>4} {s.close:>8.2f} "
+                  f"{s.days_since:>4} {window:>8} {s.close:>8.2f} "
                   f"{gain_str:>7} {s.trend_score:>2} {s.participation_score:>2} {s.expansion_score:>2} "
                   f"{s.exit_stage:>4} {s.adx:>6.1f} {s.adx_slope:>+7.2f} "
                   f"{s.cmf:>6.3f} {s.rvol:>5.2f} {s.di_spread:>+6.1f}")
@@ -282,8 +297,9 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
         print(f"  {'─' * w}")
         for s in transitions_sat:
             gain_str = f"{s.gain_since_pct:>+6.1f}%"
+            window = _entry_window(s.days_since)
             print(f"  {s.ticker:<8} {s.transition:<22} {_fmt_date(s.transition_date):>6} "
-                  f"{s.days_since:>4} {s.close:>8.2f} "
+                  f"{s.days_since:>4} {window:>8} {s.close:>8.2f} "
                   f"{gain_str:>7} {s.trend_score:>2} {s.participation_score:>2} {s.expansion_score:>2} "
                   f"{s.exit_stage:>4} {s.adx:>6.1f} {s.adx_slope:>+7.2f} "
                   f"{s.cmf:>6.3f} {s.rvol:>5.2f} {s.di_spread:>+6.1f}")
@@ -331,6 +347,7 @@ def _save_csv(results, date_str, output_dir):
             'transition': s.transition,
             'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'days_since': s.days_since,
+            'entry_window': _entry_window(s.days_since) if s.direction != 'TUT' else '',
             'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
             'participation_score': s.participation_score,
@@ -376,6 +393,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
             'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'transition_date_iso': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'days_since': s.days_since,
+            'entry_window': _entry_window(s.days_since) if s.direction != 'TUT' else '',
             'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
             'participation_score': s.participation_score,
@@ -488,6 +506,17 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
 }}
 .cnt-al {{ background: rgba(74,222,128,0.12); color: var(--nox-green); }}
 .cnt-sat {{ background: rgba(248,113,113,0.12); color: var(--nox-red); }}
+
+/* WINDOW BADGES */
+.window-badge {{
+  display: inline-block; padding: 3px 10px; border-radius: var(--radius-sm);
+  font-size: 0.72rem; font-weight: 700; font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}}
+.window-TAZE {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
+.window-BEKLE {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
+.window-2DALGA {{ background: rgba(34,211,238,0.12); color: var(--nox-cyan); }}
+.window-GEC {{ background: rgba(113,113,122,0.12); color: var(--text-muted); }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -511,6 +540,10 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
   <option value="0">Bugun</option><option value="3">Son 3 gun</option>
   <option value="7">Son 1 hafta</option><option value="14">Son 2 hafta</option>
   <option value="30">Son 1 ay</option></select></div>
+  <div><label>Pencere</label>
+  <select id="fWindow" onchange="render()"><option value="">Tumu</option>
+  <option value="TAZE">TAZE (0-1g)</option><option value="BEKLE">BEKLE (3-7g)</option>
+  <option value="2.DALGA">2.DALGA (10-20g)</option><option value="GEC">GEC (30+g)</option></select></div>
   <div><label>Exit≤</label><input type="number" id="fExit" value="" step="1" min="0" max="3" placeholder="max" oninput="render()"></div>
   <div><label>ADX≥</label><input type="number" id="fADX" value="0" step="5" min="0" oninput="render()"></div>
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
@@ -529,6 +562,7 @@ function resetF(){{
   document.getElementById('fRegime').value='';
   document.getElementById('fDir').value='';
   document.getElementById('fDate').value='';
+  document.getElementById('fWindow').value='';
   document.getElementById('fExit').value='';
   document.getElementById('fADX').value='0';
   render();
@@ -557,6 +591,7 @@ function applyFilters(rows){{
   const fRegime=document.getElementById('fRegime').value;
   const fDir=document.getElementById('fDir').value;
   const fDateVal=document.getElementById('fDate').value;
+  const fWindow=document.getElementById('fWindow').value;
   const fExit=parseInt(document.getElementById('fExit').value);
   const fADX=parseFloat(document.getElementById('fADX').value)||0;
 
@@ -572,6 +607,7 @@ function applyFilters(rows){{
     if(sr&&!r.ticker.includes(sr)) return false;
     if(fRegime!==''&&r.regime!==parseInt(fRegime)) return false;
     if(fDir&&r.direction!==fDir) return false;
+    if(fWindow&&r.entry_window!==fWindow) return false;
     if(dateCutoff&&r.transition_date_iso){{
       const td=new Date(r.transition_date_iso+'T00:00:00');
       if(td<dateCutoff) return false;
@@ -603,6 +639,13 @@ function mkEntryBadge(score, detail, dir){{
   return `<span class="entry-badge entry-${{score}}" title="${{detail}}">${{labels[score]||'GEC'}} ${{score}}/4</span>`;
 }}
 
+function mkWindowBadge(win, dir){{
+  if(dir==='TUT'||!win) return '<span style="color:var(--text-muted);font-size:0.72rem">—</span>';
+  const cls=win==='2.DALGA'?'2DALGA':win;
+  const tips={{'TAZE':'0-1 gun: en iyi giris penceresi (WR %63)','BEKLE':'3-7 gun: konsolidasyon/pullback (WR %52-54)','2.DALGA':'10-20 gun: ikinci firsat penceresi (WR %58-60)','GEC':'30+ gun: sinyal eskimis'}};
+  return `<span class="window-badge window-${{cls}}" title="${{tips[win]||''}}">${{win}}</span>`;
+}}
+
 function mkStopCell(stop, dist, close){{
   if(!stop||stop<=0) return '<span style="color:var(--text-muted)">—</span>';
   const cls=dist<2?'stop-close':'stop-ok';
@@ -622,6 +665,7 @@ function mkTable(rows, label, cssClass){{
   <th ${{srt('direction')}}>Gecis</th>
   <th ${{srt('transition_date')}}>Tarih</th>
   <th ${{srt('days_since')}}>Gun</th>
+  <th ${{srt('entry_window')}}>Pencere</th>
   <th ${{srt('gain_since_pct')}}>Getiri</th>
   <th ${{srt('entry_score')}}>Giris</th>
   <th ${{srt('trend_score')}}>T</th>
@@ -651,6 +695,7 @@ function mkTable(rows, label, cssClass){{
     <td>${{mkTransBadge(r.direction, r.transition)}}</td>
     <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{dateStr}}</td>
     <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{daysStr}}</td>
+    <td>${{mkWindowBadge(r.entry_window, r.direction)}}</td>
     <td style="color:${{gainC}};font-weight:700;font-family:var(--font-mono)">${{gainStr}}</td>
     <td>${{mkEntryBadge(r.entry_score, r.entry_detail||'', r.direction)}}</td>
     <td>${{mkScoreCell(r.trend_score)}}</td>
