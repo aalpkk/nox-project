@@ -77,16 +77,22 @@ REGIME_NAMES = {
 @dataclass
 class RegimeTransitionSignal:
     ticker: str
-    date: object
-    regime: int             # 0-3
+    date: object                # verinin son gunu
+    regime: int                 # 0-3 (bugunki regime)
     regime_name: str
     trend_score: int
     participation_score: int
     expansion_score: int
-    exit_stage: int         # 0-3
-    transition: str         # "CHOPPY→TREND", "TUT", vs.
-    direction: str          # 'AL', 'SAT', 'TUT'
+    exit_stage: int             # 0-3
+    transition: str             # "CHOPPY→TREND", "TUT", vs.
+    direction: str              # 'AL', 'SAT', 'TUT'
     close: float
+    # Gecis bilgisi
+    transition_date: object = None      # gecis gunu
+    transition_close: float = 0.0       # gecis gunundeki fiyat
+    gain_since_pct: float = 0.0         # gecisten bugune getiri %
+    days_since: int = 0                 # gecisten bu yana gun
+    prev_regime: int = 0
     # Meta
     atr: float = 0.0
     adx: float = 0.0
@@ -94,7 +100,6 @@ class RegimeTransitionSignal:
     rvol: float = 0.0
     di_spread: float = 0.0
     adx_slope: float = 0.0
-    prev_regime: int = 0
     details: dict = field(default_factory=dict)
 
 
@@ -253,7 +258,7 @@ def _linreg_slope(series, length):
 def compute_trend_score(df, weekly_df=None, cfg=None):
     """
     Trend Score:
-      +1 EMA21 > EMA55
+      +1 Close > EMA21 (fiyat kisa EMA ustunde — hizli tepki)
       +1 SuperTrend bullish
       +1 Haftalik EMA trend up (weekly_df gerekli)
     Returns: dict with Series keys
@@ -261,10 +266,9 @@ def compute_trend_score(df, weekly_df=None, cfg=None):
     cfg = cfg or RT_CFG
     close = df['close']
 
-    # EMA21 > EMA55
+    # Close > EMA21 (EMA crossover yerine — crash recovery'de cok daha hizli)
     ema_fast = close.ewm(span=cfg['ema_fast'], adjust=False).mean()
-    ema_slow = close.ewm(span=cfg['ema_slow'], adjust=False).mean()
-    ema_bull = (ema_fast > ema_slow).astype(int)
+    ema_bull = (close > ema_fast).astype(int)
 
     # SuperTrend bullish
     st_dir = _calc_supertrend(df, cfg['st_period'], cfg['st_mult'])
@@ -483,9 +487,9 @@ def apply_exit_adjustment(base_regime, exit_stages):
 
 def detect_transitions(regime, lookback=1):
     """
-    Iki gunun regime'ini karsilastirarak gecis tespit eder.
+    Iki gunun regime'ini karsilastirarak gecis tespit eder (bar bazli).
 
-    Returns: (direction, transition_label) Series tuple
+    Returns: (direction, transition_label, prev_regime) Series tuple
       direction: 'AL' (yukari gecis), 'SAT' (asagi gecis), 'TUT' (degismedi)
       transition_label: "CHOPPY→TREND", "TUT", vs.
     """
@@ -509,6 +513,89 @@ def detect_transitions(regime, lookback=1):
             transition.iloc[i] = f"{prev_name}→{curr_name}"
 
     return direction, transition, prev_regime
+
+
+def find_last_transition(regime, close, index, scan_bars=60):
+    """
+    Son scan_bars icerisindeki en son anlamli gecisi bul.
+
+    Mantik:
+    - Mevcut regime >= 2 ise (TREND/FULL): geriye dogru git,
+      regime'in ilk kez mevcut seviyeye veya ustune ciktigi bari bul.
+      Arada kucuk dalgalanmalari tolere et (1 bar dusus + geri donus).
+    - Mevcut regime < 2 ise (CHOPPY/GRI): son 10 barda anlamli
+      SAT gecisi (2/3 → 0/1) varsa raporla.
+
+    Returns: dict veya None
+    """
+    n = len(regime)
+    if n < 2:
+        return None
+
+    last = n - 1
+    current_regime = int(regime.iloc[last])
+    start = max(1, last - scan_bars + 1)
+
+    # ── Mevcut regime >= 2: ilk giris noktasini bul ──
+    if current_regime >= 2:
+        # Geriye dogru git: regime < 2 olan ilk "gercek" dususu bul.
+        # Gecici dusus toleransi: 3 bar ust uste < 2 olmadikca gercek dusus sayilmaz.
+        # (Exit adjustment kaynaklı kisa sureli dalgalanmalari tolere eder)
+        CONSEC_THRESH = 3
+        entry_bar = start  # fallback: pencere basi
+        consec_below = 0
+        found_break = False
+        for i in range(last, start - 1, -1):
+            r = int(regime.iloc[i])
+            if r < 2:
+                consec_below += 1
+                if consec_below >= CONSEC_THRESH:
+                    # Gercek dusus: giris noktasi = bu bloktan sonraki ilk >= 2 bar
+                    entry_bar = i + consec_below
+                    if entry_bar > last:
+                        entry_bar = last
+                    found_break = True
+                    break
+            else:
+                consec_below = 0
+
+        if not found_break:
+            # Pencere boyunca gercek dusus yok → en basi al
+            entry_bar = start
+
+        # entry_bar'dan onceki bari "from_regime" olarak al
+        # to_regime = bugunki regime (entry bar'daki degil, cunku kademeli yukselis olabilir)
+        if entry_bar > 0 and entry_bar <= last:
+            from_r = int(regime.iloc[entry_bar - 1])
+            to_r = current_regime
+            return {
+                'direction': 'AL',
+                'transition': f"{REGIME_NAMES.get(from_r, '?')}→{REGIME_NAMES.get(to_r, '?')}",
+                'bar_idx': entry_bar,
+                'date': index[entry_bar],
+                'close_at_transition': float(close.iloc[entry_bar]),
+                'from_regime': from_r,
+                'to_regime': to_r,
+            }
+
+    # ── Mevcut regime < 2: son 10 barda SAT gecisi bul ──
+    sat_window = min(10, last - start + 1)
+    for i in range(last, max(start, last - sat_window) - 1, -1):
+        curr = int(regime.iloc[i])
+        prev = int(regime.iloc[i - 1])
+        if curr < prev and prev >= 2:
+            # Anlamli dusus: TREND/FULL → GRI/CHOPPY
+            return {
+                'direction': 'SAT',
+                'transition': f"{REGIME_NAMES.get(prev, '?')}→{REGIME_NAMES.get(curr, '?')}",
+                'bar_idx': i,
+                'date': index[i],
+                'close_at_transition': float(close.iloc[i]),
+                'from_regime': prev,
+                'to_regime': curr,
+            }
+
+    return None
 
 
 # =============================================================================

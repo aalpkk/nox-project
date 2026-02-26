@@ -203,6 +203,29 @@ def _parse_divergence(path):
     return signals
 
 
+def _parse_rejim_v3(path, date_str):
+    """Rejim v3 CSV parse → normalize sinyal listesi + kalite alanları."""
+    df = pd.read_csv(path)
+    sig_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    signals = []
+    for _, row in df.iterrows():
+        signals.append({
+            'screener': 'rejim_v3',
+            'ticker': str(row['ticker']).strip(),
+            'signal_date': sig_date,
+            'direction': 'AL',
+            'signal_type': str(row.get('signal', '')).strip(),
+            'entry_price': float(row['close']),
+            'quality': int(row['quality']) if pd.notna(row.get('quality')) else None,
+            'rs_score': round(float(row['rs_score']), 1) if pd.notna(row.get('rs_score')) else None,
+            'rs_pass': str(row.get('rs_pass', '')).strip().lower() == 'true',
+            'adx_val': round(float(row['adx']), 1) if pd.notna(row.get('adx')) else None,
+            'adx_slope_val': round(float(row['adx_slope']), 2) if pd.notna(row.get('adx_slope')) else None,
+            'regime': str(row.get('regime', '')).strip(),
+        })
+    return signals
+
+
 def _parse_trend_dip_sideways(path, screener_name, date_str):
     """Trend/Dip/Sideways CSV parse → normalize sinyal listesi.
     Dosya adındaki tarih kullanılır, tümü AL sinyali."""
@@ -256,7 +279,9 @@ def parse_all_csvs(csv_map):
                     sigs = _parse_pine(path, date_str)
                 elif screener == 'divergence':
                     sigs = _parse_divergence(path)
-                elif screener in ('trend', 'dip', 'sideways', 'rejim_v3'):
+                elif screener == 'rejim_v3':
+                    sigs = _parse_rejim_v3(path, date_str)
+                elif screener in ('trend', 'dip', 'sideways'):
                     sigs = _parse_trend_dip_sideways(path, screener, date_str)
                 elif screener == 'combo':
                     sigs = _parse_combo(path, date_str)
@@ -373,9 +398,29 @@ def fetch_price_data(signals):
 WINDOWS = [1, 3, 5]
 
 
+def _compute_indicators(df):
+    """Bir hisse için RSI(14) ve MACD(12,26,9) histogram hesapla."""
+    close = df['Close']
+    # RSI(14) — Wilder's smoothing
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1/14, min_periods=14).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=14).mean()
+    rsi = 100 - 100 / (1 + avg_gain / avg_loss.replace(0, np.nan))
+    # MACD(12,26,9)
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd_hist = macd_line - signal_line
+    return rsi, macd_hist
+
+
 def compute_forward_returns(signals, all_data, xu_df):
     """Her sinyal için 1g, 3g, 5g forward getiri + XU100 kıyasla."""
     results = []
+    _ind_cache = {}  # ticker -> (rsi_series, macd_hist_series)
     for sig in signals:
         ticker = sig['ticker']
         df = all_data.get(ticker)
@@ -439,6 +484,21 @@ def compute_forward_returns(signals, all_data, xu_df):
         if all(row.get(f'ret_{w}d') is not None for w in WINDOWS):
             status = 'tamam'
         row['status'] = status
+
+        # Rejim v3 sinyalleri icin RSI/MACD hesapla
+        if sig['screener'] == 'rejim_v3':
+            if ticker not in _ind_cache:
+                _ind_cache[ticker] = _compute_indicators(df)
+            rsi_s, macd_s = _ind_cache[ticker]
+            if idx < len(rsi_s):
+                v = rsi_s.iloc[idx]
+                if pd.notna(v):
+                    row['rsi_at_signal'] = round(float(v), 1)
+            if idx < len(macd_s):
+                v = macd_s.iloc[idx]
+                if pd.notna(v):
+                    row['macd_hist'] = round(float(v), 4)
+
         results.append(row)
 
     return results
@@ -522,6 +582,63 @@ def compute_summary(results):
                     stats[f'avg_5d_{d}'] = None
             summary[key] = stats
 
+    # Rejim v3 kalite bazli kirilim
+    r3_results = [r for r in results if r.get('screener') == 'rejim_v3']
+    if r3_results:
+        # Filtre tanimlari: (anahtar, etiket, filtre fonksiyonu)
+        r3_filters = [
+            ('r3_q≥70',   lambda r: (r.get('quality') or 0) >= 70),
+            ('r3_rs✓',    lambda r: r.get('rs_pass', False)),
+            ('r3_adx≥25', lambda r: (r.get('adx_val') or 0) >= 25),
+            ('r3_rsi≤40', lambda r: (r.get('rsi_at_signal') or 999) <= 40),
+            ('r3_macd>0', lambda r: (r.get('macd_hist') or -1) > 0),
+            ('r3_filtreli', lambda r: (
+                (r.get('quality') or 0) >= 50
+                and r.get('rs_pass', False)
+                and (r.get('adx_val') or 0) >= 20
+            )),
+        ]
+        for fkey, ffn in r3_filters:
+            sub = [r for r in r3_results if ffn(r)]
+            if not sub:
+                continue
+            stats = {'screener': fkey, 'n': len(sub)}
+            stats.update(_calc_window_stats(sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[fkey] = stats
+
+        # Sinyal tipi bazli kirilim
+        sig_types = sorted(set(r.get('signal_type', '') for r in r3_results))
+        for st in sig_types:
+            if not st:
+                continue
+            sub = [r for r in r3_results if r.get('signal_type') == st]
+            if not sub:
+                continue
+            fkey = f'r3s_{st}'
+            stats = {'screener': fkey, 'n': len(sub)}
+            stats.update(_calc_window_stats(sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[fkey] = stats
+
     return summary
 
 
@@ -535,6 +652,21 @@ _SCREENER_LABELS = {
     'dip': 'Dip',
     'sideways': 'Sideways',
     'rejim_v3': 'Rejim v3',
+    'r3_q≥70': 'R3 Q≥70',
+    'r3_rs✓': 'R3 RS✓',
+    'r3_adx≥25': 'R3 ADX≥25',
+    'r3_rsi≤40': 'R3 RSI≤40',
+    'r3_macd>0': 'R3 MACD>0',
+    'r3_filtreli': 'R3 Filtreli',
+    'r3s_GUCLU': 'R3 GÜÇLÜ',
+    'r3s_CMB': 'R3 CMB',
+    'r3s_CMB+': 'R3 CMB+',
+    'r3s_BILESEN': 'R3 BİLEŞEN',
+    'r3s_ZAYIF': 'R3 ZAYIF',
+    'r3s_ERKEN': 'R3 ERKEN',
+    'r3s_DONUS': 'R3 DÖNÜŞ',
+    'r3s_MR': 'R3 MR',
+    'r3s_PB': 'R3 PB',
     'combo': 'Combo',
     'nox_v3_daily': 'NOX v3 Günlük',
     'nox_v3_weekly': 'NOX v3 Haftalık',
@@ -547,7 +679,11 @@ _SCREENER_LABELS = {
 }
 
 _SCREENER_TAB_ORDER = [
-    'genel', 'trend', 'dip', 'sideways', 'rejim_v3', 'combo',
+    'genel', 'trend', 'dip', 'sideways', 'rejim_v3',
+    'r3_q≥70', 'r3_rs✓', 'r3_adx≥25', 'r3_rsi≤40', 'r3_macd>0', 'r3_filtreli',
+    'r3s_GUCLU', 'r3s_CMB', 'r3s_CMB+', 'r3s_BILESEN', 'r3s_ZAYIF',
+    'r3s_ERKEN', 'r3s_DONUS', 'r3s_MR', 'r3s_PB',
+    'combo',
     'nox_v3_daily', 'nox_v3_weekly', 'wl_HAZIR', 'wl_İZLE', 'wl_BEKLE',
     'smc', 'pine', 'divergence',
 ]
@@ -644,6 +780,24 @@ def generate_html(results, summary, csv_map):
 .tb-trg  {{ color: var(--nox-cyan); font-weight: 700; }}
 .tb-prep {{ color: var(--nox-yellow); }}
 .tb-none {{ color: var(--text-muted); }}
+.r3-sub {{ font-size: 0.72rem !important; padding: 7px 12px !important; }}
+.q-badge {{
+  display: inline-block; padding: 2px 6px; border-radius: 4px;
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+}}
+.q-high {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
+.q-mid  {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
+.q-low  {{ background: rgba(248,113,113,0.12); color: var(--nox-red); }}
+.rs-pass {{ color: var(--nox-green); font-weight: 700; }}
+.rs-fail {{ color: var(--text-muted); }}
+.r3-note {{
+  background: rgba(34,211,238,0.06); border: 1px solid rgba(34,211,238,0.2);
+  border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px;
+  font-size: 0.78rem; line-height: 1.6; display: none;
+}}
+.r3-note b {{ color: var(--nox-cyan); }}
+.r3-note .rule {{ color: var(--nox-green); font-weight: 600; }}
+.r3-note .warn {{ color: var(--nox-yellow); font-size: 0.72rem; }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -673,7 +827,22 @@ def generate_html(results, summary, csv_map):
   <select id="fWL" onchange="af()"><option value="">Tümü</option>
   <option value="HAZIR">HAZIR</option><option value="İZLE">İZLE</option>
   <option value="BEKLE">BEKLE</option></select></div>
+  <div><label>Q≥</label><input type="number" id="fQ" value="" step="10" min="0" max="100" style="width:55px" placeholder="min" oninput="af()"></div>
+  <div><label>RS</label>
+  <select id="fRS" onchange="af()"><option value="">Tümü</option>
+  <option value="pass">Pass</option><option value="fail">Fail</option></select></div>
   <div><button class="nox-btn" onclick="resetF()">Sıfırla</button></div>
+</div>
+
+<!-- R3 HATIRLAT NOT -->
+<div class="r3-note" id="r3note">
+  <b>Rejim v3 — Forward Test Filtre Kuralları</b><br>
+  <span class="rule">1) RS 30-60</span> — Relative Strength: düşük RS zayıf, yüksek RS aşırı uzamış; 30-60 bandı en iyi getiri<br>
+  <span class="rule">2) MACD &gt; 0</span> — Momentum pozitif; MACD negatifken sinyaller kaybettiriyor<br>
+  <span class="rule">3) Q ≥ 70</span> — Kalite skoru yüksek; düşük kalite sinyaller gürültü<br>
+  3 kural birlikte → <b>5G +9.52%, WR %73.3</b> (N=15)<br>
+  <span class="warn">⚠ XU100 düşüş döneminde RS 30-60 çok daha güçlü (+4.36% vs -0.47% uptrend)</span><br>
+  <span class="warn">⚠ SMC SAT WR %62.2 güçlü — SAT tarafında SMC sinyallerini kullan</span>
 </div>
 
 <!-- STATS TABLOSU -->
@@ -694,6 +863,11 @@ def generate_html(results, summary, csv_map):
 <th onclick="sb('ret_5d')">5G%</th>
 <th onclick="sb('xu_5d')">XU100 5G</th>
 <th onclick="sb('excess_5d')">Fazla 5G</th>
+<th onclick="sb('quality')">Q</th>
+<th onclick="sb('rs_score')">RS</th>
+<th onclick="sb('rsi_at_signal')">RSI</th>
+<th onclick="sb('macd_hist')">MACD</th>
+<th onclick="sb('adx_val')">ADX</th>
 <th onclick="sb('wl_status')">WL</th>
 <th onclick="sb('tb_stage')">TB</th>
 <th onclick="sb('status')">Durum</th>
@@ -711,22 +885,52 @@ const LBL={labels_json};
 let curTab='genel';
 let col='ret_5d', asc=false;
 
+// R3 kalite + sinyal tipi filtreleri
+const R3F={{
+  'r3_q≥70':r=>(r.quality||0)>=70,
+  'r3_rs✓':r=>r.rs_pass===true,
+  'r3_adx≥25':r=>(r.adx_val||0)>=25,
+  'r3_rsi≤40':r=>(r.rsi_at_signal||999)<=40,
+  'r3_macd>0':r=>(r.macd_hist||-1)>0,
+  'r3_filtreli':r=>(r.quality||0)>=50&&r.rs_pass===true&&(r.adx_val||0)>=20,
+  'r3s_GUCLU':r=>r.signal_type==='GUCLU',
+  'r3s_CMB':r=>r.signal_type==='CMB',
+  'r3s_CMB+':r=>r.signal_type==='CMB+',
+  'r3s_BILESEN':r=>r.signal_type==='BILESEN',
+  'r3s_ZAYIF':r=>r.signal_type==='ZAYIF',
+  'r3s_ERKEN':r=>r.signal_type==='ERKEN',
+  'r3s_DONUS':r=>r.signal_type==='DONUS',
+  'r3s_MR':r=>r.signal_type==='MR',
+  'r3s_PB':r=>r.signal_type==='PB',
+}};
+
 // ── TABS ──
 function initTabs(){{
   const el=document.getElementById('tabs');
   TABS.forEach(t=>{{
     const d=document.createElement('div');
-    d.className='nox-tab'+(t==='genel'?' active':'');
+    const isR3=t.startsWith('r3_');
+    d.className='nox-tab'+(t==='genel'?' active':'')+(isR3?' r3-sub':'');
     d.id='tab-'+t;
-    const n=t==='genel'?D.length:D.filter(r=>r.screener===t).length;
-    if(t.startsWith('wl_')) n=D.filter(r=>r.wl_status===t.replace('wl_','')).length;
+    let n;
+    if(t==='genel') n=D.length;
+    else if(t.startsWith('wl_')) n=D.filter(r=>r.wl_status===t.replace('wl_','')).length;
+    else if(R3F[t]) n=D.filter(r=>r.screener==='rejim_v3'&&R3F[t](r)).length;
+    else n=D.filter(r=>r.screener===t).length;
     d.innerHTML=(LBL[t]||t)+' <span class="cnt">'+n+'</span>';
     d.onclick=()=>{{curTab=t;
       document.querySelectorAll('.nox-tab').forEach(x=>x.classList.remove('active'));
       d.classList.add('active');
-      renderStats();af()}};
+      updateR3Note();renderStats();af()}};
     el.appendChild(d);
   }});
+}}
+
+// ── R3 NOT GÖSTERİMİ ──
+function updateR3Note(){{
+  const el=document.getElementById('r3note');
+  const show=curTab==='rejim_v3'||curTab.startsWith('r3_')||curTab.startsWith('r3s_');
+  el.style.display=show?'block':'none';
 }}
 
 // ── ÖZET KARTLARI ──
@@ -758,7 +962,11 @@ function renderStats(){{
   h+='<th>En İyi 5G</th><th>En Kötü 5G</th>';
   h+='<th>AL N</th><th>AL WR%</th><th>SAT N</th><th>SAT WR%</th>';
   h+='</tr></thead><tbody>';
-  const tabs=curTab==='genel'?TABS:['genel',curTab];
+  let tabs;
+  if(curTab==='genel') tabs=TABS;
+  else if(curTab==='rejim_v3') tabs=['genel','rejim_v3',...Object.keys(R3F).filter(k=>S[k])];
+  else if(R3F[curTab]) tabs=['genel','rejim_v3',curTab];
+  else tabs=['genel',curTab];
   tabs.forEach(t=>{{
     const s=S[t];if(!s)return;
     const rc=(v)=>{{if(v==null)return'color:var(--text-muted)';return v>0?'color:var(--nox-green)':v<0?'color:var(--nox-red)':'color:var(--text-muted)'}};
@@ -787,16 +995,26 @@ function af(){{
   const fd=document.getElementById('fDir').value;
   const fs=document.getElementById('fSt').value;
   const fwl=document.getElementById('fWL').value;
+  const fq=parseFloat(document.getElementById('fQ').value);
+  const frs=document.getElementById('fRS').value;
   let f=D.filter(r=>{{
-    if(curTab!=='genel'&&!curTab.startsWith('wl_')&&r.screener!==curTab)return false;
-    if(curTab.startsWith('wl_')){{
+    // Tab filtresi
+    if(R3F[curTab]){{
+      if(r.screener!=='rejim_v3')return false;
+      if(!R3F[curTab](r))return false;
+    }}else if(curTab.startsWith('wl_')){{
       const wlKey=curTab.replace('wl_','');
       if(r.wl_status!==wlKey)return false;
-    }}
+    }}else if(curTab!=='genel'&&r.screener!==curTab)return false;
+    // Genel filtreler
     if(sr&&!r.ticker.includes(sr))return false;
     if(fd&&r.direction!==fd)return false;
     if(fs&&r.status!==fs)return false;
     if(fwl&&r.wl_status!==fwl)return false;
+    // R3 kalite filtreleri
+    if(!isNaN(fq)&&fq>0&&(r.quality==null||r.quality<fq))return false;
+    if(frs==='pass'&&!r.rs_pass)return false;
+    if(frs==='fail'&&r.rs_pass)return false;
     return true;
   }});
   f.sort((a,b)=>{{
@@ -816,6 +1034,8 @@ function resetF(){{
   document.getElementById('fDir').value='';
   document.getElementById('fSt').value='';
   document.getElementById('fWL').value='';
+  document.getElementById('fQ').value='';
+  document.getElementById('fRS').value='';
   af();
 }}
 
@@ -826,6 +1046,25 @@ function retCell(v){{
   return '<td style="color:'+c+';font-weight:600">'+(v>0?'+':'')+v.toFixed(2)+'%</td>';
 }}
 
+function mkQCell(v){{
+  if(v==null)return '<td style="color:var(--text-muted)">—</td>';
+  const cls=v>=70?'q-high':v>=40?'q-mid':'q-low';
+  return '<td><span class="q-badge '+cls+'">'+v+'</span></td>';
+}}
+function mkRsCell(score,pass){{
+  if(score==null)return '<td style="color:var(--text-muted)">—</td>';
+  const cls=pass?'rs-pass':'rs-fail';
+  return '<td class="'+cls+'">'+score+(pass?' ✓':'')+'</td>';
+}}
+function mkIndCell(v,digits){{
+  if(v==null)return '<td style="color:var(--text-muted)">—</td>';
+  return '<td style="font-family:var(--font-mono);font-size:.7rem">'+v.toFixed(digits||1)+'</td>';
+}}
+function mkMacdCell(v){{
+  if(v==null)return '<td style="color:var(--text-muted)">—</td>';
+  const c=v>0?'var(--nox-green)':v<0?'var(--nox-red)':'var(--text-muted)';
+  return '<td style="color:'+c+';font-family:var(--font-mono);font-size:.7rem">'+(v>0?'+':'')+v.toFixed(2)+'</td>';
+}}
 function mkWlBadge(s){{
   if(!s)return'<td>—</td>';
   const cls=s==='HAZIR'?'wl-hazir':s==='İZLE'?'wl-izle':'wl-bekle';
@@ -856,6 +1095,8 @@ function render(data){{
       ${{deltaCell}}
       ${{retCell(r.ret_1d)}}${{retCell(r.ret_3d)}}${{retCell(r.ret_5d)}}
       ${{retCell(r.xu_5d)}}${{retCell(r.excess_5d)}}
+      ${{mkQCell(r.quality)}}${{mkRsCell(r.rs_score,r.rs_pass)}}
+      ${{mkIndCell(r.rsi_at_signal)}}${{mkMacdCell(r.macd_hist)}}${{mkIndCell(r.adx_val)}}
       ${{mkWlBadge(r.wl_status)}}${{mkTbCell(r.tb_stage)}}
       <td class="${{stC}}" style="font-size:.7rem;font-weight:600">${{stL}}</td>`;
     tb.appendChild(tr);
@@ -866,6 +1107,7 @@ function render(data){{
 
 // ── INIT ──
 initTabs();
+updateR3Note();
 renderStats();
 af();
 </script></body></html>"""

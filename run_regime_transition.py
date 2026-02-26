@@ -26,7 +26,8 @@ import pandas as pd
 
 from markets.bist import data as data_mod
 from markets.bist.regime_transition import (
-    scan_regime_transition, RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
+    scan_regime_transition, find_last_transition,
+    RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
 )
 from core.reports import _NOX_CSS, _sanitize
 
@@ -70,8 +71,10 @@ def _to_weekly(df):
 # TARAMA
 # =============================================================================
 
-def _scan_all(stock_dfs, weekly_dfs=None):
-    """Tum hisselerde regime transition taramasi."""
+def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
+    """Tum hisselerde regime transition taramasi.
+    Son scan_bars bar icerisindeki en son anlamli gecisi bulur.
+    Gecis tarihi + gecisten bugune getiri raporlar."""
     results = []
     n_scanned = 0
     last_date = None
@@ -94,10 +97,31 @@ def _scan_all(stock_dfs, weekly_dfs=None):
             last = len(df) - 1
             regime_val = int(out['regime'].iloc[last])
             regime_name = REGIME_NAMES.get(regime_val, '?')
-            direction = out['direction'].iloc[last]
-            transition = out['transition'].iloc[last]
+            current_close = float(df['close'].iloc[last])
 
             regime_dist[regime_val] = regime_dist.get(regime_val, 0) + 1
+
+            # Son scan_bars icerisindeki en son anlamli gecisi bul
+            trans = find_last_transition(
+                out['regime'], out['close'], df.index, scan_bars=scan_bars
+            )
+
+            if trans:
+                direction = trans['direction']
+                transition = trans['transition']
+                transition_date = trans['date']
+                transition_close = trans['close_at_transition']
+                gain_pct = (current_close - transition_close) / transition_close * 100
+                days_since = (df.index[last] - transition_date).days
+                prev_regime = trans['from_regime']
+            else:
+                direction = 'TUT'
+                transition = 'TUT'
+                transition_date = None
+                transition_close = 0.0
+                gain_pct = 0.0
+                days_since = 0
+                prev_regime = regime_val
 
             sig = RegimeTransitionSignal(
                 ticker=ticker,
@@ -110,14 +134,18 @@ def _scan_all(stock_dfs, weekly_dfs=None):
                 exit_stage=int(out['exit_stage'].iloc[last]),
                 transition=transition,
                 direction=direction,
-                close=float(df['close'].iloc[last]),
+                close=current_close,
+                transition_date=transition_date,
+                transition_close=transition_close,
+                gain_since_pct=round(gain_pct, 1),
+                days_since=days_since,
+                prev_regime=prev_regime,
                 atr=float(out['atr'].iloc[last]) if pd.notna(out['atr'].iloc[last]) else 0.0,
                 adx=float(out['adx'].iloc[last]) if pd.notna(out['adx'].iloc[last]) else 0.0,
                 cmf=float(out['cmf'].iloc[last]) if pd.notna(out['cmf'].iloc[last]) else 0.0,
                 rvol=float(out['rvol'].iloc[last]) if pd.notna(out['rvol'].iloc[last]) else 0.0,
                 di_spread=float(out['di_spread'].iloc[last]) if pd.notna(out['di_spread'].iloc[last]) else 0.0,
                 adx_slope=float(out['adx_slope'].iloc[last]) if pd.notna(out['adx_slope'].iloc[last]) else 0.0,
-                prev_regime=int(out['prev_regime'].iloc[last]),
             )
             results.append(sig)
 
@@ -127,10 +155,11 @@ def _scan_all(stock_dfs, weekly_dfs=None):
 
     date_str = last_date.strftime('%Y-%m-%d') if last_date else datetime.now().strftime('%Y-%m-%d')
 
-    # Siralama: once AL gecisler, sonra SAT gecisler, sonra regime'e gore
+    # Siralama: once AL gecisler (getiriye gore), sonra SAT, sonra TUT
     results.sort(key=lambda s: (
         0 if s.direction == 'AL' else 1 if s.direction == 'SAT' else 2,
         -s.regime,
+        -s.gain_since_pct,
         s.ticker,
     ))
 
@@ -151,8 +180,16 @@ def _dir_icon(direction):
     return icons.get(direction, '?')
 
 
+def _fmt_date(dt):
+    if dt is None:
+        return '-'
+    if hasattr(dt, 'strftime'):
+        return dt.strftime('%m-%d')
+    return str(dt)[-5:]
+
+
 def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=False):
-    w = 110
+    w = 130
     print(f"\n{'═' * w}")
     print(f"  NOX REGIME TRANSITION SCREENER — {date_str} — {n_scanned} hisse tarandi")
     print(f"{'═' * w}")
@@ -169,15 +206,20 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
     transitions_al = [s for s in results if s.direction == 'AL']
     transitions_sat = [s for s in results if s.direction == 'SAT']
 
+    hdr = (f"  {'Hisse':<8} {'Gecis':<22} {'Tarih':>6} {'Gun':>4} {'Fiyat':>8} "
+           f"{'Getiri':>7} {'T':>2} {'P':>2} {'E':>2} "
+           f"{'Exit':>4} {'ADX':>6} {'Slope':>7} {'CMF':>6} {'RVOL':>5} {'DI±':>6}")
+
     if transitions_al:
         print(f"\n  ▲ AL GECISLERI ({len(transitions_al)})")
         print(f"  {'─' * w}")
-        print(f"  {'Hisse':<8} {'Gecis':<22} {'Fiyat':>8} {'T':>2} {'P':>2} {'E':>2} "
-              f"{'Exit':>4} {'ADX':>6} {'Slope':>7} {'CMF':>6} {'RVOL':>5} {'DI±':>6}")
+        print(hdr)
         print(f"  {'─' * w}")
         for s in transitions_al:
-            print(f"  {s.ticker:<8} {s.transition:<22} {s.close:>8.2f} "
-                  f"{s.trend_score:>2} {s.participation_score:>2} {s.expansion_score:>2} "
+            gain_str = f"{s.gain_since_pct:>+6.1f}%" if s.gain_since_pct != 0 else '   NEW'
+            print(f"  {s.ticker:<8} {s.transition:<22} {_fmt_date(s.transition_date):>6} "
+                  f"{s.days_since:>4} {s.close:>8.2f} "
+                  f"{gain_str:>7} {s.trend_score:>2} {s.participation_score:>2} {s.expansion_score:>2} "
                   f"{s.exit_stage:>4} {s.adx:>6.1f} {s.adx_slope:>+7.2f} "
                   f"{s.cmf:>6.3f} {s.rvol:>5.2f} {s.di_spread:>+6.1f}")
         print(f"  {'─' * w}")
@@ -185,12 +227,13 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
     if transitions_sat:
         print(f"\n  ▼ SAT GECISLERI ({len(transitions_sat)})")
         print(f"  {'─' * w}")
-        print(f"  {'Hisse':<8} {'Gecis':<22} {'Fiyat':>8} {'T':>2} {'P':>2} {'E':>2} "
-              f"{'Exit':>4} {'ADX':>6} {'Slope':>7} {'CMF':>6} {'RVOL':>5} {'DI±':>6}")
+        print(hdr)
         print(f"  {'─' * w}")
         for s in transitions_sat:
-            print(f"  {s.ticker:<8} {s.transition:<22} {s.close:>8.2f} "
-                  f"{s.trend_score:>2} {s.participation_score:>2} {s.expansion_score:>2} "
+            gain_str = f"{s.gain_since_pct:>+6.1f}%"
+            print(f"  {s.ticker:<8} {s.transition:<22} {_fmt_date(s.transition_date):>6} "
+                  f"{s.days_since:>4} {s.close:>8.2f} "
+                  f"{gain_str:>7} {s.trend_score:>2} {s.participation_score:>2} {s.expansion_score:>2} "
                   f"{s.exit_stage:>4} {s.adx:>6.1f} {s.adx_slope:>+7.2f} "
                   f"{s.cmf:>6.3f} {s.rvol:>5.2f} {s.di_spread:>+6.1f}")
         print(f"  {'─' * w}")
@@ -235,6 +278,9 @@ def _save_csv(results, date_str, output_dir):
             'regime_name': s.regime_name,
             'direction': s.direction,
             'transition': s.transition,
+            'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
+            'days_since': s.days_since,
+            'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
             'participation_score': s.participation_score,
             'expansion_score': s.expansion_score,
@@ -272,6 +318,9 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
             'regime_name': s.regime_name,
             'direction': s.direction,
             'transition': s.transition,
+            'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
+            'days_since': s.days_since,
+            'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
             'participation_score': s.participation_score,
             'expansion_score': s.expansion_score,
@@ -462,6 +511,9 @@ function mkTable(rows, label, cssClass){{
   <th ${{srt('ticker')}}>Hisse</th>
   <th ${{srt('regime')}}>Regime</th>
   <th ${{srt('direction')}}>Gecis</th>
+  <th ${{srt('transition_date')}}>Tarih</th>
+  <th ${{srt('days_since')}}>Gun</th>
+  <th ${{srt('gain_since_pct')}}>Getiri</th>
   <th ${{srt('trend_score')}}>T</th>
   <th ${{srt('participation_score')}}>P</th>
   <th ${{srt('expansion_score')}}>E</th>
@@ -478,10 +530,17 @@ function mkTable(rows, label, cssClass){{
     const cmfC=r.cmf>0?'var(--nox-green)':r.cmf<0?'var(--nox-red)':'var(--text-muted)';
     const diC=r.di_spread>5?'var(--nox-green)':r.di_spread<-5?'var(--nox-red)':'var(--text-muted)';
     const rvolC=r.rvol>=1.5?'var(--nox-green)':r.rvol>=1.0?'var(--nox-cyan)':'var(--text-muted)';
+    const gainC=r.gain_since_pct>0?'var(--nox-green)':r.gain_since_pct<0?'var(--nox-red)':'var(--text-muted)';
+    const gainStr=r.direction==='TUT'?'—':((r.gain_since_pct>0?'+':'')+r.gain_since_pct+'%');
+    const dateStr=r.transition_date||'—';
+    const daysStr=r.direction==='TUT'?'—':r.days_since+'g';
     h+=`<tr>
     <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
     <td>${{mkRegimeBadge(r.regime, r.regime_name)}}</td>
     <td>${{mkTransBadge(r.direction, r.transition)}}</td>
+    <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{dateStr}}</td>
+    <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{daysStr}}</td>
+    <td style="color:${{gainC}};font-weight:700;font-family:var(--font-mono)">${{gainStr}}</td>
     <td>${{mkScoreCell(r.trend_score)}}</td>
     <td>${{mkScoreCell(r.participation_score)}}</td>
     <td>${{mkScoreCell(r.expansion_score)}}</td>
