@@ -60,6 +60,10 @@ RT_CFG = {
     'exit_adx_slope_bars': 3,
     # Lookback for transition
     'regime_lookback': 5,
+    # Trailing stop
+    'stop_swing_lb': 10,
+    'stop_atr_initial': 0.5,
+    'stop_atr_trail': 2.0,
 }
 
 REGIME_NAMES = {
@@ -93,6 +97,12 @@ class RegimeTransitionSignal:
     gain_since_pct: float = 0.0         # gecisten bugune getiri %
     days_since: int = 0                 # gecisten bu yana gun
     prev_regime: int = 0
+    # Stop
+    stop: float = 0.0
+    trailing_stop: float = 0.0
+    # Gec giris
+    entry_score: int = 0        # 0-4, sadece AL icin anlamli
+    entry_detail: str = ''       # tooltip icin detay
     # Meta
     atr: float = 0.0
     adx: float = 0.0
@@ -599,6 +609,54 @@ def find_last_transition(regime, close, index, scan_bars=60):
 
 
 # =============================================================================
+# TRAILING STOP
+# =============================================================================
+
+def _find_pivot_lows(low, lb):
+    """
+    Pivot low tespiti. Bar i'de, low[i-lb] son 2*lb+1 bar'in minimumuysa pivot.
+    Pivot degeri i-lb'de olustu, i'de onaylandi.
+    Returns: Series (NaN = pivot yok, float = pivot low fiyati)
+    """
+    n = len(low)
+    result = pd.Series(np.nan, index=low.index)
+    vals = low.values.astype(float)
+    for i in range(2 * lb, n):
+        mid = i - lb
+        window = vals[i - 2 * lb: i + 1]
+        if vals[mid] == np.nanmin(window):
+            result.iloc[i] = vals[mid]
+    return result
+
+
+def compute_trailing_stop(df, atr, cfg=None):
+    """
+    Trailing stop hesaplama:
+      initial_stop = son_swing_low - 0.5 * ATR (yapisal stop)
+      trailing_stop = close - 2.0 * ATR (iz surucu mesafe)
+    Returns: (initial_stop, trailing_stop) float tuple (son bar degerleri)
+    """
+    cfg = cfg or RT_CFG
+    lb = cfg['stop_swing_lb']
+
+    pivot_lows = _find_pivot_lows(df['low'], lb)
+    last_atr = float(atr.iloc[-1]) if pd.notna(atr.iloc[-1]) else 0.0
+    last_close = float(df['close'].iloc[-1])
+
+    # Son gecerli pivot low
+    valid_pivots = pivot_lows.dropna()
+    if len(valid_pivots) > 0:
+        last_swing_low = float(valid_pivots.iloc[-1])
+    else:
+        last_swing_low = float(df['low'].tail(20).min())
+
+    initial_stop = last_swing_low - cfg['stop_atr_initial'] * last_atr
+    trailing_stop = last_close - cfg['stop_atr_trail'] * last_atr
+
+    return initial_stop, trailing_stop
+
+
+# =============================================================================
 # ANA FONKSIYON — scan_regime_transition
 # =============================================================================
 
@@ -636,6 +694,9 @@ def scan_regime_transition(df, weekly_df=None, cfg=None):
     # Gecis tespiti
     direction, transition, prev_regime = detect_transitions(regime)
 
+    # Trailing stop
+    initial_stop, trailing_stop = compute_trailing_stop(df, exp_data['atr'], cfg)
+
     return {
         'close': df['close'],
         'regime': regime,
@@ -657,4 +718,7 @@ def scan_regime_transition(df, weekly_df=None, cfg=None):
         'ema_bull': trend_data['ema_bull'],
         'st_bull': trend_data['st_bull'],
         'wk_trend_up': trend_data['wk_trend_up'],
+        # Stop
+        'initial_stop': initial_stop,
+        'trailing_stop': trailing_stop,
     }

@@ -27,6 +27,7 @@ import pandas as pd
 from markets.bist import data as data_mod
 from markets.bist.regime_transition import (
     scan_regime_transition, find_last_transition,
+    compute_trailing_stop,
     RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
 )
 from core.reports import _NOX_CSS, _sanitize
@@ -123,6 +124,48 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
                 days_since = 0
                 prev_regime = regime_val
 
+            # Stop degerleri
+            initial_stop = out.get('initial_stop', 0.0)
+            trailing_stop_val = out.get('trailing_stop', 0.0)
+            # Efektif stop: ikisinden buyuk olanini kullan
+            eff_stop = max(initial_stop, trailing_stop_val) if initial_stop > 0 else trailing_stop_val
+
+            # Gec giris skoru (sadece AL icin)
+            atr_val = float(out['atr'].iloc[last]) if pd.notna(out['atr'].iloc[last]) else 0.0
+            cmf_val = float(out['cmf'].iloc[last]) if pd.notna(out['cmf'].iloc[last]) else 0.0
+            adx_slope_val = float(out['adx_slope'].iloc[last]) if pd.notna(out['adx_slope'].iloc[last]) else 0.0
+            exit_stage_val = int(out['exit_stage'].iloc[last])
+
+            entry_score = 0
+            entry_parts = []
+            if direction == 'AL':
+                # 1. Fiyat stop ustunde
+                if eff_stop > 0 and current_close > eff_stop:
+                    entry_score += 1
+                    entry_parts.append('Stop ustunde: \u2713')
+                else:
+                    entry_parts.append('Stop ustunde: \u2717')
+                # 2. Regime guclu (exit_stage <= 1)
+                if exit_stage_val <= 1:
+                    entry_score += 1
+                    entry_parts.append('Regime guclu: \u2713')
+                else:
+                    entry_parts.append('Regime guclu: \u2717')
+                # 3. Cok uzaklasmamis (gain < 2*ATR%)
+                atr_pct = (atr_val / current_close * 100) if current_close > 0 else 0
+                if gain_pct < 2 * atr_pct:
+                    entry_score += 1
+                    entry_parts.append('Mesafe OK: \u2713')
+                else:
+                    entry_parts.append('Mesafe OK: \u2717')
+                # 4. Momentum devam (CMF > 0 VE adx_slope > 0)
+                if cmf_val > 0 and adx_slope_val > 0:
+                    entry_score += 1
+                    entry_parts.append('Momentum: \u2713')
+                else:
+                    entry_parts.append('Momentum: \u2717')
+            entry_detail = ' | '.join(entry_parts)
+
             sig = RegimeTransitionSignal(
                 ticker=ticker,
                 date=df.index[last],
@@ -131,7 +174,7 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
                 trend_score=int(out['trend_score'].iloc[last]),
                 participation_score=int(out['participation_score'].iloc[last]),
                 expansion_score=int(out['expansion_score'].iloc[last]),
-                exit_stage=int(out['exit_stage'].iloc[last]),
+                exit_stage=exit_stage_val,
                 transition=transition,
                 direction=direction,
                 close=current_close,
@@ -140,12 +183,16 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
                 gain_since_pct=round(gain_pct, 1),
                 days_since=days_since,
                 prev_regime=prev_regime,
-                atr=float(out['atr'].iloc[last]) if pd.notna(out['atr'].iloc[last]) else 0.0,
+                stop=round(eff_stop, 2),
+                trailing_stop=round(trailing_stop_val, 2),
+                entry_score=entry_score,
+                entry_detail=entry_detail,
+                atr=atr_val,
                 adx=float(out['adx'].iloc[last]) if pd.notna(out['adx'].iloc[last]) else 0.0,
-                cmf=float(out['cmf'].iloc[last]) if pd.notna(out['cmf'].iloc[last]) else 0.0,
+                cmf=cmf_val,
                 rvol=float(out['rvol'].iloc[last]) if pd.notna(out['rvol'].iloc[last]) else 0.0,
                 di_spread=float(out['di_spread'].iloc[last]) if pd.notna(out['di_spread'].iloc[last]) else 0.0,
-                adx_slope=float(out['adx_slope'].iloc[last]) if pd.notna(out['adx_slope'].iloc[last]) else 0.0,
+                adx_slope=adx_slope_val,
             )
             results.append(sig)
 
@@ -286,6 +333,8 @@ def _save_csv(results, date_str, output_dir):
             'expansion_score': s.expansion_score,
             'exit_stage': s.exit_stage,
             'close': round(s.close, 2),
+            'stop': round(s.stop, 2),
+            'entry_score': s.entry_score,
             'adx': round(s.adx, 2),
             'adx_slope': round(s.adx_slope, 3),
             'cmf': round(s.cmf, 4),
@@ -312,6 +361,8 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
 
     rows_data = []
     for s in results:
+        # Stop-fiyat uzakligi %
+        stop_dist_pct = round((s.close - s.stop) / s.close * 100, 1) if s.stop > 0 and s.close > 0 else 0
         rows_data.append({
             'ticker': s.ticker,
             'regime': s.regime,
@@ -319,6 +370,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
             'direction': s.direction,
             'transition': s.transition,
             'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
+            'transition_date_iso': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'days_since': s.days_since,
             'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
@@ -326,6 +378,10 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
             'expansion_score': s.expansion_score,
             'exit_stage': s.exit_stage,
             'close': round(s.close, 2),
+            'stop': s.stop,
+            'stop_dist_pct': stop_dist_pct,
+            'entry_score': s.entry_score,
+            'entry_detail': s.entry_detail,
             'adx': round(s.adx, 1),
             'adx_slope': round(s.adx_slope, 2),
             'cmf': round(s.cmf, 3),
@@ -400,6 +456,22 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
   font-weight: 700; font-size: 0.85rem;
 }}
 
+/* ENTRY BADGE */
+.entry-badge {{
+  display: inline-block; padding: 3px 10px; border-radius: var(--radius-sm);
+  font-size: 0.72rem; font-weight: 700; font-family: var(--font-mono);
+  letter-spacing: 0.02em; cursor: help;
+}}
+.entry-4 {{ background: rgba(74,222,128,0.18); color: var(--nox-green); }}
+.entry-3 {{ background: rgba(34,211,238,0.15); color: var(--nox-cyan); }}
+.entry-2 {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
+.entry-1 {{ background: rgba(248,113,113,0.12); color: var(--nox-red); }}
+.entry-0 {{ background: rgba(248,113,113,0.12); color: var(--nox-red); }}
+
+/* STOP CELL */
+.stop-close {{ color: var(--nox-orange); font-weight: 700; }}
+.stop-ok {{ color: var(--nox-red); }}
+
 /* SECTION */
 .section-title {{
   font-size: 0.9rem; font-weight: 700; padding: 14px 0 8px;
@@ -430,6 +502,11 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
   <select id="fDir" onchange="render()"><option value="">Tumu</option>
   <option value="AL">AL</option><option value="SAT">SAT</option>
   <option value="TUT">TUT</option></select></div>
+  <div><label>Tarih</label>
+  <select id="fDate" onchange="render()"><option value="">Tumu</option>
+  <option value="0">Bugun</option><option value="3">Son 3 gun</option>
+  <option value="7">Son 1 hafta</option><option value="14">Son 2 hafta</option>
+  <option value="30">Son 1 ay</option></select></div>
   <div><label>Exit≤</label><input type="number" id="fExit" value="" step="1" min="0" max="3" placeholder="max" oninput="render()"></div>
   <div><label>ADX≥</label><input type="number" id="fADX" value="0" step="5" min="0" oninput="render()"></div>
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
@@ -447,6 +524,7 @@ function resetF(){{
   document.getElementById('fS').value='';
   document.getElementById('fRegime').value='';
   document.getElementById('fDir').value='';
+  document.getElementById('fDate').value='';
   document.getElementById('fExit').value='';
   document.getElementById('fADX').value='0';
   render();
@@ -474,12 +552,27 @@ function applyFilters(rows){{
   const sr=document.getElementById('fS').value.toUpperCase();
   const fRegime=document.getElementById('fRegime').value;
   const fDir=document.getElementById('fDir').value;
+  const fDateVal=document.getElementById('fDate').value;
   const fExit=parseInt(document.getElementById('fExit').value);
   const fADX=parseFloat(document.getElementById('fADX').value)||0;
+
+  let dateCutoff=null;
+  if(fDateVal!==''){{
+    const days=parseInt(fDateVal);
+    dateCutoff=new Date();
+    dateCutoff.setDate(dateCutoff.getDate()-days);
+    dateCutoff.setHours(0,0,0,0);
+  }}
+
   return rows.filter(r=>{{
     if(sr&&!r.ticker.includes(sr)) return false;
     if(fRegime!==''&&r.regime!==parseInt(fRegime)) return false;
     if(fDir&&r.direction!==fDir) return false;
+    if(dateCutoff&&r.transition_date_iso){{
+      const td=new Date(r.transition_date_iso+'T00:00:00');
+      if(td<dateCutoff) return false;
+    }}
+    if(dateCutoff&&!r.transition_date_iso) return false;
     if(!isNaN(fExit)&&r.exit_stage>fExit) return false;
     if(fADX>0&&r.adx<fADX) return false;
     return true;
@@ -500,6 +593,18 @@ function mkScoreCell(val){{
   return `<span class="score-cell score-${{val}}">${{val}}</span>`;
 }}
 
+function mkEntryBadge(score, detail, dir){{
+  if(dir!=='AL') return '<span style="color:var(--text-muted);font-size:0.72rem">—</span>';
+  const labels={{4:'GIR',3:'FIRSAT',2:'RISKLI',1:'GEC',0:'GEC'}};
+  return `<span class="entry-badge entry-${{score}}" title="${{detail}}">${{labels[score]||'GEC'}} ${{score}}/4</span>`;
+}}
+
+function mkStopCell(stop, dist, close){{
+  if(!stop||stop<=0) return '<span style="color:var(--text-muted)">—</span>';
+  const cls=dist<2?'stop-close':'stop-ok';
+  return `<span class="${{cls}}" title="Fiyattan uzaklik: %${{dist}}">${{stop.toFixed(1)}}</span>`;
+}}
+
 function mkTable(rows, label, cssClass){{
   const sk=sortState[label];
   if(sk) rows=sortRows(rows, sk.col, sk.asc);
@@ -514,11 +619,13 @@ function mkTable(rows, label, cssClass){{
   <th ${{srt('transition_date')}}>Tarih</th>
   <th ${{srt('days_since')}}>Gun</th>
   <th ${{srt('gain_since_pct')}}>Getiri</th>
+  <th ${{srt('entry_score')}}>Giris</th>
   <th ${{srt('trend_score')}}>T</th>
   <th ${{srt('participation_score')}}>P</th>
   <th ${{srt('expansion_score')}}>E</th>
   <th ${{srt('exit_stage')}}>Exit</th>
   <th ${{srt('close')}}>Fiyat</th>
+  <th ${{srt('stop')}}>Stop</th>
   <th ${{srt('adx')}}>ADX</th>
   <th ${{srt('adx_slope')}}>Slope</th>
   <th ${{srt('cmf')}}>CMF</th>
@@ -541,11 +648,13 @@ function mkTable(rows, label, cssClass){{
     <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{dateStr}}</td>
     <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{daysStr}}</td>
     <td style="color:${{gainC}};font-weight:700;font-family:var(--font-mono)">${{gainStr}}</td>
+    <td>${{mkEntryBadge(r.entry_score, r.entry_detail||'', r.direction)}}</td>
     <td>${{mkScoreCell(r.trend_score)}}</td>
     <td>${{mkScoreCell(r.participation_score)}}</td>
     <td>${{mkScoreCell(r.expansion_score)}}</td>
     <td class="exit-${{r.exit_stage}}" style="font-weight:700;font-family:var(--font-mono)">${{r.exit_stage}}</td>
     <td>${{r.close}}</td>
+    <td>${{mkStopCell(r.stop, r.stop_dist_pct, r.close)}}</td>
     <td>${{r.adx}}</td>
     <td style="color:${{slopeC}}">${{r.adx_slope>0?'+':''}}${{r.adx_slope}}</td>
     <td style="color:${{cmfC}}">${{r.cmf}}</td>
