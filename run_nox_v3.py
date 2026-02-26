@@ -729,7 +729,7 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                 'gate': b['gate'],
                 'pivot_date': b['pivot_date'],
                 'signal_date': b['signal_date'],
-                'fresh': b['fresh'],
+                'fresh': b.get('fresh', 'YAKIN'),
             }
             if weekly:
                 row['wk_mom'] = b.get('wk_mom', False)
