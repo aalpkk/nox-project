@@ -129,6 +129,9 @@ def _parse_nox_v3(path, screener_name):
         tt = str(row.get('trigger_type', '')).strip()
         if tt and tt != 'nan':
             entry['trigger_type'] = tt
+        # RS (Relative Strength)
+        if pd.notna(row.get('rs_score')):
+            entry['rs_score'] = round(float(row['rs_score']), 3)
         # Haftalik watchlist alanlari
         wl = str(row.get('wl_status', '')).strip()
         if wl and wl != 'nan':
@@ -689,6 +692,28 @@ def compute_summary(results):
                     stats[f'avg_5d_{d}'] = None
             summary[fkey] = stats
 
+        # RS kirilimi: RS>1 (guclu) vs RS<=1 (zayif)
+        for rkey, rlabel, rfn in [
+            ('nwr_strong', 'RS>1', lambda r: r.get('rs_score') is not None and r['rs_score'] > 1),
+            ('nwr_weak', 'RS≤1', lambda r: r.get('rs_score') is not None and r['rs_score'] <= 1),
+        ]:
+            sub = [r for r in nw_results if rfn(r)]
+            if not sub:
+                continue
+            stats = {'screener': rkey, 'n': len(sub)}
+            stats.update(_calc_window_stats(sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[rkey] = stats
+
     return summary
 
 
@@ -725,6 +750,8 @@ _SCREENER_LABELS = {
     'nwt_BOS': 'NW BOS',
     'nwt_HC2': 'NW HC2',
     'nwt_EMA_R': 'NW EMA_R',
+    'nwr_strong': 'NW RS>1',
+    'nwr_weak': 'NW RS≤1',
     'wl_HAZIR': 'WL HAZIR',
     'wl_İZLE': 'WL İZLE',
     'wl_BEKLE': 'WL BEKLE',
@@ -741,6 +768,7 @@ _SCREENER_TAB_ORDER = [
     'combo',
     'nox_v3_daily', 'nox_v3_weekly',
     'nw_AL', 'nw_SAT', 'nwt_BOS', 'nwt_HC2', 'nwt_EMA_R',
+    'nwr_strong', 'nwr_weak',
     'wl_HAZIR', 'wl_İZLE', 'wl_BEKLE',
     'smc', 'pine', 'divergence',
 ]
@@ -969,6 +997,8 @@ const NWF={{
   'nwt_BOS':r=>r.trigger_type==='BOS',
   'nwt_HC2':r=>r.trigger_type==='HC2',
   'nwt_EMA_R':r=>r.trigger_type==='EMA_R',
+  'nwr_strong':r=>r.rs_score!=null&&r.rs_score>1,
+  'nwr_weak':r=>r.rs_score!=null&&r.rs_score<=1,
 }};
 
 // ── TABS ──
@@ -977,7 +1007,7 @@ function initTabs(){{
   TABS.forEach(t=>{{
     const d=document.createElement('div');
     const isR3=t.startsWith('r3_');
-    const isNW=t.startsWith('nw_')||t.startsWith('nwt_');
+    const isNW=t.startsWith('nw_')||t.startsWith('nwt_')||t.startsWith('nwr_');
     d.className='nox-tab'+(t==='genel'?' active':'')+(isR3?' r3-sub':'')+(isNW?' nw-sub':'');
     d.id='tab-'+t;
     let n;

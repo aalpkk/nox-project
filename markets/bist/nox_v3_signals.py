@@ -573,3 +573,20 @@ def detect_daily_triggers(daily_df, pivot_price, pivot_confirm_date,
                 }
 
     return _no_trigger()
+
+
+# =============================================================================
+# 9. RELATIVE STRENGTH (RS) — Hisse vs XU100
+# =============================================================================
+
+def calc_rs(stock_close, xu_close, period=20):
+    """
+    RS = hisse 20-gün getirisi / XU100 20-gün getirisi.
+    RS > 1 → hisse endeksten güçlü, RS < 1 → zayıf.
+    Lowercase close serisi bekler.
+    """
+    stock_ret = stock_close.pct_change(period)
+    bench_ret = xu_close.pct_change(period)
+    # 0 bölme koruması
+    rs = (1 + stock_ret) / (1 + bench_ret)
+    return rs

@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from markets.bist import data as data_mod
-from markets.bist.nox_v3_signals import compute_nox_v3, detect_daily_triggers, calc_adx_with_di, _pine_rsi
+from markets.bist.nox_v3_signals import compute_nox_v3, detect_daily_triggers, calc_adx_with_di, _pine_rsi, calc_rs
 from markets.bist.trend_birth import scan_trend_birth
 from core.reports import _NOX_CSS, _sanitize, send_telegram, send_telegram_document, push_html_to_github
 
@@ -296,13 +296,22 @@ def _enrich_with_trend_birth(signals, stock_dfs, ref_date_str=None):
 # =============================================================================
 
 def _apply_daily_triggers(weekly_buys, weekly_candidates, daily_dfs,
-                          max_delta_pct=15.0):
+                          max_delta_pct=15.0, xu_df=None):
     """
     Her haftalik AL/ADAY sinyali icin gunluk tetik ara.
     Tetik bulunursa → triggered, bulunamazsa → zone_only.
+    xu_df verilirse tetik barindaki RS hesaplanir.
 
     Returns: (triggered, zone_only)
     """
+    # XU100 close'u lowercase'e çevir (varsa)
+    xu_close = None
+    if xu_df is not None and not xu_df.empty:
+        if 'close' in xu_df.columns:
+            xu_close = xu_df['close']
+        elif 'Close' in xu_df.columns:
+            xu_close = xu_df['Close']
+
     triggered = []
     zone_only = []
 
@@ -332,6 +341,8 @@ def _apply_daily_triggers(weekly_buys, weekly_candidates, daily_dfs,
             # fresh etiketini tetik tarihine göre güncelle
             last_trading_day = daily_df.index[-1].strftime('%Y-%m-%d')
             sig['fresh'] = 'BUGUN' if result['trigger_date'] == last_trading_day else 'YAKIN'
+            # RS hesapla
+            _add_rs(sig, daily_df, result['trigger_date'], xu_close)
             # Gunluk indikatörler
             _add_daily_indicators(sig, daily_df, result['trigger_date'])
             triggered.append(sig)
@@ -339,6 +350,23 @@ def _apply_daily_triggers(weekly_buys, weekly_candidates, daily_dfs,
             zone_only.append(sig)
 
     return triggered, zone_only
+
+
+def _add_rs(entry, daily_df, trigger_date_str, xu_close):
+    """Tetik barindaki RS (Relative Strength vs XU100) hesapla."""
+    if xu_close is None:
+        return
+    try:
+        trigger_ts = pd.Timestamp(trigger_date_str)
+        rs_series = calc_rs(daily_df['close'], xu_close, period=20)
+        idx = daily_df.index.searchsorted(trigger_ts)
+        if idx >= len(daily_df):
+            idx = len(daily_df) - 1
+        val = rs_series.iloc[idx]
+        if pd.notna(val):
+            entry['rs_score'] = round(float(val), 3)
+    except Exception:
+        pass
 
 
 def _add_daily_indicators(entry, daily_df, trigger_date_str):
@@ -398,6 +426,7 @@ def _save_csv_v2(triggered, sells, date_str, output_dir, suffix='',
             'd_adx': b.get('d_adx'),
             'd_adx_slope': b.get('d_adx_slope'),
             'd_rsi': b.get('d_rsi'),
+            'rs_score': b.get('rs_score'),
             'wl_status': b.get('status', ''),
             'tb_stage': b.get('tb_stage', ''),
             'tb_prep': b.get('tb_prep', ''),
@@ -466,7 +495,7 @@ def _print_triggered_results(triggered, sells, zone_only, n_scanned, date_str):
             w = 130
             print(f"  {'─' * w}")
             print(f"  {'Hisse':<8} {'TetikTrh':>10} {'Tetik':>5} {'Fiyat':>8} {'DipFiy':>8} {'Δ%':>6} "
-                  f"{'RG':>5} {'dADX':>5} {'dSlp':>6} {'dRSI':>5} "
+                  f"{'RG':>5} {'dADX':>5} {'dSlp':>6} {'dRSI':>5} {'RS':>6} "
                   f"{'Mom':>4} {'TB':>4} {'Durum':>6}")
             print(f"  {'─' * w}")
             for b in items:
@@ -476,10 +505,11 @@ def _print_triggered_results(triggered, sells, zone_only, n_scanned, date_str):
                 d_adx = f"{b['d_adx']:.1f}" if b.get('d_adx') is not None else '-'
                 d_slp = f"{b['d_adx_slope']:+.2f}" if b.get('d_adx_slope') is not None else '-'
                 d_rsi = f"{b['d_rsi']:.1f}" if b.get('d_rsi') is not None else '-'
+                rs = f"{b['rs_score']:.2f}" if b.get('rs_score') is not None else '-'
                 delta = b.get('delta_pct_at_trigger', b.get('delta_pct', 0))
                 print(f"  {b['ticker']:<8} {b['signal_date']:>10} {b.get('trigger_type','?'):>5} "
                       f"{b['close']:>8.2f} {b['pivot']:>8.2f} {delta:>+5.1f}% "
-                      f"{b.get('rg', 0):>5.0f} {d_adx:>5} {d_slp:>6} {d_rsi:>5} "
+                      f"{b.get('rg', 0):>5.0f} {d_adx:>5} {d_slp:>6} {d_rsi:>5} {rs:>6} "
                       f"{mom:>4} {tb:>4} {status:>6}")
             print(f"  {'─' * w}")
     else:
@@ -733,6 +763,7 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                 'pivot_date': b.get('pivot_date', ''),
                 'signal_date': b.get('signal_date', ''),
                 'fresh': b.get('fresh', 'YAKIN'),
+                'rs_score': round(b.get('rs_score', 0), 3) if b.get('rs_score') else None,
             }
             if weekly:
                 row['wk_mom'] = b.get('wk_mom', False)
@@ -775,6 +806,7 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                 'rsi': round(c.get('rsi', 0), 1),
                 'gate': c.get('gate', False),
                 'pivot_date': c.get('pivot_date', ''),
+                'rs_score': round(c.get('rs_score', 0), 3) if c.get('rs_score') else None,
             }
             if weekly:
                 row['wk_mom'] = c.get('wk_mom', False)
@@ -1026,7 +1058,7 @@ function mkBuyTable(buys, tf, label, cssClass){{
   <th ${{srt('close')}}>Fiyat</th><th ${{srt('pivot')}}>DipFiy</th><th ${{srt('delta_pct')}}>Δ%</th>
   <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
-  <th>Gate</th>`;
+  <th ${{srt('rs_score')}}>RS</th><th>Gate</th>`;
   if(isW) h+=`<th>Mom</th><th ${{srt('tb_stage')}}>TB</th><th ${{srt('tb_prep')}}>Prep</th><th ${{srt('status')}}>Durum</th>`;
   h+=`</tr></thead><tbody>`;
   buys.forEach(r=>{{
@@ -1035,6 +1067,8 @@ function mkBuyTable(buys, tf, label, cssClass){{
     const gateT=r.gate?'AÇIK':'KAPALI';
     const slopeC=r.slope>0?'var(--nox-green)':r.slope<-0.3?'var(--nox-red)':'var(--text-muted)';
     const rsiC=r.rsi<30?'var(--nox-green)':r.rsi>70?'var(--nox-red)':'var(--text-primary)';
+    const rsV=r.rs_score!=null?r.rs_score.toFixed(2):'-';
+    const rsC=r.rs_score>1?'var(--nox-green)':r.rs_score!=null?'var(--nox-red)':'var(--text-muted)';
     const deltaC=r.delta_pct<=5?'delta-lo':r.delta_pct<=15?'delta-mid':'delta-hi';
     h+=`<tr${{r.gate?' class="hl"':''}}>
     <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a>${{ovB}}</td>
@@ -1045,6 +1079,7 @@ function mkBuyTable(buys, tf, label, cssClass){{
     <td>${{r.rg}}</td><td>${{r.adx}}</td>
     <td style="color:${{slopeC}}">${{r.slope>0?'+':''}}${{r.slope}}</td>
     <td style="color:${{rsiC}}">${{r.rsi}}</td>
+    <td style="color:${{rsC}}">${{rsV}}</td>
     <td class="${{gateC}}">${{gateT}}</td>`;
     if(isW) h+=`<td style="color:${{r.wk_mom?'var(--nox-green)':'var(--text-muted)'}}">${{r.wk_mom?'✓':'✗'}}</td>
     <td>${{mkTbBadge(r.tb_stage)}}</td><td>${{r.tb_prep||0}}</td><td>${{mkStatusBadge(r.status)}}</td>`;
@@ -1109,7 +1144,7 @@ function mkCandidateTable(cands, tf){{
   <th ${{srt('bars_since')}}>Bars</th>
   <th ${{srt('rg')}}>RG</th><th ${{srt('adx')}}>ADX</th>
   <th ${{srt('slope')}}>Slope</th><th ${{srt('rsi')}}>RSI</th>
-  <th>Gate</th>`;
+  <th ${{srt('rs_score')}}>RS</th><th>Gate</th>`;
   if(isW) h+=`<th>Mom</th><th ${{srt('tb_stage')}}>TB</th><th ${{srt('tb_prep')}}>Prep</th><th ${{srt('status')}}>Durum</th>`;
   h+=`</tr></thead><tbody>`;
   cands.forEach(r=>{{
@@ -1119,6 +1154,8 @@ function mkCandidateTable(cands, tf){{
     const gateC=r.gate?'gate-open':'gate-closed';
     const gateT=r.gate?'AÇIK':'KAPALI';
     const barsLabel=r.bars_since+'/5';
+    const rsV=r.rs_score!=null?r.rs_score.toFixed(2):'-';
+    const rsC=r.rs_score>1?'var(--nox-green)':r.rs_score!=null?'var(--nox-red)':'var(--text-muted)';
     h+=`<tr>
     <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
     <td>${{r.pivot_date}} <span class="fresh-badge fresh-aday">ADAY</span></td>
@@ -1128,6 +1165,7 @@ function mkCandidateTable(cands, tf){{
     <td>${{r.rg}}</td><td>${{r.adx}}</td>
     <td style="color:${{slopeC}}">${{r.slope>0?'+':''}}${{r.slope}}</td>
     <td style="color:${{rsiC}}">${{r.rsi}}</td>
+    <td style="color:${{rsC}}">${{rsV}}</td>
     <td class="${{gateC}}">${{gateT}}</td>`;
     if(isW) h+=`<td style="color:${{r.wk_mom?'var(--nox-green)':'var(--text-muted)'}}">${{r.wk_mom?'✓':'✗'}}</td>
     <td>${{mkTbBadge(r.tb_stage)}}</td><td>${{r.tb_prep||0}}</td><td>${{mkStatusBadge(r.status)}}</td>`;
@@ -1311,7 +1349,14 @@ def main():
     print(f"\n  Veri yukleniyor (period={args.period})...")
     t0 = time.time()
     all_data = data_mod.fetch_data(tickers, period=args.period)
+    xu_df = data_mod.fetch_benchmark(period=args.period)
     print(f"  {len(all_data)} hisse yuklendi ({time.time() - t0:.1f}s)")
+    if xu_df is not None:
+        xu_df_lc = _to_lower_cols(xu_df)
+        print(f"  XU100: {len(xu_df_lc)} bar")
+    else:
+        xu_df_lc = None
+        print("  [!] XU100 yuklenemedi, RS hesaplanamayacak")
 
     if not all_data:
         print("  HATA: Hicbir hisse verisi yuklenemedi!")
@@ -1342,7 +1387,7 @@ def main():
             # Tarama
             wb, ws, wc, wn, wd = _scan(wk_dfs, tf_label='weekly')
             # Gunluk tetik uygula
-            triggered, zone_only = _apply_daily_triggers(wb, wc, cut_dfs)
+            triggered, zone_only = _apply_daily_triggers(wb, wc, cut_dfs, xu_df=xu_df_lc)
             # TB zenginlestirme (triggered sinyallere)
             triggered = _enrich_with_trend_birth(triggered, cut_dfs, wd)
             zone_only = _enrich_with_trend_birth(zone_only, cut_dfs, wd)
@@ -1382,7 +1427,7 @@ def main():
         # Gunluk tetik uygula
         print(f"  Gunluk tetik taramasi...")
         t2t = time.time()
-        w_triggered, w_zone_only = _apply_daily_triggers(w_buys, w_cands, stock_dfs)
+        w_triggered, w_zone_only = _apply_daily_triggers(w_buys, w_cands, stock_dfs, xu_df=xu_df_lc)
         print(f"  Tetik tamamlandi ({time.time() - t2t:.1f}s): {len(w_triggered)} tetik, {len(w_zone_only)} zone-only")
         # TB zenginlestirme (triggered sinyallere)
         print(f"  Trend Birth zenginlestirme...")
