@@ -942,6 +942,30 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
 </div>
 
+<details class="trade-guide" style="margin-bottom:14px;padding:10px 14px;border-radius:8px;
+  background:rgba(34,211,238,0.06);border:1px solid rgba(34,211,238,0.15);
+  font-size:0.78rem;color:var(--text-secondary);line-height:1.6">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-cyan);font-size:0.82rem">
+  Trade Rehberi</summary>
+<div style="margin-top:8px">
+<b style="color:var(--nox-green)">AL Checklist (Haftalik tab)</b><br>
+1. <b>Durum: HAZIR</b> filtrele (WR %78, en kaliteli grup)<br>
+2. <b>Gate: AÇIK</b> olanları seç (breadth+regime onaylı)<br>
+3. <b>D+W badge</b> varsa öncelik ver (günlük+haftalık çakışma)<br>
+4. <b>Δ% düşük</b> → pivot zonuna yakın = iyi risk/ödül<br>
+5. Hisse adına tıkla → TradingView'da grafiği kontrol et<br>
+6. Stop = pivot fiyatının %2-3 altı<br>
+<br>
+<b style="color:var(--nox-cyan)">Tarih Okuma</b><br>
+<b>Sinyal</b> = tetik günü (giriş tarihi). <b>Elmas</b> = pivot dip oluşum tarihi.<br>
+&#8226; BUGÜN → hemen değerlendir | 1-5 gün → fiyat yakınsa geçerli | >2 hafta → geç kalmış, atla<br>
+&#8226; Elmas ne kadar tazeyse destek o kadar güvenilir (>2 ay → aşınmış olabilir)<br>
+<br>
+<b style="color:var(--nox-red)">SAT Sinyalleri</b><br>
+&#8226; Sev 2-3 → pozisyon kapat/daralt | Sev 1 → stop sıkılaştır | Sev 0 → bilgi amaçlı
+</div>
+</details>
+
 <div class="nox-tabs">
   <div class="nox-tab active" onclick="switchTab('daily')" id="tab-daily">
     Günlük <span class="cnt" id="cnt-daily"></span></div>
