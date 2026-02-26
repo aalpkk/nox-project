@@ -745,7 +745,9 @@ def _save_csv(buys, sells, date_str, output_dir, suffix='', candidates=None):
 def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                    w_buys, w_sells, w_cands, w_n, w_date,
                    overlap_tickers):
-    now = datetime.now().strftime('%d.%m.%Y %H:%M')
+    from datetime import timezone, timedelta
+    tr_tz = timezone(timedelta(hours=3))
+    now = datetime.now(tr_tz).strftime('%d.%m.%Y %H:%M')
 
     def _prep_buys(buys, weekly=False):
         rows = []
