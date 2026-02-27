@@ -35,7 +35,7 @@ from markets.bist.regime_transition import (
     TIMEFRAME_CONFIGS,
 )
 from collections import Counter
-from core.reports import _NOX_CSS, _sanitize
+from core.reports import _NOX_CSS, _sanitize, send_telegram, push_html_to_github
 
 
 # =============================================================================
@@ -1039,7 +1039,7 @@ def _save_html(html_content, date_str, output_dir, timeframe='daily'):
 # =============================================================================
 
 def _run_backtest(stock_dfs, higher_tf_dfs, N, cfg=None, timeframe='daily'):
-    """Son N bar'daki AL/SAT sinyallerini cikar, forward return hesapla.
+    """Son N bar'daki AL sinyallerini cikar, forward return hesapla.
     Her ticker 1 kez scan edilir (O(ticker) karmasiklik).
 
     Returns: (signals_list, summary_dict)
@@ -1098,7 +1098,7 @@ def _run_backtest(stock_dfs, higher_tf_dfs, N, cfg=None, timeframe='daily'):
 
             for i in range(start_idx, n_bars):
                 d = str(direction_s.iloc[i])
-                if d == 'TUT':
+                if d != 'AL':
                     continue
 
                 entry_price = float(close_s.iloc[i])
@@ -1151,17 +1151,15 @@ def _run_backtest(stock_dfs, higher_tf_dfs, N, cfg=None, timeframe='daily'):
                     end_idx = i + window
                     if end_idx < n_bars:
                         r = (float(close_s.iloc[end_idx]) - entry_price) / entry_price * 100
-                        if d == 'SAT':
-                            r = -r
                         ret_vals[rkey] = round(r, 2)
                     else:
                         ret_vals[rkey] = None
 
-                # Stop hit (sadece AL icin, ilk pencere icerisinde)
+                # Stop hit (ilk pencere icerisinde)
                 first_window = ret_windows[0][1]
                 stop_hit = False
                 stop_hit_bar = None
-                if d == 'AL' and stop > 0:
+                if stop > 0:
                     for j in range(i + 1, min(i + first_window + 1, n_bars)):
                         if float(low_s.iloc[j]) < stop:
                             stop_hit = True
@@ -1217,9 +1215,7 @@ def _compute_backtest_summary(signals, ret_keys=None):
     summary = {'total': len(df)}
 
     al = df[df['direction'] == 'AL']
-    sat = df[df['direction'] == 'SAT']
     summary['n_al'] = len(al)
-    summary['n_sat'] = len(sat)
 
     first_ret_key = ret_keys[0]
 
@@ -1244,20 +1240,16 @@ def _compute_backtest_summary(signals, ret_keys=None):
     else:
         summary['stop_pct_first'] = 0.0
 
-    # Yon bazinda
-    summary['by_dir'] = {}
-    for d_name, d_df in [('AL', al), ('SAT', sat)]:
-        d_stats = {}
-        for rkey in ret_keys:
-            valid = d_df[d_df[rkey].notna()][rkey]
-            n = len(valid)
-            if n > 0:
-                wr = (valid > 0).sum() / n * 100
-                d_stats[rkey] = {'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2)}
-            else:
-                d_stats[rkey] = {'n': 0, 'wr': 0, 'avg': 0}
-        d_stats['total'] = len(d_df)
-        summary['by_dir'][d_name] = d_stats
+    # AL istatistikleri (pencere bazli)
+    summary['al_stats'] = {}
+    for rkey in ret_keys:
+        valid = al[al[rkey].notna()][rkey]
+        n = len(valid)
+        if n > 0:
+            wr = (valid > 0).sum() / n * 100
+            summary['al_stats'][rkey] = {'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2)}
+        else:
+            summary['al_stats'][rkey] = {'n': 0, 'wr': 0, 'avg': 0}
 
     # Gecis tipi bazinda (AL, top 5)
     summary['by_transition_al'] = {}
@@ -1365,8 +1357,7 @@ def _print_backtest_summary(summary, N, n_scanned, date_str, timeframe='daily'):
     print(f"\n{'═' * w}")
     print(f"  REGIME TRANSITION BACKTEST ({tf_label}) — Son {N} bar")
     print(f"{'═' * w}")
-    print(f"  {n_scanned} hisse, {summary['total']} sinyal "
-          f"(AL:{summary.get('n_al', 0)}, SAT:{summary.get('n_sat', 0)})")
+    print(f"  {n_scanned} hisse, {summary['total']} AL sinyal")
 
     # Genel
     print(f"\n  GENEL")
@@ -1381,24 +1372,20 @@ def _print_backtest_summary(summary, N, n_scanned, date_str, timeframe='daily'):
         else:
             print(f"  {label:<10} {n:>6}    —       —       —")
 
-    # Yon bazinda
-    by_dir = summary.get('by_dir', {})
-    if by_dir:
-        k1_label = _rk_label(ret_keys[0])
-        k2_label = _rk_label(ret_keys[1]) if len(ret_keys) > 1 else ''
-        print(f"\n  YON BAZINDA")
-        print(f"  {'Yon':<6} {'N':>5} {k1_label+' WR%':>8} {k1_label+' Ort%':>9} {k2_label+' WR%':>9} {k2_label+' Ort%':>10}")
-        print(f"  {'─' * 55}")
-        for d_name in ['AL', 'SAT']:
-            d = by_dir.get(d_name, {})
-            total = d.get('total', 0)
-            s1 = d.get(ret_keys[0], {})
-            s2 = d.get(ret_keys[1], {}) if len(ret_keys) > 1 else {}
-            if total > 0:
-                warn = '  ** ZAYIF' if d_name == 'SAT' and s1.get('wr', 0) < 50 else ''
-                print(f"  {d_name:<6} {total:>5} "
-                      f"{s1.get('wr', 0):>7.1f}% {s1.get('avg', 0):>+8.2f} "
-                      f"{s2.get('wr', 0):>8.1f}% {s2.get('avg', 0):>+9.2f}{warn}")
+    # AL pencere bazinda
+    al_stats = summary.get('al_stats', {})
+    if al_stats:
+        print(f"\n  AL PENCERE BAZINDA")
+        print(f"  {'Pencere':<10} {'N':>6} {'WR%':>7} {'Ort%':>8}")
+        print(f"  {'─' * 35}")
+        for rkey in ret_keys:
+            s = al_stats.get(rkey, {})
+            n = s.get('n', 0)
+            label = _rk_label(rkey)
+            if n > 0:
+                print(f"  {label:<10} {n:>6} {s['wr']:>6.1f}% {s['avg']:>+7.2f}")
+            else:
+                print(f"  {label:<10} {n:>6}    —       —")
 
     # Gecis tipi (AL, top entries)
     first_label = _rk_label(first_key)
@@ -1466,6 +1453,35 @@ def _save_backtest_csv(signals, date_str, output_dir, timeframe='daily'):
 
 
 # =============================================================================
+# TELEGRAM
+# =============================================================================
+
+def _format_telegram(results, n_scanned, date_str, tf_label='', html_url=None):
+    """Telegram HTML mesaji olustur."""
+    tf_tag = f" ({tf_label.strip()})" if tf_label.strip() else ''
+    lines = []
+    if html_url:
+        lines.append(f'🔗 <a href="{html_url}">Detayli Rapor</a>\n')
+    lines.append(f"📊 <b>NOX Regime Transition{tf_tag}</b> — {date_str}\n")
+    lines.append(f"✅ {len(results)} AL aktif | {n_scanned} hisse tarandi\n")
+
+    # Gecis tipi dagilimi
+    trans_counts = Counter(s.transition for s in results)
+    top_trans = trans_counts.most_common(5)
+    if top_trans:
+        parts = [f"{t}: {c}" for t, c in top_trans]
+        lines.append(f"⭐ {' | '.join(parts)}\n")
+
+    # Top 10 ticker
+    top = results[:10]
+    if top:
+        names = [f"{s.ticker}" for s in top]
+        lines.append(f"📋 Top 10: {', '.join(names)}")
+
+    return '\n'.join(lines)
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -1481,6 +1497,8 @@ def main():
     parser.add_argument('--output', default='output', help='Cikti dizini')
     parser.add_argument('--backtest', type=int, metavar='N',
                         help='Backtest: son N bar icin forward return hesapla')
+    parser.add_argument('--notify', action='store_true',
+                        help='Telegram + GitHub Pages bildirim')
     args = parser.parse_args()
 
     timeframe = args.timeframe
@@ -1561,10 +1579,22 @@ def main():
             _save_csv(results, date_str, args.output, timeframe=timeframe)
 
         # ── 8. HTML ──────────────────────────────────────────────────────────
+        html_url = None
         if args.html:
             html = _generate_html(results, n_scanned, date_str, regime_dist, timeframe=timeframe)
             html_path = _save_html(html, date_str, args.output, timeframe=timeframe)
-            subprocess.Popen(['open', html_path])
+            # GitHub Pages push
+            tf_suffix = f"_{timeframe}" if timeframe != 'daily' else ''
+            gh_filename = f"regime_transition{tf_suffix}.html"
+            html_url = push_html_to_github(html, gh_filename, date_str)
+            if not args.notify:
+                subprocess.Popen(['open', html_path])
+
+        # ── 9. Telegram ────────────────────────────────────────────────────
+        if args.notify:
+            msg = _format_telegram(results, n_scanned, date_str, tf_label,
+                                   html_url=html_url)
+            send_telegram(msg)
 
     print(f"\n  Toplam sure: {time.time() - t0:.1f}s")
     print(f"  NOX Regime Transition ({tf_label}) tamamlandi.\n")

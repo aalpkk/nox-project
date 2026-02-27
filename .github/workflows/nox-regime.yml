@@ -1,0 +1,88 @@
+name: NOX Regime Transition Screener
+on:
+  schedule:
+    - cron: '30 15 * * 1-5'   # Pzt-Cum 15:30 UTC = 18:30 TR
+  workflow_dispatch:
+
+jobs:
+  regime-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_regime_transition.py --csv --html --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: regime-daily-${{ github.run_number }}
+          path: |
+            output/regime_transition_*.csv
+            output/regime_transition_*.html
+
+  regime-weekly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Check if Friday
+        id: check_day
+        run: |
+          if [ "$(date -u +%u)" == "5" ]; then
+            echo "is_friday=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check_day.outputs.is_friday == 'true' || github.event_name == 'workflow_dispatch'
+        run: python run_regime_transition.py --tf weekly --csv --html --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+      - uses: actions/upload-artifact@v4
+        if: steps.check_day.outputs.is_friday == 'true' || github.event_name == 'workflow_dispatch'
+        with:
+          name: regime-weekly-${{ github.run_number }}
+          path: |
+            output/regime_transition_weekly_*.csv
+            output/regime_transition_weekly_*.html
+
+  regime-monthly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Check last Friday of month
+        id: check_month
+        run: |
+          DOW=$(date -u +%u)
+          THIS_MONTH=$(date -u +%m)
+          NEXT_FRI_MONTH=$(date -u -d "next friday" +%m)
+          if [ "$DOW" == "5" ] && [ "$NEXT_FRI_MONTH" != "$THIS_MONTH" ]; then
+            echo "is_last_friday=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check_month.outputs.is_last_friday == 'true' || github.event_name == 'workflow_dispatch'
+        run: python run_regime_transition.py --tf monthly --csv --html --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+      - uses: actions/upload-artifact@v4
+        if: steps.check_month.outputs.is_last_friday == 'true' || github.event_name == 'workflow_dispatch'
+        with:
+          name: regime-monthly-${{ github.run_number }}
+          path: |
+            output/regime_transition_monthly_*.csv
+            output/regime_transition_monthly_*.html
