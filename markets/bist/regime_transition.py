@@ -96,12 +96,13 @@ RT_CFG_WEEKLY = {
 }
 
 RT_CFG_MONTHLY = {
+    # Sweep sonucu: ST1.5+OBV4/2+ADXs2 (2A WR 60.5%, 3A 60.7%, 6A 65.4%)
     'ema_fast': 10, 'ema_slow': 21,
-    'st_period': 8, 'st_mult': 2.0,
+    'st_period': 8, 'st_mult': 1.5,
     'weekly_ema_len': 10,
     'cmf_period': 10, 'rvol_period': 10,
-    'obv_ema_len': 6, 'obv_slope_len': 3,
-    'adx_len': 14, 'adx_slope_len': 3,
+    'obv_ema_len': 4, 'obv_slope_len': 2,
+    'adx_len': 14, 'adx_slope_len': 2,
     'atr_len': 14, 'atr_sma_len': 10,
     'atr_expand_mult': 1.05, 'di_spread_thresh': 5,
     'exit_ema_len': 10, 'exit_close_below_bars': 1, 'exit_adx_slope_bars': 2,
