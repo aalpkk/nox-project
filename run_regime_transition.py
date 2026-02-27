@@ -138,6 +138,73 @@ _TF_LABELS = {'daily': 'Gunluk', 'weekly': 'Haftalik', 'monthly': 'Aylik'}
 _TF_DEFAULT_PERIOD = {'daily': '2y', 'weekly': '5y', 'monthly': '10y'}
 _TF_MIN_BARS = {'daily': 100, 'weekly': 50, 'monthly': 24}
 
+# Gunluk pullback esikleri
+_PB_EMA_DIST_PCT = 3.0   # EMA21'e %3'ten yakin = pullback
+_PB_RSI_MAX = 55          # RSI(14) <= 55 = asiri alimda degil
+
+
+def _compute_weekly_al_with_daily_pb(weekly_dfs, monthly_dfs, daily_dfs, cfg=None):
+    """Haftalik rejim taramasi yapip AL aktif ticker'lari bul,
+    ardindan gunluk veride EMA21 pullback kontrolu yap.
+    Returns: {ticker: {'weekly_al': True, 'pb': bool, 'ema_dist': float, 'rsi': float,
+                        'weekly_transition': str, 'weekly_regime': str}}
+    """
+    from markets.bist.regime_transition import TIMEFRAME_CONFIGS
+    w_cfg = cfg or TIMEFRAME_CONFIGS.get('weekly', RT_CFG)
+    min_bars = _TF_MIN_BARS['weekly']
+    result = {}
+
+    for ticker, wdf in weekly_dfs.items():
+        if len(wdf) < min_bars:
+            continue
+        try:
+            htf_df = monthly_dfs.get(ticker) if monthly_dfs else None
+            out = scan_regime_transition(wdf, weekly_df=htf_df, cfg=w_cfg)
+            trade_state = compute_trade_state(out['regime'], out['close'], out['ema21'])
+            last = len(wdf) - 1
+            if not trade_state['in_trade'].iloc[last]:
+                continue
+
+            # Haftalik AL aktif — gecis bilgisi
+            trade_start_idx = int(trade_state['trade_start_idx'].iloc[last])
+            prev_r = int(out['regime'].iloc[trade_start_idx - 1]) if trade_start_idx > 0 else 0
+            curr_r = int(out['regime'].iloc[trade_start_idx])
+            transition = f"{REGIME_NAMES.get(prev_r, '?')}→{REGIME_NAMES.get(curr_r, '?')}"
+            regime_name = REGIME_NAMES.get(int(out['regime'].iloc[last]), '?')
+
+            # Gunluk pullback kontrolu
+            ddf = daily_dfs.get(ticker)
+            pb = False
+            ema_dist = None
+            rsi_val = None
+            if ddf is not None and len(ddf) >= 30:
+                close = ddf['close']
+                ema21 = close.ewm(span=21, adjust=False).mean()
+                last_close = float(close.iloc[-1])
+                last_ema = float(ema21.iloc[-1])
+                if last_ema > 0:
+                    ema_dist = round((last_close - last_ema) / last_ema * 100, 1)
+                    delta = close.diff()
+                    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+                    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    rsi = 100 - 100 / (1 + rs)
+                    rsi_val = round(float(rsi.iloc[-1]), 1) if pd.notna(rsi.iloc[-1]) else None
+                    pb = abs(ema_dist) <= _PB_EMA_DIST_PCT and (rsi_val or 50) <= _PB_RSI_MAX
+
+            result[ticker] = {
+                'weekly_al': True,
+                'pb': pb,
+                'ema_dist': ema_dist,
+                'rsi': rsi_val,
+                'weekly_transition': transition,
+                'weekly_regime': regime_name,
+            }
+        except Exception:
+            continue
+
+    return result
+
 
 # =============================================================================
 # TARAMA
@@ -736,7 +803,7 @@ def _build_trade_guide_extra(timeframe):
 </details>"""
 
 
-def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily'):
+def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily', weekly_al_pb=None):
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
     tf_label = _TF_LABELS.get(timeframe, 'Gunluk')
 
@@ -772,6 +839,18 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily')
             'rvol': round(s.rvol, 2),
             'di_spread': round(s.di_spread, 1),
         })
+        # Haftalik AL + gunluk pullback bilgisi (sadece gunluk tarama icin)
+        if weekly_al_pb and s.ticker in weekly_al_pb:
+            info = weekly_al_pb[s.ticker]
+            rows_data[-1]['weekly_al'] = True
+            rows_data[-1]['weekly_pb'] = info['pb']
+            rows_data[-1]['ema_dist'] = info['ema_dist']
+            rows_data[-1]['daily_rsi'] = info['rsi']
+            rows_data[-1]['w_transition'] = info['weekly_transition']
+            rows_data[-1]['w_regime'] = info['weekly_regime']
+        else:
+            rows_data[-1]['weekly_al'] = False
+            rows_data[-1]['weekly_pb'] = False
 
     data = {
         'rows': _sanitize(rows_data),
@@ -889,6 +968,15 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily')
 .window-BEKLE {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
 .window-2DALGA {{ background: rgba(34,211,238,0.12); color: var(--nox-cyan); }}
 .window-GEC {{ background: rgba(113,113,122,0.12); color: var(--text-muted); }}
+
+/* WEEKLY AL + PULLBACK BADGES */
+.wal-badge {{
+  display: inline-block; padding: 1px 6px; border-radius: var(--radius-sm);
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+  letter-spacing: 0.02em; margin-left: 4px; cursor: help;
+}}
+.wal-pb {{ background: rgba(74,222,128,0.2); color: var(--nox-green); }}
+.wal-al {{ background: rgba(34,211,238,0.15); color: var(--nox-cyan); }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -915,6 +1003,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily')
   <div><label>OE≤</label><input type="number" id="fOE" value="" step="1" min="0" max="4" placeholder="max" oninput="render()"></div>
   <div><label>Exit≤</label><input type="number" id="fExit" value="" step="1" min="0" max="3" placeholder="max" oninput="render()"></div>
   <div><label>ADX≥</label><input type="number" id="fADX" value="0" step="5" min="0" oninput="render()"></div>
+  {'<div><label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fWPB" onchange="render()"> H+PB</label></div><div><label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fWAL" onchange="render()"> H-AL</label></div>' if timeframe == 'daily' else ''}
   <div><button class="nox-btn" onclick="resetF()">Sifirla</button></div>
 </div>
 
@@ -1166,6 +1255,10 @@ function resetF(){{
   document.getElementById('fOE').value='';
   document.getElementById('fExit').value='';
   document.getElementById('fADX').value='0';
+  const wpbEl=document.getElementById('fWPB');
+  if(wpbEl) wpbEl.checked=false;
+  const walEl=document.getElementById('fWAL');
+  if(walEl) walEl.checked=false;
   render();
 }}
 
@@ -1216,6 +1309,10 @@ function applyFilters(rows){{
     if(!isNaN(fOE)&&r.oe_score>fOE) return false;
     if(!isNaN(fExit)&&r.exit_stage>fExit) return false;
     if(fADX>0&&r.adx<fADX) return false;
+    const wpbEl=document.getElementById('fWPB');
+    if(wpbEl&&wpbEl.checked&&!r.weekly_pb) return false;
+    const walEl=document.getElementById('fWAL');
+    if(walEl&&walEl.checked&&!r.weekly_al) return false;
     return true;
   }});
 }}
@@ -1295,7 +1392,7 @@ function mkTable(rows, label, cssClass){{
     const dateStr=r.transition_date||'—';
     const daysStr=r.days_since+'g';
     h+=`<tr>
-    <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
+    <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a>${{r.weekly_pb?'<span class="wal-badge wal-pb" title="Haftalik AL + Gunluk Pullback (EMA%'+r.ema_dist+', RSI '+r.daily_rsi+') — '+r.w_transition+'">H+PB</span>':(r.weekly_al?'<span class="wal-badge wal-al" title="Haftalik AL aktif — '+r.w_transition+' ('+r.w_regime+')">H-AL</span>':'')}}</td>
     <td>${{mkRegimeBadge(r.regime, r.regime_name)}}</td>
     <td>${{mkTransBadge(r.transition)}}</td>
     <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{dateStr}}</td>
@@ -1906,10 +2003,20 @@ def main():
         if args.csv:
             _save_csv(results, date_str, args.output, timeframe=timeframe)
 
-        # ── 8. HTML ──────────────────────────────────────────────────────────
+        # ── 8. Haftalik AL + gunluk pullback (sadece daily tarama icin) ───
+        weekly_al_pb = None
+        if timeframe == 'daily' and results:
+            weekly_al_pb = _compute_weekly_al_with_daily_pb(
+                higher_tf_dfs, None, daily_dfs)
+            n_wal = len(weekly_al_pb)
+            n_pb = sum(1 for v in weekly_al_pb.values() if v['pb'])
+            print(f"  Haftalik AL: {n_wal} hisse | H+PB: {n_pb} hisse")
+
+        # ── 9. HTML ──────────────────────────────────────────────────────────
         html_url = None
         if args.html:
-            html = _generate_html(results, n_scanned, date_str, regime_dist, timeframe=timeframe)
+            html = _generate_html(results, n_scanned, date_str, regime_dist,
+                                  timeframe=timeframe, weekly_al_pb=weekly_al_pb)
             html_path = _save_html(html, date_str, args.output, timeframe=timeframe)
             # GitHub Pages push
             tf_suffix = f"_{timeframe}" if timeframe != 'daily' else ''
