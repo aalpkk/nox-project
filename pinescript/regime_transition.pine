@@ -236,20 +236,22 @@ eff_stop = math.max(initial_stop, trailing_stop)
 // GORSEL — Arka plan rengi (ham rejime gore, trade state degil)
 // =============================================================================
 
-regime_color = regime == 0 ? color.new(color.gray, 90) :
-     regime == 1 ? color.new(color.yellow, 88) :
-     regime == 2 ? color.new(color.aqua, 85) :
-     color.new(color.green, 85)
+regime_color = regime == 0 ? color.new(#555555, 75) :
+     regime == 1 ? color.new(#9E9E9E, 70) :
+     regime == 2 ? color.new(#2196F3, 75) :
+     color.new(#FFD600, 72)
 bgcolor(regime_color, title="Regime Arka Plan")
 
 // =============================================================================
 // GORSEL — AL / SAT oklari
 // =============================================================================
 
-plotshape(is_al, style=shape.triangleup, location=location.belowbar,
-     color=color.green, size=size.small, title="AL Gecis", text="AL")
-plotshape(is_sat, style=shape.triangledown, location=location.abovebar,
-     color=color.red, size=size.small, title="SAT (EMA21)", text="SAT")
+plotshape(is_al, style=shape.labelup, location=location.belowbar,
+     color=color.new(#00C853, 0), size=size.small, title="AL Gecis",
+     text="AL", textcolor=color.white)
+plotshape(is_sat, style=shape.labeldown, location=location.abovebar,
+     color=color.new(#FF1744, 0), size=size.small, title="SAT (EMA21)",
+     text="SAT", textcolor=color.white)
 
 // =============================================================================
 // GORSEL — EMA21
