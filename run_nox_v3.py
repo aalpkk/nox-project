@@ -1326,7 +1326,10 @@ def _format_weekly_telegram(buys, sells, candidates, n_scanned, date_str, html_u
     mild = [s for s in sells if s['severity'] == 1]
     slope_only = [s for s in sells if s['severity'] == 0]
 
-    lines = [f"<b>⬡ NOX v3 Haftalik — {date_str}</b>", ""]
+    lines = [f"<b>⬡ NOX v3 Haftalik — {date_str}</b>"]
+    if html_url:
+        lines.append(f'🔗 <a href="{html_url}">Raporu Aç</a>')
+    lines.append("")
     lines.append(f"📋 {n_scanned} taranan | {len(buys)} AL / {len(sells)} SAT / {len(candidates)} ADAY")
     lines.append("")
 
@@ -1377,9 +1380,6 @@ def _format_weekly_telegram(buys, sells, candidates, n_scanned, date_str, html_u
     if mild_slope_cnt:
         lines.append(f"◆ SAT — Hafif/Slope: {mild_slope_cnt} hisse")
         lines.append("")
-
-    if html_url:
-        lines.append(f"🔗 <a href=\"{html_url}\">NOX Rapor</a>")
 
     return "\n".join(lines)
 
