@@ -411,6 +411,190 @@ def _save_csv(results, date_str, output_dir, timeframe='daily'):
 # HTML RAPOR
 # =============================================================================
 
+_TD = 'style="padding:2px 6px"'
+_TD_G = 'style="padding:2px 6px;color:var(--nox-green)"'
+_TD_R = 'style="padding:2px 6px;color:var(--nox-red)"'
+_TD_M = 'style="padding:2px 6px;color:var(--text-muted)"'
+_ROW_B = 'style="border-bottom:1px solid rgba(255,255,255,0.06)"'
+_ROW_H = 'style="border-bottom:1px solid rgba(255,255,255,0.12)"'
+
+
+def _wr_td(wr):
+    if wr >= 58:
+        return _TD_G
+    elif wr < 50:
+        return _TD_R
+    return _TD
+
+
+def _build_trade_guide_extra(timeframe):
+    """Haftalik/aylik timeframe icin ek trade rehberi HTML blogu."""
+    if timeframe == 'daily':
+        return ''
+
+    if timeframe == 'weekly':
+        return f"""
+<details class="trade-guide" style="margin-bottom:14px;padding:10px 14px;border-radius:8px;
+  background:rgba(250,204,21,0.06);border:1px solid rgba(250,204,21,0.15);
+  font-size:0.78rem;color:var(--text-secondary);line-height:1.6">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-yellow);font-size:0.82rem">
+  Haftalik Trade Rehberi</summary>
+<div style="margin-top:8px">
+<b style="color:var(--nox-green)">Nasil Trade Edilir? (Haftalik)</b><br>
+&#8226; Haftalik rejim gecisi = <b>orta vadeli trend degisimi</b> (haftalar-aylar)<br>
+&#8226; Giris: Haftalik mum kapanisinda rejim yukselince, gunluk grafige gecip <b>pullback/destek</b> noktasindan gir<br>
+&#8226; Pozisyon buyuklugu: Gunluge gore <b>2-3x daha buyuk</b> pozisyon, cunku stop daha genis<br>
+&#8226; Tutma suresi: <b>3-10 hafta</b> tipik | Exit stage 2+ olunca daralt<br>
+&#8226; Stop: Haftalik swing low - 0.5*ATR (gunluge gore daha genis, %5-10 arasi normal)<br>
+&#8226; Cikis: Haftalik kapanis EMA21 altinda veya Exit Stage >=2<br>
+<br>
+<b style="color:var(--nox-cyan)">Backtest Sonuclari (80 hafta, 531 hisse, N=3848 AL)</b>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Pencere Bazinda</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>3 Hafta</b></td>
+  <td {_TD}>WR %50.3</td>
+  <td {_TD}>Ort +2.23%</td>
+  <td {_TD_M}>N=3699</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>5 Hafta</b></td>
+  <td {_TD}>WR %50.4</td>
+  <td {_TD}>Ort +6.64%</td>
+  <td {_TD_M}>N=3572</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>10 Hafta</b></td>
+  <td {_TD}>WR %50.6</td>
+  <td {_TD}>Ort +7.27%</td>
+  <td {_TD_M}>N=3240</td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis Tipi (3H)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;FULL</b></td>
+  <td {_TD_G}>WR %51.7</td>
+  <td {_TD}>Ort +3.47%</td>
+  <td {_TD_M}>N=412</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>TREND&#8594;FULL</b></td>
+  <td {_TD}>WR %49.9</td>
+  <td {_TD}>Ort +2.43%</td>
+  <td {_TD_M}>N=1022</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;TREND</b></td>
+  <td {_TD}>WR %49.0</td>
+  <td {_TD}>Ort +2.14%</td>
+  <td {_TD_M}>N=545</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;TREND</b></td>
+  <td {_TD}>WR %49.1</td>
+  <td {_TD}>Ort +1.57%</td>
+  <td {_TD_M}>N=605</td></tr>
+</table>
+<b style="color:var(--nox-yellow)">Onemli Notlar</b><br>
+&#8226; Haftalik WR ~%50 — tek basina edge dusuk, <b>giris skoru + gecis tipi</b> ile filtrele<br>
+&#8226; Ortalama getiri pozitif (+2-7%) — kazananlar kaybedenlerden buyuk<br>
+&#8226; CHOPPY&#8594;FULL en iyi gecis tipi (WR %51.7, Ort +3.47%)<br>
+&#8226; Gunluk tarama ile birlestir: haftalik AL + gunluk pullback = en iyi kombinasyon<br>
+</div>
+</details>"""
+
+    else:  # monthly
+        return f"""
+<details class="trade-guide" style="margin-bottom:14px;padding:10px 14px;border-radius:8px;
+  background:rgba(74,222,128,0.06);border:1px solid rgba(74,222,128,0.15);
+  font-size:0.78rem;color:var(--text-secondary);line-height:1.6">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-green);font-size:0.82rem">
+  Aylik Trade Rehberi</summary>
+<div style="margin-top:8px">
+<b style="color:var(--nox-green)">Nasil Trade Edilir? (Aylik)</b><br>
+&#8226; Aylik rejim gecisi = <b>uzun vadeli yapisal trend degisimi</b> (aylar-yillar)<br>
+&#8226; Giris: Aylik mum kapanisinda rejim yukselince, haftalik grafige gecip <b>ilk pullback</b>'ten gir<br>
+&#8226; Pozisyon buyuklugu: Gunluge gore <b>daha buyuk ama daha az hisse</b>, portfoy agirlikli pozisyon<br>
+&#8226; Tutma suresi: <b>2-6 ay</b> tipik | Piramitleme ile pozisyon buyut<br>
+&#8226; Stop: Aylik swing low - 0.5*ATR (genis stop, %10-15 arasi normal)<br>
+&#8226; Cikis: Aylik kapanis EMA21 altinda veya Exit Stage >=2<br>
+<br>
+<b style="color:var(--nox-cyan)">Backtest Sonuclari (60 ay, 490 hisse, N=3236 AL)</b>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Pencere Bazinda</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>2 Ay</b></td>
+  <td {_TD_G}>WR %60.5</td>
+  <td {_TD}>Ort +14.63%</td>
+  <td {_TD_M}>N=3069</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>3 Ay</b></td>
+  <td {_TD_G}>WR %60.7</td>
+  <td {_TD}>Ort +19.85%</td>
+  <td {_TD_M}>N=3006</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>6 Ay</b></td>
+  <td {_TD_G}>WR %65.4</td>
+  <td {_TD}>Ort +38.35%</td>
+  <td {_TD_M}>N=2861</td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis Tipi (2A)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;FULL</b></td>
+  <td {_TD_G}>WR %63.6</td>
+  <td {_TD}>Ort +15.89%</td>
+  <td {_TD_M}>N=832</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;TREND</b></td>
+  <td {_TD_G}>WR %62.0</td>
+  <td {_TD}>Ort +17.02%</td>
+  <td {_TD_M}>N=376</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;TREND</b></td>
+  <td {_TD_G}>WR %60.3</td>
+  <td {_TD}>Ort +13.24%</td>
+  <td {_TD_M}>N=300</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>TREND&#8594;FULL</b></td>
+  <td {_TD_G}>WR %58.8</td>
+  <td {_TD}>Ort +14.53%</td>
+  <td {_TD_M}>N=880</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;GRI</b></td>
+  <td {_TD_G}>WR %58.9</td>
+  <td {_TD}>Ort +12.84%</td>
+  <td {_TD_M}>N=504</td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Giris Skoru (2A)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 3</b></td>
+  <td {_TD_G}>WR %60.2</td>
+  <td {_TD}>Ort +14.21%</td>
+  <td {_TD_M}>N=719</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 2</b></td>
+  <td {_TD_G}>WR %63.0</td>
+  <td {_TD}>Ort +15.22%</td>
+  <td {_TD_M}>N=822</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score <=1</b></td>
+  <td {_TD_G}>WR %59.3</td>
+  <td {_TD}>Ort +14.50%</td>
+  <td {_TD_M}>N=1528</td></tr>
+</table>
+<b style="color:var(--nox-green)">Onemli Notlar</b><br>
+&#8226; Aylik en guclu timeframe — <b>WR %60-65, Ort +14-38%</b><br>
+&#8226; Tum gecis tipleri karli (WR %58-64 arasi)<br>
+&#8226; CHOPPY&#8594;FULL + CHOPPY&#8594;TREND en yuksek getirili gecisler<br>
+&#8226; 6 aylik pencerede WR %65.4, Ort +38.35% — uzun tutma oduluyor<br>
+&#8226; Giris skoru aylikta daha az ayirici — tum skorlar WR %59-63 arasi<br>
+&#8226; Pozisyon yonetimi: Baslangicta %50 gir, haftalik pullback'te %50 ekle<br>
+</div>
+</details>"""
+
+
 def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily'):
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
     tf_label = _TF_LABELS.get(timeframe, 'Gunluk')
@@ -455,6 +639,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily')
         'regime_dist': regime_dist,
     }
     data_json = json.dumps(data, ensure_ascii=False)
+    trade_guide_extra = _build_trade_guide_extra(timeframe)
 
     html = f"""<!DOCTYPE html>
 <html lang="tr"><head><meta charset="UTF-8">
@@ -821,6 +1006,8 @@ Bu liste <b>simdi girilebilir</b> hisseleri gosterir — trade kapanmis hisseler
 </table>
 </div>
 </details>
+
+{trade_guide_extra}
 
 <div id="dist-bar"></div>
 <div id="content"></div>
