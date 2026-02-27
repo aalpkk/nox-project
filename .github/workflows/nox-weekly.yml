@@ -1,7 +1,7 @@
 name: NOX v3 Weekly Screener
 on:
   schedule:
-    - cron: '30 15 * * 5'  # Cuma 15:30 UTC = 18:30 TR (BIST kapanis +30dk)
+    - cron: '30 15 * * 1-5'  # Pzt-Cuma 15:30 UTC = 18:30 TR (BIST kapanis +30dk)
   workflow_dispatch:         # Manuel tetikleme
 
 jobs:
