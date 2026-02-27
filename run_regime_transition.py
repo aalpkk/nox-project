@@ -545,7 +545,7 @@ Rejim yukselince trade baslar, fiyat EMA21 altina kapanana kadar aktif kalir.<br
 Bu liste <b>simdi girilebilir</b> hisseleri gosterir — trade kapanmis hisseler listede yoktur.<br>
 <br>
 <b style="color:var(--nox-green)">AL Checklist</b><br>
-1. <b>Giris skoru 3-4/4</b> filtrele (Score4 WR %63, Score3 WR %52)<br>
+1. <b>Giris skoru 3-4/4</b> filtrele (Score4 WR %62.5, Score3 WR %52.0)<br>
 2. <b>OE skoru 0-1</b> olanları sec (overextended degil)<br>
 3. <b>Pencere: TAZE/BEKLE</b> → erken giris firsati<br>
 4. <b>Exit Stage 0</b> → cikis riski yok<br>
@@ -555,86 +555,158 @@ Bu liste <b>simdi girilebilir</b> hisseleri gosterir — trade kapanmis hisseler
 <b style="color:var(--nox-cyan)">Backtest Sonuclari (250 bar, 537 hisse, N=12051 AL)</b><br>
 <table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
 <tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
-  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Giris Skoru</td></tr>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Genel Giris Skoru (5G)</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
   <td style="padding:2px 6px"><b>Score 4</b></td>
-  <td style="padding:2px 6px;color:var(--nox-green)">WR %63</td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %62.5</td>
   <td style="padding:2px 6px">Ort +1.75%</td>
   <td style="padding:2px 6px;color:var(--text-muted)">N=595</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
   <td style="padding:2px 6px"><b>Score 3</b></td>
-  <td style="padding:2px 6px">WR %52</td>
-  <td style="padding:2px 6px">Ort +1.22%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=3180</td></tr>
+  <td style="padding:2px 6px">WR %52.0</td>
+  <td style="padding:2px 6px">Ort +1.27%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=3189</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
   <td style="padding:2px 6px"><b>Score 2</b></td>
-  <td style="padding:2px 6px">WR %51</td>
-  <td style="padding:2px 6px">Ort +1.09%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=3518</td></tr>
+  <td style="padding:2px 6px">WR %50.8</td>
+  <td style="padding:2px 6px">Ort +1.04%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=3509</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
   <td style="padding:2px 6px"><b>Score 1</b></td>
-  <td style="padding:2px 6px">WR %50</td>
+  <td style="padding:2px 6px">WR %50.4</td>
   <td style="padding:2px 6px">Ort +0.87%</td>
   <td style="padding:2px 6px;color:var(--text-muted)">N=3471</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
   <td style="padding:2px 6px"><b>Score 0</b></td>
-  <td style="padding:2px 6px;color:var(--nox-red)">WR %47</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %46.5</td>
   <td style="padding:2px 6px">Ort +0.39%</td>
   <td style="padding:2px 6px;color:var(--text-muted)">N=1110</td></tr>
+</table>
+<b style="color:var(--nox-cyan)">Gecis Tipi x Giris Skoru (5G WR)</b>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
 <tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
-  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis Tipi</td></tr>
+  <td style="padding:4px 6px;color:var(--nox-yellow);font-weight:700">CHOPPY&#8594;GRI</td>
+  <td colspan="3" style="padding:4px 6px;color:var(--text-muted)">Genel WR %52.1, Ort +1.20% (N=2587)</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>CHOPPY→GRI</b></td>
-  <td style="padding:2px 6px">WR %52</td>
-  <td style="padding:2px 6px">Ort +1.20%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=2587</td></tr>
+  <td style="padding:2px 12px">Score 4</td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %60.7</td>
+  <td style="padding:2px 6px">Ort +1.52%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=308</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>CHOPPY→TREND</b></td>
-  <td style="padding:2px 6px">WR %50</td>
-  <td style="padding:2px 6px">Ort +1.18%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=1455</td></tr>
-<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>CHOPPY→FULL</b></td>
-  <td style="padding:2px 6px">WR %50</td>
-  <td style="padding:2px 6px">Ort +0.61%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=997</td></tr>
-<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>GRI→TREND</b></td>
-  <td style="padding:2px 6px">WR %51</td>
-  <td style="padding:2px 6px">Ort +1.06%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=1903</td></tr>
-<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>GRI→FULL</b></td>
-  <td style="padding:2px 6px">WR %48</td>
-  <td style="padding:2px 6px">Ort +0.79%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=919</td></tr>
+  <td style="padding:2px 12px">Score 3</td>
+  <td style="padding:2px 6px">WR %51.1</td>
+  <td style="padding:2px 6px">Ort +1.08%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=1662</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
-  <td style="padding:2px 6px"><b>TREND→FULL</b></td>
-  <td style="padding:2px 6px">WR %52</td>
-  <td style="padding:2px 6px">Ort +1.00%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=4013</td></tr>
+  <td style="padding:2px 12px">Score 2</td>
+  <td style="padding:2px 6px">WR %50.2</td>
+  <td style="padding:2px 6px">Ort +1.26%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=600</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
-  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Filtreli Kombinasyonlar</td></tr>
+  <td style="padding:4px 6px;color:var(--nox-cyan);font-weight:700">CHOPPY&#8594;TREND</td>
+  <td colspan="3" style="padding:4px 6px;color:var(--text-muted)">Genel WR %50.4, Ort +1.18% (N=1455)</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>Score4 + Exit0</b></td>
-  <td style="padding:2px 6px;color:var(--nox-green)">WR %65</td>
-  <td style="padding:2px 6px">Ort +2.18%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=347</td></tr>
+  <td style="padding:2px 12px">Score 4</td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %71.0</td>
+  <td style="padding:2px 6px">Ort +2.65%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=93</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>Score>=3 + Exit0</b></td>
-  <td style="padding:2px 6px;color:var(--nox-green)">WR %56</td>
-  <td style="padding:2px 6px">Ort +1.73%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=1754</td></tr>
+  <td style="padding:2px 12px">Score 3</td>
+  <td style="padding:2px 6px">WR %53.6</td>
+  <td style="padding:2px 6px">Ort +1.81%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=603</td></tr>
 <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-  <td style="padding:2px 6px"><b>Score>=3 + Exit<=1</b></td>
-  <td style="padding:2px 6px">WR %54</td>
-  <td style="padding:2px 6px">Ort +1.30%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=3775</td></tr>
-<tr>
-  <td style="padding:2px 6px"><b>Score>=2 + Exit0</b></td>
-  <td style="padding:2px 6px">WR %54</td>
-  <td style="padding:2px 6px">Ort +1.45%</td>
-  <td style="padding:2px 6px;color:var(--text-muted)">N=4283</td></tr>
+  <td style="padding:2px 12px">Score 2</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %46.0</td>
+  <td style="padding:2px 6px">Ort +0.53%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=652</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 12px">Score 1</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %41.1</td>
+  <td style="padding:2px 6px">Ort +0.28%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=107</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td style="padding:4px 6px;color:var(--nox-green);font-weight:700">CHOPPY&#8594;FULL</td>
+  <td colspan="3" style="padding:4px 6px;color:var(--text-muted)">Genel WR %49.8, Ort +0.61% (N=997)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 2</td>
+  <td style="padding:2px 6px">WR %55.7</td>
+  <td style="padding:2px 6px">Ort +0.82%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=203</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 1</td>
+  <td style="padding:2px 6px">WR %50.7</td>
+  <td style="padding:2px 6px">Ort +0.76%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=458</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 12px">Score 0</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %44.1</td>
+  <td style="padding:2px 6px">Ort +0.06%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=329</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td style="padding:4px 6px;color:var(--nox-cyan);font-weight:700">GRI&#8594;TREND</td>
+  <td colspan="3" style="padding:4px 6px;color:var(--text-muted)">Genel WR %51.3, Ort +1.06% (N=1903)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 4</td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %61.3</td>
+  <td style="padding:2px 6px">Ort +1.69%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=194</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 3</td>
+  <td style="padding:2px 6px">WR %50.2</td>
+  <td style="padding:2px 6px">Ort +1.03%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=836</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 12px">Score 2</td>
+  <td style="padding:2px 6px">WR %50.6</td>
+  <td style="padding:2px 6px">Ort +0.99%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=812</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td style="padding:4px 6px;color:var(--nox-green);font-weight:700">GRI&#8594;FULL</td>
+  <td colspan="3" style="padding:4px 6px;color:var(--text-muted)">Genel WR %48.1, Ort +0.79% (N=919)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 3</td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %68.2</td>
+  <td style="padding:2px 6px">Ort +2.22%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=22</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 2</td>
+  <td style="padding:2px 6px">WR %53.3</td>
+  <td style="padding:2px 6px">Ort +1.20%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=244</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 1</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %45.8</td>
+  <td style="padding:2px 6px">Ort +0.33%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=456</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 12px">Score 0</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %44.7</td>
+  <td style="padding:2px 6px">Ort +1.20%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=197</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+  <td style="padding:4px 6px;color:var(--nox-green);font-weight:700">TREND&#8594;FULL</td>
+  <td colspan="3" style="padding:4px 6px;color:var(--text-muted)">Genel WR %51.9, Ort +1.00% (N=4013)</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 3</td>
+  <td style="padding:2px 6px;color:var(--nox-green)">WR %71.2</td>
+  <td style="padding:2px 6px">Ort +2.97%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=59</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 2</td>
+  <td style="padding:2px 6px">WR %52.9</td>
+  <td style="padding:2px 6px">Ort +1.28%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=998</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:2px 12px">Score 1</td>
+  <td style="padding:2px 6px">WR %51.8</td>
+  <td style="padding:2px 6px">Ort +1.00%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=2372</td></tr>
+<tr style="border-bottom:1px solid rgba(255,255,255,0.08)">
+  <td style="padding:2px 12px">Score 0</td>
+  <td style="padding:2px 6px;color:var(--nox-red)">WR %48.5</td>
+  <td style="padding:2px 6px">Ort +0.31%</td>
+  <td style="padding:2px 6px;color:var(--text-muted)">N=584</td></tr>
 </table>
 <br>
 <b style="color:var(--nox-red)">OE (Overextended) Uyarisi</b><br>
