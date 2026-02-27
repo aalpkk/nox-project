@@ -943,36 +943,41 @@ def main():
     if args.monthly:
         print(f"\n  Aylik resample yapiliyor...")
         monthly_data = {}
+        today = pd.Timestamp.now().normalize()
+        # Sonraki is gunu: Cuma ise +3, Ct +2, Pz +1, diger +1
+        wd = today.weekday()
+        next_bday = today + pd.Timedelta(days=3 if wd == 4 else (2 if wd == 5 else (1 if wd == 6 else 1)))
+        month_closed = next_bday.month != today.month  # sonraki is gunu farkli ayda
         for ticker, df in all_data.items():
             mdf = resample_monthly(df)
             if len(mdf) < 12:
                 continue
-            # Kapanmamis ayi cikar
-            if len(mdf) >= 2:
+            # Kapanmamis ayi cikar (ayin son is gunuyse ay tamamlanmis)
+            if len(mdf) >= 2 and not month_closed:
                 last_date = mdf.index[-1]
-                today = pd.Timestamp.now().normalize()
                 if last_date.month == today.month and last_date.year == today.year:
                     mdf = mdf.iloc[:-1]
             if len(mdf) >= 12:
                 monthly_data[ticker] = mdf
-        print(f"  {len(monthly_data)} hisse ayliga donusturuldu (kapanmis mumlar).")
+        print(f"  {len(monthly_data)} hisse ayliga donusturuldu (kapanmis mumlar, month_closed={month_closed}).")
         stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in monthly_data.items()}
     elif args.weekly:
         print(f"\n  Haftalik resample yapiliyor...")
         weekly_data = {}
+        today = pd.Timestamp.now().normalize()
+        week_closed = today.weekday() >= 4  # Cuma kapanisi sonrasi hafta tamamlanmis
         for ticker, df in all_data.items():
             wdf = resample_weekly(df)
             if len(wdf) < 60:
                 continue
-            # Kapanmamis haftayi cikar
-            if len(wdf) >= 2:
+            # Kapanmamis haftayi cikar (Cuma veya sonrasiysa hafta tamamlanmis)
+            if len(wdf) >= 2 and not week_closed:
                 last_date = wdf.index[-1]
-                today = pd.Timestamp.now().normalize()
-                if (last_date - today).days >= 0 or last_date.isocalendar()[1] == today.isocalendar()[1]:
+                if last_date.isocalendar()[1] == today.isocalendar()[1]:
                     wdf = wdf.iloc[:-1]
             if len(wdf) >= 60:
                 weekly_data[ticker] = wdf
-        print(f"  {len(weekly_data)} hisse haftaliga donusturuldu (kapanmis mumlar).")
+        print(f"  {len(weekly_data)} hisse haftaliga donusturuldu (kapanmis mumlar, week_closed={week_closed}).")
         stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in weekly_data.items()}
     else:
         stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in all_data.items()}
