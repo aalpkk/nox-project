@@ -1,7 +1,7 @@
 name: NOX Regime Transition Screener
 on:
   schedule:
-    - cron: '30 15 * * 1-5'   # Pzt-Cum 15:30 UTC = 18:30 TR
+    - cron: '10 15 * * 1-5'   # Pzt-Cum 15:10 UTC = 18:10 TR
   workflow_dispatch:
 
 jobs:
