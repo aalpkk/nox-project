@@ -34,7 +34,7 @@ from markets.bist.divergence import (
     scan_divergences, DIV_CFG, _find_swings,
     _calc_atr, _calc_rsi, _calc_macd, _calc_obv, _calc_mfi, _calc_adx,
 )
-from core.indicators import ema, resample_weekly
+from core.indicators import ema, resample_weekly, resample_monthly
 
 
 # =============================================================================
@@ -96,7 +96,7 @@ SECTION_TITLES = {
 # TARAMA
 # =============================================================================
 
-def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10):
+def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10, min_bars=60):
     """Tum hisselerde divergence taramasi."""
     all_results = {
         'rsi': [], 'macd': [], 'obv': [], 'mfi': [], 'adx': [],
@@ -106,7 +106,7 @@ def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10):
     last_date = None
 
     for ticker, df in stock_dfs.items():
-        if len(df) < 60:
+        if len(df) < min_bars:
             continue
         if _is_halted(df):
             continue
@@ -560,6 +560,8 @@ def main():
                         help='Son kac bar taranacak (default: 10)')
     parser.add_argument('--weekly', action='store_true',
                         help='Haftalik veri ile tara (daily resample)')
+    parser.add_argument('--monthly', action='store_true',
+                        help='Aylik veri ile tara (daily resample)')
     args = parser.parse_args()
 
     # ── 1. Ticker listesi ────────────────────────────────────────────────────
@@ -589,7 +591,24 @@ def main():
         sys.exit(1)
 
     # ── 3. Lowercase donusum + halt filtresi ─────────────────────────────────
-    if args.weekly:
+    if args.monthly:
+        print(f"\n  Aylik resample yapiliyor...")
+        monthly_data = {}
+        for ticker, df in all_data.items():
+            mdf = resample_monthly(df)
+            if len(mdf) < 12:
+                continue
+            # Kapanmamis ayi cikar
+            if len(mdf) >= 2:
+                last_date = mdf.index[-1]
+                today = pd.Timestamp.now().normalize()
+                if last_date.month == today.month and last_date.year == today.year:
+                    mdf = mdf.iloc[:-1]
+            if len(mdf) >= 12:
+                monthly_data[ticker] = mdf
+        print(f"  {len(monthly_data)} hisse ayliga donusturuldu (kapanmis mumlar).")
+        stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in monthly_data.items()}
+    elif args.weekly:
         print(f"\n  Haftalik resample yapiliyor...")
         weekly_data = {}
         for ticker, df in all_data.items():
@@ -612,14 +631,16 @@ def main():
     # ── 4. Tarama ────────────────────────────────────────────────────────────
     print(f"\n  Divergence taramasi v2 (scan_bars={args.scan_bars}, swing_order={DIV_CFG['swing_order']})...")
     t1 = time.time()
+    min_bars = 18 if args.monthly else 60
     all_results, n_scanned, date_str = _scan_all(
-        stock_dfs, debug_ticker=debug_ticker, scan_bars=args.scan_bars
+        stock_dfs, debug_ticker=debug_ticker, scan_bars=args.scan_bars,
+        min_bars=min_bars
     )
     total_signals = sum(len(v) for v in all_results.values())
     print(f"  {n_scanned} hisse tarandi, {total_signals} sinyal ({time.time() - t1:.1f}s)")
 
     # ── 5. Rapor ─────────────────────────────────────────────────────────────
-    tf_label = ' (HAFTALIK)' if args.weekly else ''
+    tf_label = ' (AYLIK)' if args.monthly else (' (HAFTALIK)' if args.weekly else '')
     _print_results(all_results, n_scanned, date_str,
                    type_filter=args.type_filter, top_n=args.top,
                    tf_label=tf_label)

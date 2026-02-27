@@ -310,6 +310,14 @@ def resample_weekly(df):
     return wdf
 
 
+def resample_monthly(df):
+    mdf = df.resample('ME').agg({
+        'Open': 'first', 'High': 'max', 'Low': 'min',
+        'Close': 'last', 'Volume': 'sum'
+    }).dropna()
+    return mdf
+
+
 # ── USD Çevirme ──
 
 def to_usd(df, usd_df):
