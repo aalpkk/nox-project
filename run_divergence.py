@@ -21,6 +21,7 @@ Kullanim:
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -35,7 +36,7 @@ from markets.bist.divergence import (
     _calc_atr, _calc_rsi, _calc_macd, _calc_obv, _calc_mfi, _calc_adx,
 )
 from core.indicators import ema, resample_weekly, resample_monthly
-from core.reports import send_telegram
+from core.reports import send_telegram, push_html_to_github, _NOX_CSS, _sanitize
 
 
 # =============================================================================
@@ -544,13 +545,277 @@ def _save_csv(all_results, date_str, output_dir):
 
 
 # =============================================================================
+# HTML RAPOR
+# =============================================================================
+
+# Tab tanimlamalari: key -> (label, renk)
+_DIV_TABS = {
+    'triple': ('UCLU', 'var(--nox-purple)'),
+    'rsi':    ('RSI',  'var(--nox-cyan)'),
+    'macd':   ('MACD', 'var(--nox-orange)'),
+    'obv':    ('OBV',  'var(--nox-green)'),
+    'mfi':    ('MFI',  'var(--nox-blue)'),
+    'adx':    ('ADX',  'var(--nox-yellow)'),
+    'pv':     ('FH',   'var(--nox-red)'),
+}
+_TAB_ORDER = ['triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv']
+
+
+def _flatten_results(all_results):
+    """all_results dict -> flat list of dicts for JSON embed."""
+    rows = []
+    for sig_type, items in all_results.items():
+        for item in items:
+            sig = item['signal']
+            d = sig.details
+            sig_date = item['signal_date']
+
+            row = {
+                'ticker': item['ticker'],
+                'close': round(float(item['close']), 2),
+                'div_type': sig.div_type,
+                'direction': sig.direction,
+                'quality': sig.quality,
+                'category': sig_type,
+                'signal_date': sig_date.strftime('%Y-%m-%d') if hasattr(sig_date, 'strftime') else str(sig_date),
+            }
+
+            # Tip-spesifik detaylar
+            if 'prev_rsi' in d:
+                row['rsi_prev'] = round(float(d['prev_rsi']), 1) if d.get('prev_rsi') is not None else None
+                row['rsi_curr'] = round(float(d['curr_rsi']), 1) if d.get('curr_rsi') is not None else None
+            if 'prev_hist' in d:
+                row['hist_prev'] = round(float(d['prev_hist']), 4) if d.get('prev_hist') is not None else None
+                row['hist_curr'] = round(float(d['curr_hist']), 4) if d.get('curr_hist') is not None else None
+            if 'prev_obv' in d:
+                row['obv_prev'] = float(d['prev_obv']) if d.get('prev_obv') is not None else None
+                row['obv_curr'] = float(d['curr_obv']) if d.get('curr_obv') is not None else None
+            if 'prev_mfi' in d:
+                row['mfi_prev'] = round(float(d['prev_mfi']), 1) if d.get('prev_mfi') is not None else None
+                row['mfi_curr'] = round(float(d['curr_mfi']), 1) if d.get('curr_mfi') is not None else None
+            if 'adx_slope' in d:
+                row['adx_value'] = round(float(d['adx_value']), 1) if d.get('adx_value') is not None else None
+                row['adx_slope'] = round(float(d['adx_slope']), 2) if d.get('adx_slope') is not None else None
+            if 'vol_ratio' in d:
+                row['vol_ratio'] = round(float(d['vol_ratio']), 1) if d.get('vol_ratio') is not None else None
+            if 'range_atr' in d:
+                row['range_atr'] = round(float(d['range_atr']), 3) if d.get('range_atr') is not None else None
+            if 'sub_type' in d:
+                row['sub_type'] = d.get('sub_type')
+            if d.get('limit_tag'):
+                row['limit_tag'] = d.get('limit_tag')
+            if d.get('has_mfi'):
+                row['has_mfi'] = True
+            if 'close_slope' in d:
+                row['close_slope'] = round(float(d['close_slope']), 3) if d.get('close_slope') is not None else None
+
+            rows.append(row)
+    return rows
+
+
+def _generate_html(all_results, n_scanned, date_str, tf_label=''):
+    """Divergence HTML raporu olustur."""
+    now = datetime.now().strftime('%d.%m.%Y %H:%M')
+    flat = _flatten_results(all_results)
+    rows_json = json.dumps(_sanitize(flat), ensure_ascii=False)
+
+    tf_tag = tf_label.strip() if tf_label.strip() else ''
+    title_suffix = f' · {tf_tag}' if tf_tag else ''
+
+    # Pre-compute JSON strings (f-string icinde dict comp kullanmamak icin)
+    dir_labels_json = json.dumps({'BUY': 'AL', 'SELL': 'SAT'})
+    type_labels_json = json.dumps(TYPE_LABELS)
+    tabs_json = json.dumps(_TAB_ORDER)
+    tab_labels_json = json.dumps({k: v[0] for k, v in _DIV_TABS.items()})
+    tab_colors_json = json.dumps({k: v[1] for k, v in _DIV_TABS.items()})
+
+    html = f"""<!DOCTYPE html>
+<html lang="tr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOX — Divergence{title_suffix} · {date_str}</title>
+<style>{_NOX_CSS}
+.tab-bar {{
+  display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px;
+}}
+.tab-btn {{
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: 20px; padding: 6px 14px;
+  font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; transition: all 0.2s;
+  user-select: none; color: var(--text-secondary);
+  font-family: var(--font-display);
+}}
+.tab-btn:hover {{ border-color: var(--border-dim); background: var(--bg-elevated); }}
+.tab-btn.active {{ border-color: var(--nox-cyan); background: var(--nox-cyan-dim); color: var(--nox-cyan); }}
+.tab-btn .cnt {{ font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem; }}
+.tab-btn .dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
+.dir-buy {{ color: var(--nox-green); font-weight: 700; }}
+.dir-sell {{ color: var(--nox-red); font-weight: 700; }}
+.q-hi {{ color: var(--nox-green); }}
+.q-mid {{ color: var(--nox-yellow); }}
+.q-lo {{ color: var(--text-muted); }}
+</style>
+</head><body>
+<div class="nox-container">
+<div class="nox-header">
+  <div class="nox-logo">NOX<span class="proj">project</span><span class="mode">divergence{title_suffix}</span></div>
+  <div class="nox-meta"><b>{len(flat)}</b> sinyal / {n_scanned} taranan<br>{now}</div>
+</div>
+<div class="tab-bar" id="tabs"></div>
+<div class="nox-filters">
+  <div><label>Yon</label>
+  <select id="fDir" onchange="af()"><option value="">Tumu</option>
+  <option value="BUY">AL</option><option value="SELL">SAT</option></select></div>
+  <div><label>K&ge;</label><input type="number" id="fQ" value="0" step="10" min="0" oninput="af()"></div>
+  <div><label>Hisse</label><input type="text" id="fS" placeholder="ARA" oninput="af()"></div>
+  <div><button class="nox-btn" onclick="reset()">Sifirla</button></div>
+</div>
+<div class="nox-table-wrap">
+<table><thead><tr>
+<th onclick="sb('ticker')">Hisse</th>
+<th onclick="sb('direction')">Yon</th>
+<th onclick="sb('div_type')">Tip</th>
+<th onclick="sb('close')">Fiyat</th>
+<th onclick="sb('quality')">Kalite</th>
+<th>Detay</th>
+<th onclick="sb('signal_date')">Tarih</th>
+</tr></thead><tbody id="tb"></tbody></table>
+</div>
+<div class="nox-status" id="st"><b>{len(flat)}</b> / {len(flat)}</div>
+</div>
+<script>
+const D={rows_json};
+const DL={dir_labels_json};
+const TL={type_labels_json};
+const TABS={tabs_json};
+const TAB_LABELS={tab_labels_json};
+const TAB_COLORS={tab_colors_json};
+let curTab='all',col='quality',asc=false;
+
+function initTabs(){{
+  const bar=document.getElementById('tabs');
+  // "Tumu" tab
+  const allBtn=document.createElement('div');
+  allBtn.className='tab-btn active';allBtn.dataset.t='all';
+  allBtn.innerHTML='<span class="dot" style="background:var(--nox-cyan)"></span>Tumu <span class="cnt">'+D.length+'</span>';
+  allBtn.onclick=()=>setTab('all');
+  bar.appendChild(allBtn);
+  TABS.forEach(t=>{{
+    const cnt=D.filter(r=>r.category===t).length;
+    if(!cnt)return;
+    const btn=document.createElement('div');
+    btn.className='tab-btn';btn.dataset.t=t;
+    btn.innerHTML='<span class="dot" style="background:'+TAB_COLORS[t]+'"></span>'+TAB_LABELS[t]+' <span class="cnt">'+cnt+'</span>';
+    btn.onclick=()=>setTab(t);
+    bar.appendChild(btn);
+  }});
+}}
+
+function setTab(t){{
+  curTab=t;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector('.tab-btn[data-t="'+t+'"]').classList.add('active');
+  af();
+}}
+
+function af(){{
+  const dir=document.getElementById('fDir').value;
+  const minQ=parseInt(document.getElementById('fQ').value)||0;
+  const sr=document.getElementById('fS').value.toUpperCase();
+  let f=D.filter(r=>{{
+    if(curTab!=='all'&&r.category!==curTab)return false;
+    if(dir&&r.direction!==dir)return false;
+    if(r.quality<minQ)return false;
+    if(sr&&!r.ticker.includes(sr))return false;
+    return true;
+  }});
+  f.sort((a,b)=>{{
+    let va=a[col],vb=b[col];
+    if(typeof va==='string')return asc?va.localeCompare(vb):vb.localeCompare(va);
+    return asc?(va||0)-(vb||0):(vb||0)-(va||0);
+  }});
+  render(f);
+}}
+
+function sb(c){{if(col===c)asc=!asc;else{{col=c;asc=c==='ticker'||c==='signal_date'}};
+  document.querySelectorAll('th').forEach(h=>h.classList.remove('sorted'));
+  af();
+}}
+
+function reset(){{
+  curTab='all';
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector('.tab-btn[data-t="all"]').classList.add('active');
+  document.getElementById('fDir').value='';
+  document.getElementById('fQ').value='0';
+  document.getElementById('fS').value='';
+  af();
+}}
+
+function mkDetail(r){{
+  const parts=[];
+  if(r.rsi_prev!=null)parts.push('RSI: '+r.rsi_prev+'→'+r.rsi_curr);
+  if(r.hist_prev!=null)parts.push('Hist: '+r.hist_prev+'→'+r.hist_curr);
+  if(r.obv_prev!=null)parts.push('OBV: '+Math.round(r.obv_prev)+'→'+Math.round(r.obv_curr));
+  if(r.mfi_prev!=null)parts.push('MFI: '+r.mfi_prev+'→'+r.mfi_curr);
+  if(r.adx_value!=null)parts.push('ADX: '+r.adx_value+' s='+r.adx_slope);
+  if(r.sub_type)parts.push(r.sub_type);
+  if(r.vol_ratio!=null)parts.push('VolR: x'+r.vol_ratio);
+  if(r.range_atr!=null)parts.push('R/ATR: '+r.range_atr);
+  if(r.limit_tag)parts.push('['+r.limit_tag+']');
+  if(r.has_mfi)parts.push('MFI+');
+  return parts.length?'<span class="detail-cell">'+parts.join(', ')+'</span>':'<span style="color:var(--text-muted)">—</span>';
+}}
+
+function render(data){{
+  const tb=document.getElementById('tb');tb.innerHTML='';
+  data.forEach(r=>{{
+    const tr=document.createElement('tr');
+    const dirCls=r.direction==='BUY'?'dir-buy':'dir-sell';
+    const qCls=r.quality>=60?'q-hi':r.quality>=40?'q-mid':'q-lo';
+    const tipLabel=TL[r.div_type]||r.div_type;
+    const dateStr=r.signal_date?r.signal_date.slice(5):'—';
+    tr.innerHTML=`<td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
+<td class="${{dirCls}}">${{DL[r.direction]||r.direction}}</td>
+<td style="font-size:.72rem">${{tipLabel}}</td>
+<td>${{r.close}}</td>
+<td class="${{qCls}}" style="font-weight:700">${{r.quality}}</td>
+<td>${{mkDetail(r)}}</td>
+<td style="color:var(--text-muted);font-size:.72rem">${{dateStr}}</td>`;
+    tb.appendChild(tr);
+  }});
+  document.getElementById('st').innerHTML='<b>'+data.length+'</b> / '+D.length;
+}}
+
+initTabs();
+af();
+</script></body></html>"""
+    return html
+
+
+def _save_div_html(html_content, date_str, output_dir, suffix=''):
+    """HTML dosyasini kaydet."""
+    os.makedirs(output_dir, exist_ok=True)
+    fname = f"nox_divergence{suffix}_{date_str.replace('-', '')}.html"
+    path = os.path.join(output_dir, fname)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    print(f"\n  HTML: {path}")
+    return path
+
+
+# =============================================================================
 # TELEGRAM
 # =============================================================================
 
-def _format_telegram(all_results, n_scanned, date_str, tf_label=''):
+def _format_telegram(all_results, n_scanned, date_str, tf_label='', html_url=None):
     """Telegram HTML mesaji olustur."""
     tf_tag = f" {tf_label.strip()}" if tf_label.strip() else ''
-    lines = [f"📊 <b>NOX Uyumsuzluk{tf_tag}</b> — {date_str}\n"]
+    lines = []
+    if html_url:
+        lines.append(f'🔗 <a href="{html_url}">Detayli Rapor</a>\n')
+    lines.append(f"📊 <b>NOX Uyumsuzluk{tf_tag}</b> — {date_str}\n")
 
     # Sayimlar
     counts = {}
@@ -642,6 +907,8 @@ def main():
                         help='Haftalik veri ile tara (daily resample)')
     parser.add_argument('--monthly', action='store_true',
                         help='Aylik veri ile tara (daily resample)')
+    parser.add_argument('--html', action='store_true',
+                        help='HTML rapor uret')
     parser.add_argument('--notify', action='store_true',
                         help='Telegram bildirimi gonder')
     args = parser.parse_args()
@@ -731,9 +998,20 @@ def main():
     if args.csv:
         _save_csv(all_results, date_str, args.output)
 
-    # ── 7. Telegram ───────────────────────────────────────────────────────────
+    # ── 7. HTML ───────────────────────────────────────────────────────────
+    html_url = None
+    if args.html:
+        html_content = _generate_html(all_results, n_scanned, date_str, tf_label)
+        suffix = '_weekly' if args.weekly else ('_monthly' if args.monthly else '')
+        _save_div_html(html_content, date_str, args.output, suffix)
+        # GitHub Pages push
+        gh_filename = f"nox_divergence{suffix}.html"
+        html_url = push_html_to_github(html_content, gh_filename, date_str)
+
+    #── 7. Telegram ───────────────────────────────────────────────────────────
     if args.notify:
-        msg = _format_telegram(all_results, n_scanned, date_str, tf_label)
+        msg = _format_telegram(all_results, n_scanned, date_str, tf_label,
+                               html_url=html_url)
         send_telegram(msg)
 
     print(f"\n  Toplam sure: {time.time() - t0:.1f}s")

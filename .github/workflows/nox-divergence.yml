@@ -13,14 +13,18 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: python run_divergence.py --csv --notify
+      - run: python run_divergence.py --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
       - uses: actions/upload-artifact@v4
         with:
           name: divergence-daily-${{ github.run_number }}
-          path: output/nox_divergence_*.csv
+          path: |
+            output/nox_divergence_*.csv
+            output/nox_divergence_*.html
 
   divergence-weekly:
     runs-on: ubuntu-latest
@@ -30,14 +34,18 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: python run_divergence.py --weekly --period 5y --scan-bars 6 --csv --notify
+      - run: python run_divergence.py --weekly --period 5y --scan-bars 6 --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
       - uses: actions/upload-artifact@v4
         with:
           name: divergence-weekly-${{ github.run_number }}
-          path: output/nox_divergence_*.csv
+          path: |
+            output/nox_divergence_*.csv
+            output/nox_divergence_*.html
 
   divergence-monthly:
     runs-on: ubuntu-latest
@@ -47,11 +55,15 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: python run_divergence.py --monthly --period 5y --scan-bars 6 --csv --notify
+      - run: python run_divergence.py --monthly --period 5y --scan-bars 6 --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
       - uses: actions/upload-artifact@v4
         with:
           name: divergence-monthly-${{ github.run_number }}
-          path: output/nox_divergence_*.csv
+          path: |
+            output/nox_divergence_*.csv
+            output/nox_divergence_*.html
