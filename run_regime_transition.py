@@ -32,6 +32,7 @@ from markets.bist.regime_transition import (
     compute_trailing_stop, _find_pivot_lows,
     compute_trade_state, calc_oe_score,
     RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
+    TIMEFRAME_CONFIGS,
 )
 from collections import Counter
 from core.reports import _NOX_CSS, _sanitize
@@ -86,27 +87,81 @@ def _to_weekly(df):
     return weekly
 
 
+def _to_monthly(df):
+    monthly = df.resample('ME').agg({
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum',
+    }).dropna(subset=['close'])
+    if len(monthly) > 0:
+        last_month_end = monthly.index[-1]
+        last_data_date = df.index[-1]
+        if last_data_date < last_month_end:
+            monthly = monthly.iloc[:-1]
+    return monthly
+
+
+def _entry_window_tf(days_since, timeframe='daily'):
+    """Gecisten bu yana gecen gune gore giris penceresi etiketi (timeframe-aware)."""
+    if timeframe == 'weekly':
+        if days_since <= 7:
+            return 'TAZE'
+        elif days_since <= 28:
+            return 'BEKLE'
+        elif days_since <= 84:
+            return '2.DALGA'
+        else:
+            return 'GEC'
+    elif timeframe == 'monthly':
+        if days_since <= 31:
+            return 'TAZE'
+        elif days_since <= 93:
+            return 'BEKLE'
+        elif days_since <= 279:
+            return '2.DALGA'
+        else:
+            return 'GEC'
+    else:  # daily
+        if days_since <= 1:
+            return 'TAZE'
+        elif days_since <= 7:
+            return 'BEKLE'
+        elif days_since <= 20:
+            return '2.DALGA'
+        else:
+            return 'GEC'
+
+
+_TF_LABELS = {'daily': 'Gunluk', 'weekly': 'Haftalik', 'monthly': 'Aylik'}
+_TF_DEFAULT_PERIOD = {'daily': '2y', 'weekly': '5y', 'monthly': '10y'}
+_TF_MIN_BARS = {'daily': 100, 'weekly': 50, 'monthly': 24}
+
+
 # =============================================================================
 # TARAMA
 # =============================================================================
 
-def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
+def _scan_all(stock_dfs, higher_tf_dfs=None, scan_bars=60, cfg=None, timeframe='daily'):
     """Tum hisselerde regime transition taramasi.
     Sticky AL: trade aktif hisseleri listeler, OE skoru hesaplar."""
+    cfg = cfg or RT_CFG
+    min_bars = _TF_MIN_BARS.get(timeframe, 100)
     results = []
     n_scanned = 0
     last_date = None
     regime_dist = {0: 0, 1: 0, 2: 0, 3: 0}
 
     for ticker, df in stock_dfs.items():
-        if len(df) < 100:
+        if len(df) < min_bars:
             continue
         if _is_halted(df):
             continue
 
         try:
-            wk_df = weekly_dfs.get(ticker) if weekly_dfs else None
-            out = scan_regime_transition(df, weekly_df=wk_df)
+            htf_df = higher_tf_dfs.get(ticker) if higher_tf_dfs else None
+            out = scan_regime_transition(df, weekly_df=htf_df, cfg=cfg)
             n_scanned += 1
 
             if last_date is None and len(df) > 0:
@@ -154,8 +209,9 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
             entry_score = 0
             entry_parts = []
             atr_pct = (atr_val / current_close * 100) if current_close > 0 else 0
-            # 1. Dusuk volatilite (ATR% < 3)
-            if atr_pct < 3.0:
+            atr_thresh = cfg.get('entry_atr_pct_thresh', 3.0)
+            # 1. Dusuk volatilite (ATR% < threshold)
+            if atr_pct < atr_thresh:
                 entry_score += 1
                 entry_parts.append('Vol dusuk: \u2713')
             else:
@@ -181,7 +237,7 @@ def _scan_all(stock_dfs, weekly_dfs=None, scan_bars=60):
             entry_detail = ' | '.join(entry_parts)
 
             # OE skoru
-            oe = calc_oe_score(df, out['ema21'])
+            oe = calc_oe_score(df, out['ema21'], cfg=cfg)
 
             sig = RegimeTransitionSignal(
                 ticker=ticker,
@@ -283,7 +339,7 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
         print(f"  {'─' * w}")
         for s in results:
             gain_str = f"{s.gain_since_pct:>+6.1f}%" if s.gain_since_pct != 0 else '   NEW'
-            window = _entry_window(s.days_since)
+            window = _entry_window_tf(s.days_since)
             oe_str = f"{s.oe_score}" if s.oe_score < 3 else f"{s.oe_score}!"
             print(f"  {s.ticker:<8} {s.transition:<22} {_fmt_date(s.transition_date):>6} "
                   f"{s.days_since:>4} {window:>8} {s.entry_score:>4}/4 {oe_str:>3} "
@@ -309,7 +365,7 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
 # CSV
 # =============================================================================
 
-def _save_csv(results, date_str, output_dir):
+def _save_csv(results, date_str, output_dir, timeframe='daily'):
     os.makedirs(output_dir, exist_ok=True)
     rows = []
     for s in results:
@@ -321,7 +377,7 @@ def _save_csv(results, date_str, output_dir):
             'transition': s.transition,
             'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'days_since': s.days_since,
-            'entry_window': _entry_window(s.days_since),
+            'entry_window': _entry_window_tf(s.days_since, timeframe),
             'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
             'participation_score': s.participation_score,
@@ -342,7 +398,8 @@ def _save_csv(results, date_str, output_dir):
         })
     if rows:
         csv_df = pd.DataFrame(rows)
-        fname = f"regime_transition_{date_str.replace('-', '')}.csv"
+        tf_suffix = f"_{timeframe}" if timeframe != 'daily' else ''
+        fname = f"regime_transition{tf_suffix}_{date_str.replace('-', '')}.csv"
         path = os.path.join(output_dir, fname)
         csv_df.to_csv(path, index=False)
         print(f"\n  CSV: {path}")
@@ -354,8 +411,9 @@ def _save_csv(results, date_str, output_dir):
 # HTML RAPOR
 # =============================================================================
 
-def _generate_html(results, n_scanned, date_str, regime_dist):
+def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily'):
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
+    tf_label = _TF_LABELS.get(timeframe, 'Gunluk')
 
     rows_data = []
     for s in results:
@@ -369,7 +427,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
             'transition_date': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'transition_date_iso': s.transition_date.strftime('%Y-%m-%d') if hasattr(s.transition_date, 'strftime') else '',
             'days_since': s.days_since,
-            'entry_window': _entry_window(s.days_since),
+            'entry_window': _entry_window_tf(s.days_since, timeframe),
             'gain_since_pct': s.gain_since_pct,
             'trend_score': s.trend_score,
             'participation_score': s.participation_score,
@@ -401,7 +459,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
     html = f"""<!DOCTYPE html>
 <html lang="tr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NOX — Regime Transition · {now}</title>
+<title>NOX — Regime Transition ({tf_label}) · {now}</title>
 <style>{_NOX_CSS}
 
 /* REGIME BADGES */
@@ -509,7 +567,7 @@ def _generate_html(results, n_scanned, date_str, regime_dist):
 </head><body>
 <div class="nox-container">
 <div class="nox-header">
-  <div class="nox-logo">NOX<span class="proj">project</span><span class="mode">regime transition screener</span></div>
+  <div class="nox-logo">NOX<span class="proj">project</span><span class="mode">regime transition screener ({tf_label.lower()})</span></div>
   <div class="nox-meta">{now} · <b>{n_scanned}</b> hisse · <b>{len(results)}</b> AL aktif</div>
 </div>
 
@@ -965,9 +1023,10 @@ render();
     return html
 
 
-def _save_html(html_content, date_str, output_dir):
+def _save_html(html_content, date_str, output_dir, timeframe='daily'):
     os.makedirs(output_dir, exist_ok=True)
-    fname = f"regime_transition_{date_str.replace('-', '')}.html"
+    tf_suffix = f"_{timeframe}" if timeframe != 'daily' else ''
+    fname = f"regime_transition{tf_suffix}_{date_str.replace('-', '')}.html"
     path = os.path.join(output_dir, fname)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(html_content)
@@ -979,26 +1038,37 @@ def _save_html(html_content, date_str, output_dir):
 # BACKTEST
 # =============================================================================
 
-def _run_backtest(stock_dfs, weekly_dfs, N):
+def _run_backtest(stock_dfs, higher_tf_dfs, N, cfg=None, timeframe='daily'):
     """Son N bar'daki AL/SAT sinyallerini cikar, forward return hesapla.
     Her ticker 1 kez scan edilir (O(ticker) karmasiklik).
 
     Returns: (signals_list, summary_dict)
     """
+    cfg = cfg or RT_CFG
+    min_bars = _TF_MIN_BARS.get(timeframe, 100)
+    # Forward return pencereleri timeframe'e gore
+    if timeframe == 'weekly':
+        ret_windows = [('ret_3w', 3), ('ret_5w', 5), ('ret_10w', 10)]
+    elif timeframe == 'monthly':
+        ret_windows = [('ret_2m', 2), ('ret_3m', 3), ('ret_6m', 6)]
+    else:
+        ret_windows = [('ret_5d', 5), ('ret_10d', 10), ('ret_20d', 20)]
+    ret_keys = [rw[0] for rw in ret_windows]
+
     signals = []
     n_scanned = 0
     last_date = None
-    lb = RT_CFG['stop_swing_lb']
+    lb = cfg['stop_swing_lb']
 
     for ticker, df in stock_dfs.items():
-        if len(df) < 100:
+        if len(df) < min_bars:
             continue
         if _is_halted(df):
             continue
 
         try:
-            wk_df = weekly_dfs.get(ticker) if weekly_dfs else None
-            out = scan_regime_transition(df, weekly_df=wk_df)
+            htf_df = higher_tf_dfs.get(ticker) if higher_tf_dfs else None
+            out = scan_regime_transition(df, weekly_df=htf_df, cfg=cfg)
             n_scanned += 1
 
             if last_date is None and len(df) > 0:
@@ -1056,13 +1126,14 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
                     swing_low = float(valid_pivots.iloc[-1])
                 else:
                     swing_low = float(low_s.iloc[max(0, i - 20):i].min())
-                stop = swing_low - RT_CFG['stop_atr_initial'] * atr_val
+                stop = swing_low - cfg['stop_atr_initial'] * atr_val
                 stop_dist_pct = (entry_price - stop) / entry_price * 100 if entry_price > 0 else 0.0
 
                 # Entry Score (veri-odakli kriterler)
                 entry_score = 0
-                # 1. Dusuk volatilite (ATR% < 3 — en guclu tekil filtre)
-                if atr_pct < 3.0:
+                atr_thresh = cfg.get('entry_atr_pct_thresh', 3.0)
+                # 1. Dusuk volatilite (ATR% < threshold)
+                if atr_pct < atr_thresh:
                     entry_score += 1
                 # 2. Erken giris (ADX slope < 0 — yapisal gecis, buyume odasi)
                 if adx_slope_val < 0:
@@ -1074,34 +1145,30 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
                 if rvol_val < 2.0:
                     entry_score += 1
 
-                # Forward returns
-                ret_5d = None
-                ret_10d = None
-                ret_20d = None
-                for window, key in [(5, 'ret_5d'), (10, 'ret_10d'), (20, 'ret_20d')]:
+                # Forward returns (dynamic windows)
+                ret_vals = {}
+                for rkey, window in ret_windows:
                     end_idx = i + window
                     if end_idx < n_bars:
                         r = (float(close_s.iloc[end_idx]) - entry_price) / entry_price * 100
                         if d == 'SAT':
                             r = -r
-                        if key == 'ret_5d':
-                            ret_5d = round(r, 2)
-                        elif key == 'ret_10d':
-                            ret_10d = round(r, 2)
-                        else:
-                            ret_20d = round(r, 2)
+                        ret_vals[rkey] = round(r, 2)
+                    else:
+                        ret_vals[rkey] = None
 
-                # Stop hit (sadece AL icin, 5G icerisinde)
+                # Stop hit (sadece AL icin, ilk pencere icerisinde)
+                first_window = ret_windows[0][1]
                 stop_hit = False
                 stop_hit_bar = None
                 if d == 'AL' and stop > 0:
-                    for j in range(i + 1, min(i + 6, n_bars)):
+                    for j in range(i + 1, min(i + first_window + 1, n_bars)):
                         if float(low_s.iloc[j]) < stop:
                             stop_hit = True
                             stop_hit_bar = j - i
                             break
 
-                signals.append({
+                sig_row = {
                     'ticker': ticker,
                     'signal_date': sig_date.strftime('%Y-%m-%d') if hasattr(sig_date, 'strftime') else str(sig_date),
                     'direction': d,
@@ -1121,28 +1188,30 @@ def _run_backtest(stock_dfs, weekly_dfs, N):
                     'cmf': round(cmf_val, 4),
                     'atr_pct': round(atr_pct, 2),
                     'rvol': round(rvol_val, 2),
-                    'ret_5d': ret_5d,
-                    'ret_10d': ret_10d,
-                    'ret_20d': ret_20d,
                     'stop_hit': stop_hit,
                     'stop_hit_bar': stop_hit_bar,
-                })
+                }
+                sig_row.update(ret_vals)
+                signals.append(sig_row)
 
         except Exception as e:
             print(f"  ! {ticker}: {e}")
             continue
 
     date_str = last_date.strftime('%Y-%m-%d') if last_date else datetime.now().strftime('%Y-%m-%d')
-    summary = _compute_backtest_summary(signals)
+    summary = _compute_backtest_summary(signals, ret_keys)
     summary['n_scanned'] = n_scanned
     summary['date_str'] = date_str
+    summary['ret_keys'] = ret_keys
     return signals, summary
 
 
-def _compute_backtest_summary(signals):
+def _compute_backtest_summary(signals, ret_keys=None):
     """Backtest sinyallerinden istatistik ozet cikar."""
     if not signals:
         return {'total': 0}
+    if ret_keys is None:
+        ret_keys = ['ret_5d', 'ret_10d', 'ret_20d']
 
     df = pd.DataFrame(signals)
     summary = {'total': len(df)}
@@ -1152,41 +1221,41 @@ def _compute_backtest_summary(signals):
     summary['n_al'] = len(al)
     summary['n_sat'] = len(sat)
 
+    first_ret_key = ret_keys[0]
+
     # Genel pencere istatistikleri
-    for window in ['5d', '10d', '20d']:
-        col = f'ret_{window}'
-        valid = df[df[col].notna()][col]
+    for rkey in ret_keys:
+        valid = df[df[rkey].notna()][rkey]
         n = len(valid)
         if n > 0:
             wr = (valid > 0).sum() / n * 100
-            summary[f'all_{window}'] = {
+            summary[f'all_{rkey}'] = {
                 'n': n, 'wr': round(wr, 1),
                 'avg': round(valid.mean(), 2),
                 'med': round(valid.median(), 2),
             }
         else:
-            summary[f'all_{window}'] = {'n': 0, 'wr': 0, 'avg': 0, 'med': 0}
+            summary[f'all_{rkey}'] = {'n': 0, 'wr': 0, 'avg': 0, 'med': 0}
 
-    # Stop hit orani (AL, 5G icinde)
-    al_with_5d = al[al['ret_5d'].notna()]
-    if len(al_with_5d) > 0:
-        summary['stop_pct_5d'] = round(al_with_5d['stop_hit'].sum() / len(al_with_5d) * 100, 1)
+    # Stop hit orani (AL, ilk pencere icinde)
+    al_with_first = al[al[first_ret_key].notna()]
+    if len(al_with_first) > 0:
+        summary['stop_pct_first'] = round(al_with_first['stop_hit'].sum() / len(al_with_first) * 100, 1)
     else:
-        summary['stop_pct_5d'] = 0.0
+        summary['stop_pct_first'] = 0.0
 
     # Yon bazinda
     summary['by_dir'] = {}
     for d_name, d_df in [('AL', al), ('SAT', sat)]:
         d_stats = {}
-        for window in ['5d', '10d', '20d']:
-            col = f'ret_{window}'
-            valid = d_df[d_df[col].notna()][col]
+        for rkey in ret_keys:
+            valid = d_df[d_df[rkey].notna()][rkey]
             n = len(valid)
             if n > 0:
                 wr = (valid > 0).sum() / n * 100
-                d_stats[window] = {'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2)}
+                d_stats[rkey] = {'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2)}
             else:
-                d_stats[window] = {'n': 0, 'wr': 0, 'avg': 0}
+                d_stats[rkey] = {'n': 0, 'wr': 0, 'avg': 0}
         d_stats['total'] = len(d_df)
         summary['by_dir'][d_name] = d_stats
 
@@ -1196,7 +1265,7 @@ def _compute_backtest_summary(signals):
         trans_counts = al['transition'].value_counts()
         for trans_name in trans_counts.index[:8]:
             t_df = al[al['transition'] == trans_name]
-            valid_5 = t_df[t_df['ret_5d'].notna()]['ret_5d']
+            valid_5 = t_df[t_df[first_ret_key].notna()][first_ret_key]
             n = len(valid_5)
             if n >= 3:
                 summary['by_transition_al'][trans_name] = {
@@ -1210,26 +1279,26 @@ def _compute_backtest_summary(signals):
     if len(al) > 0:
         for score in [4, 3, 2]:
             s_df = al[al['entry_score'] == score]
-            valid_5 = s_df[s_df['ret_5d'].notna()]
-            n = len(valid_5)
+            valid_first = s_df[s_df[first_ret_key].notna()]
+            n = len(valid_first)
             if n > 0:
-                wr = (valid_5['ret_5d'] > 0).sum() / n * 100
-                stop_r = valid_5['stop_hit'].sum() / n * 100
+                wr = (valid_first[first_ret_key] > 0).sum() / n * 100
+                stop_r = valid_first['stop_hit'].sum() / n * 100
                 summary['by_score_al'][score] = {
                     'n': n, 'wr': round(wr, 1),
-                    'avg': round(valid_5['ret_5d'].mean(), 2),
+                    'avg': round(valid_first[first_ret_key].mean(), 2),
                     'stop_pct': round(stop_r, 1),
                 }
         # <=1 grubu
         s_df = al[al['entry_score'] <= 1]
-        valid_5 = s_df[s_df['ret_5d'].notna()]
-        n = len(valid_5)
+        valid_first = s_df[s_df[first_ret_key].notna()]
+        n = len(valid_first)
         if n > 0:
-            wr = (valid_5['ret_5d'] > 0).sum() / n * 100
-            stop_r = valid_5['stop_hit'].sum() / n * 100
+            wr = (valid_first[first_ret_key] > 0).sum() / n * 100
+            stop_r = valid_first['stop_hit'].sum() / n * 100
             summary['by_score_al']['<=1'] = {
                 'n': n, 'wr': round(wr, 1),
-                'avg': round(valid_5['ret_5d'].mean(), 2),
+                'avg': round(valid_first[first_ret_key].mean(), 2),
                 'stop_pct': round(stop_r, 1),
             }
 
@@ -1238,26 +1307,26 @@ def _compute_backtest_summary(signals):
     if len(al) > 0:
         for exit_val in [0, 1]:
             e_df = al[al['exit_stage'] == exit_val]
-            valid_5 = e_df[e_df['ret_5d'].notna()]
-            n = len(valid_5)
+            valid_first = e_df[e_df[first_ret_key].notna()]
+            n = len(valid_first)
             if n > 0:
-                wr = (valid_5['ret_5d'] > 0).sum() / n * 100
-                stop_r = valid_5['stop_hit'].sum() / n * 100
+                wr = (valid_first[first_ret_key] > 0).sum() / n * 100
+                stop_r = valid_first['stop_hit'].sum() / n * 100
                 summary['by_exit_al'][exit_val] = {
                     'n': n, 'wr': round(wr, 1),
-                    'avg': round(valid_5['ret_5d'].mean(), 2),
+                    'avg': round(valid_first[first_ret_key].mean(), 2),
                     'stop_pct': round(stop_r, 1),
                 }
         # >=2 grubu
         e_df = al[al['exit_stage'] >= 2]
-        valid_5 = e_df[e_df['ret_5d'].notna()]
-        n = len(valid_5)
+        valid_first = e_df[e_df[first_ret_key].notna()]
+        n = len(valid_first)
         if n > 0:
-            wr = (valid_5['ret_5d'] > 0).sum() / n * 100
-            stop_r = valid_5['stop_hit'].sum() / n * 100
+            wr = (valid_first[first_ret_key] > 0).sum() / n * 100
+            stop_r = valid_first['stop_hit'].sum() / n * 100
             summary['by_exit_al']['>=2'] = {
                 'n': n, 'wr': round(wr, 1),
-                'avg': round(valid_5['ret_5d'].mean(), 2),
+                'avg': round(valid_first[first_ret_key].mean(), 2),
                 'stop_pct': round(stop_r, 1),
             }
 
@@ -1265,17 +1334,16 @@ def _compute_backtest_summary(signals):
     if len(al) > 0:
         filt = al[(al['entry_score'] >= 3) & (al['exit_stage'] <= 1)]
         summary['filtered_al'] = {}
-        for window in ['5d', '10d', '20d']:
-            col = f'ret_{window}'
-            valid = filt[filt[col].notna()][col]
+        for rkey in ret_keys:
+            valid = filt[filt[rkey].notna()][rkey]
             n = len(valid)
             if n > 0:
                 wr = (valid > 0).sum() / n * 100
-                summary['filtered_al'][window] = {
+                summary['filtered_al'][rkey] = {
                     'n': n, 'wr': round(wr, 1), 'avg': round(valid.mean(), 2),
                 }
             else:
-                summary['filtered_al'][window] = {'n': 0, 'wr': 0, 'avg': 0}
+                summary['filtered_al'][rkey] = {'n': 0, 'wr': 0, 'avg': 0}
         summary['filtered_al']['total'] = len(filt)
     else:
         summary['filtered_al'] = {'total': 0}
@@ -1283,11 +1351,19 @@ def _compute_backtest_summary(signals):
     return summary
 
 
-def _print_backtest_summary(summary, N, n_scanned, date_str):
+def _print_backtest_summary(summary, N, n_scanned, date_str, timeframe='daily'):
     """Backtest ozet ciktisi."""
+    tf_label = _TF_LABELS.get(timeframe, 'Gunluk')
+    ret_keys = summary.get('ret_keys', ['ret_5d', 'ret_10d', 'ret_20d'])
+    first_key = ret_keys[0]
+    # Kisa etiketler: ret_5d→5G, ret_3w→3H, ret_2m→2A
+    def _rk_label(rk):
+        s = rk.replace('ret_', '').upper()
+        return s.replace('D', 'G').replace('W', 'H').replace('M', 'A')
+
     w = 70
     print(f"\n{'═' * w}")
-    print(f"  REGIME TRANSITION BACKTEST — Son {N} bar")
+    print(f"  REGIME TRANSITION BACKTEST ({tf_label}) — Son {N} bar")
     print(f"{'═' * w}")
     print(f"  {n_scanned} hisse, {summary['total']} sinyal "
           f"(AL:{summary.get('n_al', 0)}, SAT:{summary.get('n_sat', 0)})")
@@ -1296,36 +1372,40 @@ def _print_backtest_summary(summary, N, n_scanned, date_str):
     print(f"\n  GENEL")
     print(f"  {'Pencere':<10} {'N':>6} {'WR%':>7} {'Ort%':>8} {'Med%':>8}")
     print(f"  {'─' * 45}")
-    for window in ['5d', '10d', '20d']:
-        s = summary.get(f'all_{window}', {})
+    for rkey in ret_keys:
+        s = summary.get(f'all_{rkey}', {})
         n = s.get('n', 0)
+        label = _rk_label(rkey)
         if n > 0:
-            print(f"  {window.upper():<10} {n:>6} {s['wr']:>6.1f}% {s['avg']:>+7.2f} {s['med']:>+7.2f}")
+            print(f"  {label:<10} {n:>6} {s['wr']:>6.1f}% {s['avg']:>+7.2f} {s['med']:>+7.2f}")
         else:
-            print(f"  {window.upper():<10} {n:>6}    —       —       —")
+            print(f"  {label:<10} {n:>6}    —       —       —")
 
     # Yon bazinda
     by_dir = summary.get('by_dir', {})
     if by_dir:
+        k1_label = _rk_label(ret_keys[0])
+        k2_label = _rk_label(ret_keys[1]) if len(ret_keys) > 1 else ''
         print(f"\n  YON BAZINDA")
-        print(f"  {'Yon':<6} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9} {'10G WR%':>9} {'10G Ort%':>10}")
+        print(f"  {'Yon':<6} {'N':>5} {k1_label+' WR%':>8} {k1_label+' Ort%':>9} {k2_label+' WR%':>9} {k2_label+' Ort%':>10}")
         print(f"  {'─' * 55}")
         for d_name in ['AL', 'SAT']:
             d = by_dir.get(d_name, {})
             total = d.get('total', 0)
-            s5 = d.get('5d', {})
-            s10 = d.get('10d', {})
+            s1 = d.get(ret_keys[0], {})
+            s2 = d.get(ret_keys[1], {}) if len(ret_keys) > 1 else {}
             if total > 0:
-                warn = '  ** ZAYIF' if d_name == 'SAT' and s5.get('wr', 0) < 50 else ''
+                warn = '  ** ZAYIF' if d_name == 'SAT' and s1.get('wr', 0) < 50 else ''
                 print(f"  {d_name:<6} {total:>5} "
-                      f"{s5.get('wr', 0):>7.1f}% {s5.get('avg', 0):>+8.2f} "
-                      f"{s10.get('wr', 0):>8.1f}% {s10.get('avg', 0):>+9.2f}{warn}")
+                      f"{s1.get('wr', 0):>7.1f}% {s1.get('avg', 0):>+8.2f} "
+                      f"{s2.get('wr', 0):>8.1f}% {s2.get('avg', 0):>+9.2f}{warn}")
 
     # Gecis tipi (AL, top entries)
+    first_label = _rk_label(first_key)
     by_trans = summary.get('by_transition_al', {})
     if by_trans:
         print(f"\n  GECIS TIPI (AL, Top {min(5, len(by_trans))})")
-        print(f"  {'Gecis':<28} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9}")
+        print(f"  {'Gecis':<28} {'N':>5} {first_label+' WR%':>8} {first_label+' Ort%':>9}")
         print(f"  {'─' * 55}")
         sorted_trans = sorted(by_trans.items(), key=lambda x: x[1]['n'], reverse=True)
         for trans_name, ts in sorted_trans[:5]:
@@ -1335,7 +1415,7 @@ def _print_backtest_summary(summary, N, n_scanned, date_str):
     by_score = summary.get('by_score_al', {})
     if by_score:
         print(f"\n  GIRIS SKORU (AL)")
-        print(f"  {'Skor':<6} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9} {'Stop%':>7}")
+        print(f"  {'Skor':<6} {'N':>5} {first_label+' WR%':>8} {first_label+' Ort%':>9} {'Stop%':>7}")
         print(f"  {'─' * 45}")
         for score_key in [4, 3, 2, '<=1']:
             s = by_score.get(score_key)
@@ -1347,7 +1427,7 @@ def _print_backtest_summary(summary, N, n_scanned, date_str):
     by_exit = summary.get('by_exit_al', {})
     if by_exit:
         print(f"\n  EXIT STAGE (AL)")
-        print(f"  {'Exit':<6} {'N':>5} {'5G WR%':>8} {'5G Ort%':>9} {'Stop%':>7}")
+        print(f"  {'Exit':<6} {'N':>5} {first_label+' WR%':>8} {first_label+' Ort%':>9} {'Stop%':>7}")
         print(f"  {'─' * 45}")
         for exit_key in [0, 1, '>=2']:
             s = by_exit.get(exit_key)
@@ -1359,24 +1439,27 @@ def _print_backtest_summary(summary, N, n_scanned, date_str):
     filt = summary.get('filtered_al', {})
     filt_total = filt.get('total', 0)
     if filt_total > 0:
-        f5 = filt.get('5d', {})
-        f10 = filt.get('10d', {})
+        f1 = filt.get(ret_keys[0], {})
+        f2 = filt.get(ret_keys[1], {}) if len(ret_keys) > 1 else {}
+        k1_label = _rk_label(ret_keys[0])
+        k2_label = _rk_label(ret_keys[1]) if len(ret_keys) > 1 else ''
         print(f"\n  FILTRELI (AL, Score>=3, Exit<=1)")
         print(f"  N: {filt_total}  "
-              f"5G: WR {f5.get('wr', 0):.1f}% Ort {f5.get('avg', 0):+.2f}%  "
-              f"10G: WR {f10.get('wr', 0):.1f}% Ort {f10.get('avg', 0):+.2f}%")
+              f"{k1_label}: WR {f1.get('wr', 0):.1f}% Ort {f1.get('avg', 0):+.2f}%  "
+              f"{k2_label}: WR {f2.get('wr', 0):.1f}% Ort {f2.get('avg', 0):+.2f}%")
 
     print(f"{'═' * w}")
 
 
-def _save_backtest_csv(signals, date_str, output_dir):
+def _save_backtest_csv(signals, date_str, output_dir, timeframe='daily'):
     """Backtest sinyallerini CSV'ye kaydet."""
     if not signals:
         print(f"\n  Sinyal yok, CSV olusturulmadi.")
         return
     os.makedirs(output_dir, exist_ok=True)
     csv_df = pd.DataFrame(signals)
-    fname = f"regime_transition_backtest_{date_str.replace('-', '')}.csv"
+    tf_suffix = f"_{timeframe}" if timeframe != 'daily' else ''
+    fname = f"regime_transition{tf_suffix}_backtest_{date_str.replace('-', '')}.csv"
     path = os.path.join(output_dir, fname)
     csv_df.to_csv(path, index=False)
     print(f"\n  Backtest CSV: {path} ({len(signals)} sinyal)")
@@ -1389,7 +1472,10 @@ def _save_backtest_csv(signals, date_str, output_dir):
 def main():
     parser = argparse.ArgumentParser(description="NOX Regime Transition Screener")
     parser.add_argument('--tickers', nargs='*', help='Spesifik ticker(lar)')
-    parser.add_argument('--period', default='2y', help='Veri periyodu (default: 2y)')
+    parser.add_argument('--period', default=None, help='Veri periyodu (default: timeframe\'e gore)')
+    parser.add_argument('--timeframe', '--tf', default='daily',
+                        choices=['daily', 'weekly', 'monthly'],
+                        help='Timeframe (default: daily)')
     parser.add_argument('--csv', action='store_true', help='CSV kaydet')
     parser.add_argument('--html', action='store_true', help='HTML rapor kaydet ve ac')
     parser.add_argument('--output', default='output', help='Cikti dizini')
@@ -1397,9 +1483,14 @@ def main():
                         help='Backtest: son N bar icin forward return hesapla')
     args = parser.parse_args()
 
+    timeframe = args.timeframe
+    tf_label = _TF_LABELS.get(timeframe, 'Gunluk')
+    cfg = TIMEFRAME_CONFIGS.get(timeframe, RT_CFG)
+    period = args.period or _TF_DEFAULT_PERIOD.get(timeframe, '2y')
+
     w = 80
     print(f"\n{'═' * w}")
-    print(f"  NOX REGIME TRANSITION SCREENER")
+    print(f"  NOX REGIME TRANSITION SCREENER ({tf_label})")
     print(f"{'═' * w}")
 
     # ── 1. Ticker listesi ────────────────────────────────────────────────────
@@ -1412,9 +1503,9 @@ def main():
         print(f"  {len(tickers)} ticker bulundu.")
 
     # ── 2. Veri yukleme ──────────────────────────────────────────────────────
-    print(f"\n  Veri yukleniyor (period={args.period})...")
+    print(f"\n  Veri yukleniyor (period={period})...")
     t0 = time.time()
-    all_data = data_mod.fetch_data(tickers, period=args.period)
+    all_data = data_mod.fetch_data(tickers, period=period)
     print(f"  {len(all_data)} hisse yuklendi ({time.time() - t0:.1f}s)")
 
     if not all_data:
@@ -1422,28 +1513,44 @@ def main():
         sys.exit(1)
 
     # ── 3. Lowercase donusum ─────────────────────────────────────────────────
-    stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in all_data.items()}
+    daily_dfs = {ticker: _to_lower_cols(df) for ticker, df in all_data.items()}
 
-    # ── 4. Haftalik resample (trend score icin) ──────────────────────────────
-    print(f"\n  Haftalik resample...")
-    weekly_dfs = {t: _to_weekly(df) for t, df in stock_dfs.items()}
-    weekly_dfs = {t: df for t, df in weekly_dfs.items() if len(df) >= 25}
+    # ── 4. Timeframe'e gore primary + higher TF veri hazirligi ───────────────
+    if timeframe == 'daily':
+        stock_dfs = daily_dfs
+        print(f"\n  Haftalik resample (higher TF)...")
+        higher_tf_dfs = {t: _to_weekly(df) for t, df in daily_dfs.items()}
+        higher_tf_dfs = {t: df for t, df in higher_tf_dfs.items() if len(df) >= 25}
+    elif timeframe == 'weekly':
+        print(f"\n  Haftalik resample (primary)...")
+        stock_dfs = {t: _to_weekly(df) for t, df in daily_dfs.items()}
+        stock_dfs = {t: df for t, df in stock_dfs.items() if len(df) >= _TF_MIN_BARS['weekly']}
+        print(f"\n  Aylik resample (higher TF)...")
+        higher_tf_dfs = {t: _to_monthly(df) for t, df in daily_dfs.items()}
+        higher_tf_dfs = {t: df for t, df in higher_tf_dfs.items() if len(df) >= 12}
+    else:  # monthly
+        print(f"\n  Aylik resample (primary)...")
+        stock_dfs = {t: _to_monthly(df) for t, df in daily_dfs.items()}
+        stock_dfs = {t: df for t, df in stock_dfs.items() if len(df) >= _TF_MIN_BARS['monthly']}
+        higher_tf_dfs = None  # monthly icin higher TF yok
 
     # ── 5. Backtest veya normal tarama ──────────────────────────────────────
     if args.backtest:
         print(f"\n  Backtest modu: son {args.backtest} bar...")
         t1 = time.time()
-        signals, summary = _run_backtest(stock_dfs, weekly_dfs, args.backtest)
+        signals, summary = _run_backtest(stock_dfs, higher_tf_dfs, args.backtest,
+                                         cfg=cfg, timeframe=timeframe)
         n_scanned = summary.get('n_scanned', 0)
         date_str = summary.get('date_str', datetime.now().strftime('%Y-%m-%d'))
         print(f"  {n_scanned} hisse tarandi, {len(signals)} sinyal ({time.time() - t1:.1f}s)")
-        _print_backtest_summary(summary, args.backtest, n_scanned, date_str)
+        _print_backtest_summary(summary, args.backtest, n_scanned, date_str, timeframe=timeframe)
         if args.csv:
-            _save_backtest_csv(signals, date_str, args.output)
+            _save_backtest_csv(signals, date_str, args.output, timeframe=timeframe)
     else:
-        print(f"\n  Regime transition taramasi...")
+        print(f"\n  Regime transition taramasi ({tf_label.lower()})...")
         t1 = time.time()
-        results, n_scanned, date_str, regime_dist = _scan_all(stock_dfs, weekly_dfs)
+        results, n_scanned, date_str, regime_dist = _scan_all(
+            stock_dfs, higher_tf_dfs, cfg=cfg, timeframe=timeframe)
         print(f"  {n_scanned} hisse tarandi ({time.time() - t1:.1f}s)")
 
         # ── 6. Rapor ─────────────────────────────────────────────────────────
@@ -1451,16 +1558,16 @@ def main():
 
         # ── 7. CSV ───────────────────────────────────────────────────────────
         if args.csv:
-            _save_csv(results, date_str, args.output)
+            _save_csv(results, date_str, args.output, timeframe=timeframe)
 
         # ── 8. HTML ──────────────────────────────────────────────────────────
         if args.html:
-            html = _generate_html(results, n_scanned, date_str, regime_dist)
-            html_path = _save_html(html, date_str, args.output)
+            html = _generate_html(results, n_scanned, date_str, regime_dist, timeframe=timeframe)
+            html_path = _save_html(html, date_str, args.output, timeframe=timeframe)
             subprocess.Popen(['open', html_path])
 
     print(f"\n  Toplam sure: {time.time() - t0:.1f}s")
-    print(f"  NOX Regime Transition tamamlandi.\n")
+    print(f"  NOX Regime Transition ({tf_label}) tamamlandi.\n")
 
 
 if __name__ == '__main__':

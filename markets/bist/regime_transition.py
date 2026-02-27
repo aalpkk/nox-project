@@ -64,6 +64,58 @@ RT_CFG = {
     'stop_swing_lb': 10,
     'stop_atr_initial': 0.5,
     'stop_atr_trail': 2.0,
+    # OE (Overextended)
+    'oe_rsi_period': 14,
+    'oe_rsi_thresh': 80,
+    'oe_bb_period': 20,
+    'oe_bb_mult': 2.0,
+    'oe_momentum_bars': 5,
+    'oe_momentum_thresh': 8,
+    'oe_ema_dist_thresh': 5,
+    # Entry
+    'entry_atr_pct_thresh': 3.0,
+}
+
+RT_CFG_WEEKLY = {
+    'ema_fast': 13, 'ema_slow': 34,
+    'st_period': 10, 'st_mult': 2.5,
+    'weekly_ema_len': 13,
+    'cmf_period': 14, 'rvol_period': 14,
+    'obv_ema_len': 8, 'obv_slope_len': 4,
+    'adx_len': 14, 'adx_slope_len': 4,
+    'atr_len': 14, 'atr_sma_len': 14,
+    'atr_expand_mult': 1.05, 'di_spread_thresh': 5,
+    'exit_ema_len': 13, 'exit_close_below_bars': 1, 'exit_adx_slope_bars': 2,
+    'regime_lookback': 3,
+    'stop_swing_lb': 5, 'stop_atr_initial': 0.5, 'stop_atr_trail': 2.0,
+    'oe_rsi_period': 14, 'oe_rsi_thresh': 80,
+    'oe_bb_period': 14, 'oe_bb_mult': 2.0,
+    'oe_momentum_bars': 3, 'oe_momentum_thresh': 10, 'oe_ema_dist_thresh': 7,
+    'entry_atr_pct_thresh': 5.0,
+}
+
+RT_CFG_MONTHLY = {
+    'ema_fast': 10, 'ema_slow': 21,
+    'st_period': 8, 'st_mult': 2.0,
+    'weekly_ema_len': 10,
+    'cmf_period': 10, 'rvol_period': 10,
+    'obv_ema_len': 6, 'obv_slope_len': 3,
+    'adx_len': 14, 'adx_slope_len': 3,
+    'atr_len': 14, 'atr_sma_len': 10,
+    'atr_expand_mult': 1.05, 'di_spread_thresh': 5,
+    'exit_ema_len': 10, 'exit_close_below_bars': 1, 'exit_adx_slope_bars': 2,
+    'regime_lookback': 2,
+    'stop_swing_lb': 3, 'stop_atr_initial': 0.5, 'stop_atr_trail': 2.0,
+    'oe_rsi_period': 14, 'oe_rsi_thresh': 80,
+    'oe_bb_period': 10, 'oe_bb_mult': 2.0,
+    'oe_momentum_bars': 2, 'oe_momentum_thresh': 12, 'oe_ema_dist_thresh': 8,
+    'entry_atr_pct_thresh': 8.0,
+}
+
+TIMEFRAME_CONFIGS = {
+    'daily': RT_CFG,
+    'weekly': RT_CFG_WEEKLY,
+    'monthly': RT_CFG_MONTHLY,
 }
 
 REGIME_NAMES = {
@@ -782,19 +834,28 @@ def compute_trade_state(regime, close, ema21):
 # OE (OVEREXTENDED) SKORU
 # =============================================================================
 
-def calc_oe_score(df, ema21):
+def calc_oe_score(df, ema21, cfg=None):
     """
     Overextended skoru (0-4). Trade aktifken bugun girmek ne kadar riskli?
-    +1: RSI(14) > 80
-    +1: Fiyat > Ust BB(20, 2.0)
-    +1: Son 5 gunde > %8 yukselis
-    +1: EMA21'den > %5 uzak
+    +1: RSI > threshold
+    +1: Fiyat > Ust BB
+    +1: Son N barda > threshold% yukselis
+    +1: EMA'dan > threshold% uzak
 
     Returns: dict (son bar degerleri)
       - oe_score: int 0-4
       - oe_tags: list[str]
       - oe_warning: bool (score >= 3)
     """
+    cfg = cfg or RT_CFG
+    rsi_period = cfg.get('oe_rsi_period', 14)
+    rsi_thresh = cfg.get('oe_rsi_thresh', 80)
+    bb_period = cfg.get('oe_bb_period', 20)
+    bb_mult = cfg.get('oe_bb_mult', 2.0)
+    mom_bars = cfg.get('oe_momentum_bars', 5)
+    mom_thresh = cfg.get('oe_momentum_thresh', 8)
+    ema_dist_thresh = cfg.get('oe_ema_dist_thresh', 5)
+
     close = df['close']
     last = len(df) - 1
     last_close = float(close.iloc[last])
@@ -802,42 +863,42 @@ def calc_oe_score(df, ema21):
     tags = []
     score = 0
 
-    # 1. RSI(14) > 80
+    # 1. RSI > threshold
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = (-delta).clip(lower=0)
-    avg_gain = _pine_rma(gain, 14)
-    avg_loss = _pine_rma(loss, 14)
+    avg_gain = _pine_rma(gain, rsi_period)
+    avg_loss = _pine_rma(loss, rsi_period)
     rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100 - 100 / (1 + rs)
     last_rsi = float(rsi.iloc[last]) if pd.notna(rsi.iloc[last]) else 50.0
-    if last_rsi > 80:
+    if last_rsi > rsi_thresh:
         score += 1
         tags.append(f'RSI {last_rsi:.0f}')
 
-    # 2. Fiyat > Ust BB(20, 2.0)
-    bb_sma = close.rolling(20).mean()
-    bb_std = close.rolling(20).std()
-    bb_upper = bb_sma + 2.0 * bb_std
+    # 2. Fiyat > Ust BB
+    bb_sma = close.rolling(bb_period).mean()
+    bb_std = close.rolling(bb_period).std()
+    bb_upper = bb_sma + bb_mult * bb_std
     last_bb = float(bb_upper.iloc[last]) if pd.notna(bb_upper.iloc[last]) else 0.0
     if last_bb > 0 and last_close > last_bb:
         score += 1
         tags.append('BB ustu')
 
-    # 3. Son 5 gunde > %8 yukselis
-    if last > 4:
-        close_5ago = float(close.iloc[last - 5])
-        if close_5ago > 0:
-            momentum_5g = (last_close - close_5ago) / close_5ago * 100
-            if momentum_5g > 8:
+    # 3. Son N barda > threshold% yukselis
+    if last > mom_bars:
+        close_ago = float(close.iloc[last - mom_bars])
+        if close_ago > 0:
+            momentum = (last_close - close_ago) / close_ago * 100
+            if momentum > mom_thresh:
                 score += 1
-                tags.append(f'5G +{momentum_5g:.1f}%')
+                tags.append(f'{mom_bars}B +{momentum:.1f}%')
 
-    # 4. EMA21'den > %5 uzak
+    # 4. EMA'dan > threshold% uzak
     last_ema = float(ema21.iloc[last]) if pd.notna(ema21.iloc[last]) else 0.0
     if last_ema > 0:
         ema_dist = (last_close - last_ema) / last_ema * 100
-        if ema_dist > 5:
+        if ema_dist > ema_dist_thresh:
             score += 1
             tags.append(f'EMA +{ema_dist:.1f}%')
 
