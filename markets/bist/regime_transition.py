@@ -77,11 +77,12 @@ RT_CFG = {
 }
 
 RT_CFG_WEEKLY = {
-    'ema_fast': 13, 'ema_slow': 34,
+    # Sweep sonucu: CMF8+EMA10/21+OBV12 (3H WR 50.3%, 5H 50.4%, 10H 50.6%)
+    'ema_fast': 10, 'ema_slow': 21,
     'st_period': 10, 'st_mult': 2.5,
     'weekly_ema_len': 13,
-    'cmf_period': 14, 'rvol_period': 14,
-    'obv_ema_len': 8, 'obv_slope_len': 4,
+    'cmf_period': 8, 'rvol_period': 8,
+    'obv_ema_len': 12, 'obv_slope_len': 6,
     'adx_len': 14, 'adx_slope_len': 4,
     'atr_len': 14, 'atr_sma_len': 14,
     'atr_expand_mult': 1.05, 'di_spread_thresh': 5,
