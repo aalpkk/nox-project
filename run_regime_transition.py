@@ -448,7 +448,7 @@ def _build_trade_guide_extra(timeframe):
 &#8226; Stop: Haftalik swing low - 0.5*ATR (gunluge gore daha genis, %5-10 arasi normal)<br>
 &#8226; Cikis: Haftalik kapanis EMA21 altinda veya Exit Stage >=2<br>
 <br>
-<b style="color:var(--nox-cyan)">Backtest Sonuclari (80 hafta, 531 hisse, N=3848 AL)</b>
+<b style="color:var(--nox-cyan)">Backtest Sonuclari (80 hafta, 531 hisse, N=3683 AL)</b>
 <table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
 <tr {_ROW_H}>
   <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Pencere Bazinda</td></tr>
@@ -472,30 +472,105 @@ def _build_trade_guide_extra(timeframe):
 <tr {_ROW_H}>
   <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis Tipi (3H)</td></tr>
 <tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;FULL &#9733;</b></td>
+  <td {_TD_G}>WR %58.7</td>
+  <td {_TD}>Ort +4.34%</td>
+  <td {_TD_M}>N=254</td></tr>
+<tr {_ROW_B}>
   <td {_TD}><b>CHOPPY&#8594;FULL</b></td>
-  <td {_TD_G}>WR %51.7</td>
-  <td {_TD}>Ort +3.47%</td>
-  <td {_TD_M}>N=412</td></tr>
+  <td {_TD}>WR %51.7</td>
+  <td {_TD}>Ort +3.50%</td>
+  <td {_TD_M}>N=410</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>TREND&#8594;FULL</b></td>
   <td {_TD}>WR %49.9</td>
-  <td {_TD}>Ort +2.43%</td>
-  <td {_TD_M}>N=1022</td></tr>
+  <td {_TD}>Ort +2.44%</td>
+  <td {_TD_M}>N=1017</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>GRI&#8594;TREND</b></td>
-  <td {_TD}>WR %49.0</td>
-  <td {_TD}>Ort +2.14%</td>
-  <td {_TD_M}>N=545</td></tr>
+  <td {_TD}>WR %49.3</td>
+  <td {_TD}>Ort +2.23%</td>
+  <td {_TD_M}>N=542</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>CHOPPY&#8594;TREND</b></td>
-  <td {_TD}>WR %49.1</td>
+  <td {_TD}>WR %48.9</td>
   <td {_TD}>Ort +1.57%</td>
-  <td {_TD_M}>N=605</td></tr>
+  <td {_TD_M}>N=603</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;GRI</b></td>
+  <td {_TD}>WR %49.1</td>
+  <td {_TD}>Ort +1.25%</td>
+  <td {_TD_M}>N=857</td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Giris Skoru (3H)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 3</b></td>
+  <td {_TD_R}>WR %48.5</td>
+  <td {_TD}>Ort +1.37%</td>
+  <td {_TD_M}>N=1211</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 2</b></td>
+  <td {_TD}>WR %50.8</td>
+  <td {_TD}>Ort +2.36%</td>
+  <td {_TD_M}>N=966</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 1</b></td>
+  <td {_TD}>WR %51.9</td>
+  <td {_TD}>Ort +2.77%</td>
+  <td {_TD_M}>N=1211</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 0</b></td>
+  <td {_TD}>WR %48.8</td>
+  <td {_TD}>Ort +3.26%</td>
+  <td {_TD_M}>N=293</td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="5" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis x Skor Capraz (3H, N&#8805;10)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;FULL S0</b></td>
+  <td {_TD_G}>WR %61.5</td>
+  <td {_TD}>Ort +4.71%</td>
+  <td {_TD_M}>N=39</td>
+  <td {_TD_M}>&#9733;</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;FULL S1</b></td>
+  <td {_TD_G}>WR %58.9</td>
+  <td {_TD}>Ort +4.45%</td>
+  <td {_TD_M}>N=151</td>
+  <td {_TD_M}>&#9733;</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;FULL S2</b></td>
+  <td {_TD_G}>WR %56.2</td>
+  <td {_TD}>Ort +3.85%</td>
+  <td {_TD_M}>N=64</td>
+  <td {_TD_M}></td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;FULL S2</b></td>
+  <td {_TD_G}>WR %56.1</td>
+  <td {_TD}>Ort +3.71%</td>
+  <td {_TD_M}>N=41</td>
+  <td {_TD_M}></td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;FULL S1</b></td>
+  <td {_TD}>WR %54.2</td>
+  <td {_TD}>Ort +4.24%</td>
+  <td {_TD_M}>N=225</td>
+  <td {_TD_M}></td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;TREND S2</b></td>
+  <td {_TD}>WR %52.2</td>
+  <td {_TD}>Ort +3.15%</td>
+  <td {_TD_M}>N=251</td>
+  <td {_TD_M}></td></tr>
 </table>
 <b style="color:var(--nox-yellow)">Onemli Notlar</b><br>
-&#8226; Haftalik WR ~%50 — tek basina edge dusuk, <b>giris skoru + gecis tipi</b> ile filtrele<br>
-&#8226; Ortalama getiri pozitif (+2-7%) — kazananlar kaybedenlerden buyuk<br>
-&#8226; CHOPPY&#8594;FULL en iyi gecis tipi (WR %51.7, Ort +3.47%)<br>
+&#8226; Haftalik genel WR ~%50 — <b>tek basina edge dusuk</b>, gecis tipi kritik<br>
+&#8226; <b>GRI&#8594;FULL en iyi gecis</b>: WR %58.7, Ort +4.34% (N=254) — bu gecisi oncelikle takip et<br>
+&#8226; Giris skoru haftalikta <b>ayirici degil</b> (Score3 %48.5 &lt; Score1 %51.9) — skor filtresi KULLANMA<br>
+&#8226; Ortalama getiri pozitif (+2-7%) — kazananlar kaybedenlerden buyuk, risk/odul olumlu<br>
 &#8226; Gunluk tarama ile birlestir: haftalik AL + gunluk pullback = en iyi kombinasyon<br>
 </div>
 </details>"""
@@ -516,7 +591,7 @@ def _build_trade_guide_extra(timeframe):
 &#8226; Stop: Aylik swing low - 0.5*ATR (genis stop, %10-15 arasi normal)<br>
 &#8226; Cikis: Aylik kapanis EMA21 altinda veya Exit Stage >=2<br>
 <br>
-<b style="color:var(--nox-cyan)">Backtest Sonuclari (60 ay, 490 hisse, N=3236 AL)</b>
+<b style="color:var(--nox-cyan)">Backtest Sonuclari (60 ay, 490 hisse, N=3052 AL)</b>
 <table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
 <tr {_ROW_H}>
   <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Pencere Bazinda</td></tr>
@@ -540,56 +615,122 @@ def _build_trade_guide_extra(timeframe):
 <tr {_ROW_H}>
   <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis Tipi (2A)</td></tr>
 <tr {_ROW_B}>
-  <td {_TD}><b>CHOPPY&#8594;FULL</b></td>
-  <td {_TD_G}>WR %63.6</td>
-  <td {_TD}>Ort +15.89%</td>
-  <td {_TD_M}>N=832</td></tr>
+  <td {_TD}><b>CHOPPY&#8594;FULL &#9733;</b></td>
+  <td {_TD_G}>WR %63.5</td>
+  <td {_TD}>Ort +15.93%</td>
+  <td {_TD_M}>N=822</td></tr>
 <tr {_ROW_B}>
-  <td {_TD}><b>CHOPPY&#8594;TREND</b></td>
+  <td {_TD}><b>CHOPPY&#8594;TREND &#9733;</b></td>
   <td {_TD_G}>WR %62.0</td>
   <td {_TD}>Ort +17.02%</td>
   <td {_TD_M}>N=376</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>GRI&#8594;TREND</b></td>
-  <td {_TD_G}>WR %60.3</td>
-  <td {_TD}>Ort +13.24%</td>
-  <td {_TD_M}>N=300</td></tr>
+  <td {_TD_G}>WR %60.5</td>
+  <td {_TD}>Ort +13.33%</td>
+  <td {_TD_M}>N=299</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;GRI</b></td>
+  <td {_TD_G}>WR %59.0</td>
+  <td {_TD}>Ort +12.92%</td>
+  <td {_TD_M}>N=502</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>TREND&#8594;FULL</b></td>
   <td {_TD_G}>WR %58.8</td>
   <td {_TD}>Ort +14.53%</td>
-  <td {_TD_M}>N=880</td></tr>
+  <td {_TD_M}>N=877</td></tr>
 <tr {_ROW_B}>
-  <td {_TD}><b>CHOPPY&#8594;GRI</b></td>
-  <td {_TD_G}>WR %58.9</td>
-  <td {_TD}>Ort +12.84%</td>
-  <td {_TD_M}>N=504</td></tr>
+  <td {_TD}><b>GRI&#8594;FULL</b></td>
+  <td {_TD}>WR %56.8</td>
+  <td {_TD}>Ort +11.63%</td>
+  <td {_TD_M}>N=176</td></tr>
 </table>
 <table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
 <tr {_ROW_H}>
   <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Giris Skoru (2A)</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>Score 3</b></td>
-  <td {_TD_G}>WR %60.2</td>
-  <td {_TD}>Ort +14.21%</td>
-  <td {_TD_M}>N=719</td></tr>
+  <td {_TD_G}>WR %60.3</td>
+  <td {_TD}>Ort +14.31%</td>
+  <td {_TD_M}>N=716</td></tr>
 <tr {_ROW_B}>
   <td {_TD}><b>Score 2</b></td>
-  <td {_TD_G}>WR %63.0</td>
+  <td {_TD_G}>WR %62.9</td>
   <td {_TD}>Ort +15.22%</td>
-  <td {_TD_M}>N=822</td></tr>
+  <td {_TD_M}>N=820</td></tr>
 <tr {_ROW_B}>
-  <td {_TD}><b>Score <=1</b></td>
-  <td {_TD_G}>WR %59.3</td>
-  <td {_TD}>Ort +14.50%</td>
-  <td {_TD_M}>N=1528</td></tr>
+  <td {_TD}><b>Score 1</b></td>
+  <td {_TD_G}>WR %60.0</td>
+  <td {_TD}>Ort +14.57%</td>
+  <td {_TD_M}>N=1254</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Score 0</b></td>
+  <td {_TD}>WR %56.5</td>
+  <td {_TD}>Ort +14.30%</td>
+  <td {_TD_M}>N=262</td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="5" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Gecis x Skor Capraz (2A, N&#8805;10)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;FULL S2</b></td>
+  <td {_TD_G}>WR %69.0</td>
+  <td {_TD}>Ort +15.07%</td>
+  <td {_TD_M}>N=29</td>
+  <td {_TD_M}>&#9733;</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;FULL S2</b></td>
+  <td {_TD_G}>WR %66.1</td>
+  <td {_TD}>Ort +13.46%</td>
+  <td {_TD_M}>N=186</td>
+  <td {_TD_M}>&#9733;</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;TREND S3</b></td>
+  <td {_TD_G}>WR %65.7</td>
+  <td {_TD}>Ort +22.45%</td>
+  <td {_TD_M}>N=181</td>
+  <td {_TD_M}>&#9733;</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>CHOPPY&#8594;FULL S1</b></td>
+  <td {_TD_G}>WR %64.8</td>
+  <td {_TD}>Ort +17.74%</td>
+  <td {_TD_M}>N=463</td>
+  <td {_TD_M}></td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>GRI&#8594;TREND S2</b></td>
+  <td {_TD_G}>WR %63.3</td>
+  <td {_TD}>Ort +15.56%</td>
+  <td {_TD_M}>N=210</td>
+  <td {_TD_M}></td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>TREND&#8594;FULL S2</b></td>
+  <td {_TD_G}>WR %63.0</td>
+  <td {_TD}>Ort +18.61%</td>
+  <td {_TD_M}>N=165</td>
+  <td {_TD_M}></td></tr>
+</table>
+<table style="width:100%;font-size:0.74rem;margin-top:4px;margin-bottom:8px;border-collapse:collapse">
+<tr {_ROW_H}>
+  <td colspan="4" style="padding:4px 6px;color:var(--nox-green);font-weight:700">Exit Stage (2A)</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Exit 0</b></td>
+  <td {_TD_G}>WR %60.9</td>
+  <td {_TD}>Ort +15.23%</td>
+  <td {_TD_M}>N=2798</td></tr>
+<tr {_ROW_B}>
+  <td {_TD}><b>Exit 1</b></td>
+  <td {_TD}>WR %56.7</td>
+  <td {_TD}>Ort +8.40%</td>
+  <td {_TD_M}>N=254</td></tr>
 </table>
 <b style="color:var(--nox-green)">Onemli Notlar</b><br>
 &#8226; Aylik en guclu timeframe — <b>WR %60-65, Ort +14-38%</b><br>
-&#8226; Tum gecis tipleri karli (WR %58-64 arasi)<br>
-&#8226; CHOPPY&#8594;FULL + CHOPPY&#8594;TREND en yuksek getirili gecisler<br>
+&#8226; Tum gecis tipleri karli (WR %57-64 arasi)<br>
+&#8226; <b>CHOPPY&#8594;FULL + CHOPPY&#8594;TREND</b> en yuksek getirili gecisler (WR %62-64)<br>
+&#8226; En iyi capraz: <b>CHOPPY&#8594;TREND S3</b> (WR %65.7, Ort +22.45%) ve <b>CHOPPY&#8594;FULL S2</b> (WR %66.1)<br>
 &#8226; 6 aylik pencerede WR %65.4, Ort +38.35% — uzun tutma oduluyor<br>
-&#8226; Giris skoru aylikta daha az ayirici — tum skorlar WR %59-63 arasi<br>
+&#8226; Giris skoru aylikta daha az ayirici (tum skorlar WR %57-63) — <b>gecis tipi oncelikli</b><br>
+&#8226; Exit==0 filtrele: WR %60.9 vs Exit1 %56.7<br>
 &#8226; Pozisyon yonetimi: Baslangicta %50 gir, haftalik pullback'te %50 ekle<br>
 </div>
 </details>"""
