@@ -1,0 +1,57 @@
+name: NOX Divergence Screener
+on:
+  schedule:
+    - cron: '15 15 * * 5'   # Cuma 15:15 UTC = 18:15 TR (NOX v3'ten 15dk sonra)
+  workflow_dispatch:          # Manuel tetikleme
+
+jobs:
+  divergence-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_divergence.py --csv --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: divergence-daily-${{ github.run_number }}
+          path: output/nox_divergence_*.csv
+
+  divergence-weekly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_divergence.py --weekly --period 5y --scan-bars 6 --csv --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: divergence-weekly-${{ github.run_number }}
+          path: output/nox_divergence_*.csv
+
+  divergence-monthly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_divergence.py --monthly --period 5y --scan-bars 6 --csv --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: divergence-monthly-${{ github.run_number }}
+          path: output/nox_divergence_*.csv

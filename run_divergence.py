@@ -35,6 +35,7 @@ from markets.bist.divergence import (
     _calc_atr, _calc_rsi, _calc_macd, _calc_obv, _calc_mfi, _calc_adx,
 )
 from core.indicators import ema, resample_weekly, resample_monthly
+from core.reports import send_telegram
 
 
 # =============================================================================
@@ -543,6 +544,85 @@ def _save_csv(all_results, date_str, output_dir):
 
 
 # =============================================================================
+# TELEGRAM
+# =============================================================================
+
+def _format_telegram(all_results, n_scanned, date_str, tf_label=''):
+    """Telegram HTML mesaji olustur."""
+    tf_tag = f" {tf_label.strip()}" if tf_label.strip() else ''
+    lines = [f"📊 <b>NOX Uyumsuzluk{tf_tag}</b> — {date_str}\n"]
+
+    # Sayimlar
+    counts = {}
+    type_labels = {'triple': 'UCLU', 'rsi': 'RSI', 'macd': 'MACD',
+                   'obv': 'OBV', 'mfi': 'MFI', 'adx': 'ADX', 'pv': 'FH'}
+    for sig_type, items in all_results.items():
+        if items:
+            counts[sig_type] = len(items)
+    parts = [f"{c} {type_labels[k]}" for k, c in counts.items() if c > 0]
+    lines.append(f"📋 {n_scanned} hisse | {' | '.join(parts)}\n")
+
+    def _fmt_items(items, emoji, title, min_q, max_n, sig_type):
+        """Bir bolum icin satir listesi."""
+        filtered = [i for i in items if i['signal'].quality >= min_q]
+        filtered.sort(key=lambda x: x['signal'].quality, reverse=True)
+        filtered = filtered[:max_n]
+        if not filtered:
+            return
+        lines.append(f"{emoji} <b>{title}</b>")
+        for item in filtered:
+            sig = item['signal']
+            d = sig.details
+            detail_parts = []
+            if sig_type == 'triple':
+                vol_r = d.get('vol_ratio', 0)
+                if vol_r > 0:
+                    detail_parts.append(f"RSI+MACD x{vol_r:.1f}")
+                if d.get('has_mfi'):
+                    detail_parts.append("MFI+")
+            elif sig_type == 'rsi':
+                tip = 'Klasik' if sig.div_type == 'RSI_CLASSIC' else 'Gizli'
+                r1 = d.get('prev_rsi', 0)
+                r2 = d.get('curr_rsi', 0)
+                detail_parts.append(f"{tip} {r1:.1f}→{r2:.1f}")
+            elif sig_type == 'macd':
+                tip = 'Klasik' if sig.div_type == 'MACD_CLASSIC' else 'Gizli'
+                detail_parts.append(tip)
+            det = ' '.join(detail_parts) if detail_parts else ''
+            det_str = f" {det}" if det else ''
+            lines.append(f"  <code>{item['ticker']:<6}</code> {item['close']:>8.2f} K:{sig.quality}{det_str}")
+        lines.append('')
+
+    # Triple SAT/AL
+    triple = all_results.get('triple', [])
+    triple_sell = [i for i in triple if i['signal'].direction == 'SELL']
+    triple_buy = [i for i in triple if i['signal'].direction == 'BUY']
+    _fmt_items(triple_sell, '🔻', 'UCLU SAT (K≥50)', 50, 10, 'triple')
+    _fmt_items(triple_buy, '🟢', 'UCLU AL (K≥50)', 50, 10, 'triple')
+
+    # RSI SAT/AL
+    rsi = all_results.get('rsi', [])
+    rsi_sell = [i for i in rsi if i['signal'].direction == 'SELL']
+    rsi_buy = [i for i in rsi if i['signal'].direction == 'BUY']
+    _fmt_items(rsi_sell, '📉', 'RSI SAT (K≥40)', 40, 10, 'rsi')
+    _fmt_items(rsi_buy, '📈', 'RSI AL (K≥40)', 40, 10, 'rsi')
+
+    # MACD SAT/AL
+    macd = all_results.get('macd', [])
+    macd_sell = [i for i in macd if i['signal'].direction == 'SELL']
+    macd_buy = [i for i in macd if i['signal'].direction == 'BUY']
+    _fmt_items(macd_sell, '📉', 'MACD SAT (K≥50)', 50, 5, 'macd')
+    _fmt_items(macd_buy, '📈', 'MACD AL (K≥50)', 50, 5, 'macd')
+
+    # Toplam ozet
+    total_buy = sum(1 for items in all_results.values() for i in items if i['signal'].direction == 'BUY')
+    total_sell = sum(1 for items in all_results.values() for i in items if i['signal'].direction == 'SELL')
+    lines.append(f"<b>Toplam:</b> {total_buy} AL + {total_sell} SAT")
+
+    return '\n'.join(lines)
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -562,6 +642,8 @@ def main():
                         help='Haftalik veri ile tara (daily resample)')
     parser.add_argument('--monthly', action='store_true',
                         help='Aylik veri ile tara (daily resample)')
+    parser.add_argument('--notify', action='store_true',
+                        help='Telegram bildirimi gonder')
     args = parser.parse_args()
 
     # ── 1. Ticker listesi ────────────────────────────────────────────────────
@@ -648,6 +730,11 @@ def main():
     # ── 6. CSV ───────────────────────────────────────────────────────────────
     if args.csv:
         _save_csv(all_results, date_str, args.output)
+
+    # ── 7. Telegram ───────────────────────────────────────────────────────────
+    if args.notify:
+        msg = _format_telegram(all_results, n_scanned, date_str, tf_label)
+        send_telegram(msg)
 
     print(f"\n  Toplam sure: {time.time() - t0:.1f}s")
     print(f"  NOX Divergence v2 tamamlandi.")
