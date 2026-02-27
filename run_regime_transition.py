@@ -71,7 +71,7 @@ def _entry_window(days_since):
         return 'GEC'        # Sinyal eskimis
 
 
-def _to_weekly(df):
+def _to_weekly(df, include_incomplete=False):
     weekly = df.resample('W-FRI').agg({
         'open': 'first',
         'high': 'max',
@@ -79,7 +79,7 @@ def _to_weekly(df):
         'close': 'last',
         'volume': 'sum',
     }).dropna(subset=['close'])
-    if len(weekly) > 0:
+    if not include_incomplete and len(weekly) > 0:
         last_friday = weekly.index[-1]
         last_data_date = df.index[-1]
         if last_data_date < last_friday:
@@ -87,7 +87,7 @@ def _to_weekly(df):
     return weekly
 
 
-def _to_monthly(df):
+def _to_monthly(df, include_incomplete=False):
     monthly = df.resample('ME').agg({
         'open': 'first',
         'high': 'max',
@@ -95,7 +95,7 @@ def _to_monthly(df):
         'close': 'last',
         'volume': 'sum',
     }).dropna(subset=['close'])
-    if len(monthly) > 0:
+    if not include_incomplete and len(monthly) > 0:
         last_month_end = monthly.index[-1]
         last_data_date = df.index[-1]
         if last_data_date < last_month_end:
@@ -1523,14 +1523,14 @@ def main():
         higher_tf_dfs = {t: df for t, df in higher_tf_dfs.items() if len(df) >= 25}
     elif timeframe == 'weekly':
         print(f"\n  Haftalik resample (primary)...")
-        stock_dfs = {t: _to_weekly(df) for t, df in daily_dfs.items()}
+        stock_dfs = {t: _to_weekly(df, include_incomplete=True) for t, df in daily_dfs.items()}
         stock_dfs = {t: df for t, df in stock_dfs.items() if len(df) >= _TF_MIN_BARS['weekly']}
         print(f"\n  Aylik resample (higher TF)...")
         higher_tf_dfs = {t: _to_monthly(df) for t, df in daily_dfs.items()}
         higher_tf_dfs = {t: df for t, df in higher_tf_dfs.items() if len(df) >= 12}
     else:  # monthly
         print(f"\n  Aylik resample (primary)...")
-        stock_dfs = {t: _to_monthly(df) for t, df in daily_dfs.items()}
+        stock_dfs = {t: _to_monthly(df, include_incomplete=True) for t, df in daily_dfs.items()}
         stock_dfs = {t: df for t, df in stock_dfs.items() if len(df) >= _TF_MIN_BARS['monthly']}
         higher_tf_dfs = None  # monthly icin higher TF yok
 
