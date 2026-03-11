@@ -1,0 +1,28 @@
+name: NOX US Catalyst Screener
+on:
+  schedule:
+    - cron: '0 22 * * 1-5'  # Pzt-Cuma 22:00 UTC = 18:00 ET (US market kapanis +2h)
+  workflow_dispatch:         # Manuel tetikleme
+
+jobs:
+  us-catalyst:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_us_catalyst.py --html --csv --notify
+        timeout-minutes: 20
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: us-catalyst-${{ github.run_number }}
+          path: |
+            output/us_catalyst_*.csv
+            output/us_catalyst_*.html
