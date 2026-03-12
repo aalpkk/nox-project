@@ -432,11 +432,12 @@ def _print_results(results, n_scanned, date_str, regime_dist, transitions_only=F
 # CSV
 # =============================================================================
 
-def _save_csv(results, date_str, output_dir, timeframe='daily'):
+def _save_csv(results, date_str, output_dir, timeframe='daily',
+              weekly_al_pb=None):
     os.makedirs(output_dir, exist_ok=True)
     rows = []
     for s in results:
-        rows.append({
+        row = {
             'ticker': s.ticker,
             'date': s.date.strftime('%Y-%m-%d') if hasattr(s.date, 'strftime') else str(s.date),
             'regime': s.regime,
@@ -462,7 +463,12 @@ def _save_csv(results, date_str, output_dir, timeframe='daily'):
             'rvol': round(s.rvol, 2),
             'di_spread': round(s.di_spread, 2),
             'atr': round(s.atr, 4),
-        })
+        }
+        # Badge: H+PB (haftalik AL + gunluk pullback), H+AL (haftalik AL aktif)
+        if weekly_al_pb and s.ticker in weekly_al_pb:
+            info = weekly_al_pb[s.ticker]
+            row['badge'] = 'H+PB' if info['pb'] else 'H+AL'
+        rows.append(row)
     if rows:
         csv_df = pd.DataFrame(rows)
         tf_suffix = f"_{timeframe}" if timeframe != 'daily' else ''
@@ -1999,11 +2005,7 @@ def main():
         # ── 6. Rapor ─────────────────────────────────────────────────────────
         _print_results(results, n_scanned, date_str, regime_dist)
 
-        # ── 7. CSV ───────────────────────────────────────────────────────────
-        if args.csv:
-            _save_csv(results, date_str, args.output, timeframe=timeframe)
-
-        # ── 8. Haftalik AL + gunluk pullback (sadece daily tarama icin) ───
+        # ── 7. Haftalik AL + gunluk pullback (badge hesaplama, CSV'den once) ─
         weekly_al_pb = None
         if timeframe == 'daily' and results:
             weekly_al_pb = _compute_weekly_al_with_daily_pb(
@@ -2011,6 +2013,11 @@ def main():
             n_wal = len(weekly_al_pb)
             n_pb = sum(1 for v in weekly_al_pb.values() if v['pb'])
             print(f"  Haftalik AL: {n_wal} hisse | H+PB: {n_pb} hisse")
+
+        # ── 8. CSV (badge bilgisi dahil) ─────────────────────────────────────
+        if args.csv:
+            _save_csv(results, date_str, args.output, timeframe=timeframe,
+                      weekly_al_pb=weekly_al_pb)
 
         # ── 9. HTML ──────────────────────────────────────────────────────────
         html_url = None

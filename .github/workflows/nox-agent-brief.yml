@@ -1,0 +1,59 @@
+name: NOX Agent Briefing
+on:
+  schedule:
+    - cron: '45 15 * * 1-5'  # 18:45 TR — tüm screener'lardan sonra
+  workflow_run:
+    workflows:
+      - "NOX v3 Weekly Screener"
+      - "NOX Regime Transition Screener"
+    types: [completed]
+  workflow_dispatch:  # Manuel tetikleme
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      # workflow_run tetiklendiğinde: o run'ın artifact'larını hızlıca indir
+      - name: Download triggering workflow artifacts
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GH_TOKEN }}
+          path: output/
+          merge-multiple: true
+        continue-on-error: true
+
+      # Faz 1: Ön analiz shortlist — takas/kademe verisi gerekli hisseleri Telegram'a gönder
+      - name: Send shortlist (Phase 1)
+        run: python -m agent.briefing --shortlist --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
+      - name: Generate full briefing (Phase 2)
+        run: python -m agent.briefing --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+          GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: briefing-${{ github.run_number }}
+          path: |
+            output/nox_briefing_*.html

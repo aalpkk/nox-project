@@ -12,5 +12,12 @@ nox_*.csv
 nox_backtest_*.html
 nox_backtest_*.csv
 
+# Secrets
+.env
+
+# Agent kişisel veriler
+agent/portfolio.json
+agent/daily_input/
+
 # Claude Code
 .claude/

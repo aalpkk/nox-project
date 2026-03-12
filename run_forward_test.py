@@ -50,6 +50,7 @@ _CSV_PATTERNS_OUTPUT = [
     (re.compile(r'^nox_divergence_(\d{8})\.csv$'),        'divergence'),
     # GitHub artifact'leri de output/'a indirilir
     (re.compile(r'^rejim_v3_signals_(\d{8})\.csv$'),      'rejim_v3'),
+    (re.compile(r'^alsat_signals_(\d{8})\.csv$'),         'rejim_v3'),
     (re.compile(r'^combo_signals_(\d{8})\.csv$'),         'combo'),
 ]
 
@@ -87,6 +88,22 @@ def discover_csvs(output_dir, target_date=None):
     # Birleştir
     for scr, items in root_found.items():
         found.setdefault(scr, []).extend(items)
+
+    # Aynı tarih için rejim_v3: alsat_signals tercih et (OE verisi var)
+    if 'rejim_v3' in found:
+        items = found['rejim_v3']
+        date_map = {}
+        for date_str, path in items:
+            fname = os.path.basename(path)
+            is_alsat = fname.startswith('alsat_signals_')
+            if date_str not in date_map:
+                date_map[date_str] = (path, is_alsat)
+            else:
+                _, prev_alsat = date_map[date_str]
+                # alsat varsa onu tercih et
+                if is_alsat and not prev_alsat:
+                    date_map[date_str] = (path, is_alsat)
+        found['rejim_v3'] = [(d, p) for d, (p, _) in sorted(date_map.items())]
 
     # Tarih filtresi
     result = {}
@@ -216,7 +233,7 @@ def _parse_rejim_v3(path, date_str):
     sig_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
     signals = []
     for _, row in df.iterrows():
-        signals.append({
+        entry = {
             'screener': 'rejim_v3',
             'ticker': str(row['ticker']).strip(),
             'signal_date': sig_date,
@@ -229,7 +246,16 @@ def _parse_rejim_v3(path, date_str):
             'adx_val': round(float(row['adx']), 1) if pd.notna(row.get('adx')) else None,
             'adx_slope_val': round(float(row['adx_slope']), 2) if pd.notna(row.get('adx_slope')) else None,
             'regime': str(row.get('regime', '')).strip(),
-        })
+        }
+        # OE skoru (alsat_signals formatinda mevcut)
+        if pd.notna(row.get('oe')):
+            entry['oe'] = int(row['oe'])
+            entry['oe_detail'] = str(row.get('oe_detail', '')).strip()
+        # Karar (AL/İZLE/ATLA)
+        karar = str(row.get('karar', '')).strip()
+        if karar and karar != 'nan':
+            entry['karar'] = karar
+        signals.append(entry)
     return signals
 
 
@@ -294,6 +320,8 @@ def parse_all_csvs(csv_map):
                     sigs = _parse_combo(path, date_str)
                 else:
                     continue
+                for s in sigs:
+                    s['csv_date'] = date_str  # YYYYMMDD formatı
                 all_signals.extend(sigs)
                 scr_total += len(sigs)
             except Exception as e:
@@ -303,6 +331,52 @@ def parse_all_csvs(csv_map):
             extra = f" ({n_dates} tarih)" if n_dates > 1 else ""
             print(f"  {screener}: {scr_total} sinyal{extra}")
     return all_signals
+
+
+def build_xref(all_signals):
+    """Sinyal çapraz referans haritası: (ticker, csv_date) → {screener: [signals]}"""
+    xref = {}
+    for s in all_signals:
+        key = (s['ticker'], s.get('csv_date', ''))
+        xref.setdefault(key, {}).setdefault(s['screener'], []).append(s)
+    return xref
+
+
+def annotate_confluence(signals, xref):
+    """NW sinyallerine çapraz sinyal bilgisi ekle."""
+    for s in signals:
+        if s['screener'] != 'nox_v3_weekly':
+            continue
+        key = (s['ticker'], s.get('csv_date', ''))
+        peers = xref.get(key, {})
+
+        # Divergence çakışması
+        div_sigs = peers.get('divergence', [])
+        if div_sigs:
+            agree = [d for d in div_sigs if d['direction'] == s['direction']]
+            conflict = [d for d in div_sigs if d['direction'] != s['direction']]
+            if agree:
+                s['xdiv'] = 'agree'
+            elif conflict:
+                s['xdiv'] = 'conflict'
+            else:
+                s['xdiv'] = 'any'
+            s['xdiv_q'] = max((d.get('quality') or 0) for d in div_sigs)
+            s['xdiv_n'] = len(div_sigs)
+        else:
+            s['xdiv'] = None
+
+        # Rejim v3 çakışması
+        rt_sigs = peers.get('rejim_v3', [])
+        s['xrt'] = bool(rt_sigs)
+
+        # SMC çakışması
+        smc_sigs = peers.get('smc', [])
+        if smc_sigs:
+            agree = [d for d in smc_sigs if d['direction'] == s['direction']]
+            s['xsmc'] = 'agree' if agree else 'conflict'
+        else:
+            s['xsmc'] = None
 
 
 # =============================================================================
@@ -366,7 +440,9 @@ def fetch_github_csvs(output_dir):
             for fname in os.listdir(tmp_dir):
                 if not fname.endswith('.csv'):
                     continue
-                if 'rejim_v3_signals_' not in fname and 'combo_signals_' not in fname:
+                if ('rejim_v3_signals_' not in fname
+                        and 'combo_signals_' not in fname
+                        and 'alsat_signals_' not in fname):
                     continue
                 dst = os.path.join(output_dir, fname)
                 if os.path.exists(dst):
@@ -424,10 +500,64 @@ def _compute_indicators(df):
     return rsi, macd_hist
 
 
+def _compute_oe_series(df):
+    """Bir hisse için OE (Overextended) bileşenlerini hesapla.
+    5 bileşen — her bar için:
+      +1: RSI(2) > 90
+      +1: RSI(14) > 70
+      +1: Close > Upper BB(20, 2σ)
+      +1: ATR(14) > SMA(ATR, 20) * 1.05
+      +1: Close > EMA(21) * 1.05
+    Returns: oe_score Series, oe_detail Series"""
+    close = df['Close']
+    high = df['High']
+    low = df['Low']
+
+    # RSI(2)
+    d2 = close.diff()
+    g2 = d2.clip(lower=0).ewm(alpha=1/2, min_periods=2).mean()
+    l2 = (-d2).clip(lower=0).ewm(alpha=1/2, min_periods=2).mean()
+    rsi2 = 100 - 100 / (1 + g2 / l2.replace(0, np.nan))
+
+    # RSI(14)
+    d14 = close.diff()
+    g14 = d14.clip(lower=0).ewm(alpha=1/14, min_periods=14).mean()
+    l14 = (-d14).clip(lower=0).ewm(alpha=1/14, min_periods=14).mean()
+    rsi14 = 100 - 100 / (1 + g14 / l14.replace(0, np.nan))
+
+    # Bollinger Band %B
+    bb_sma = close.rolling(20).mean()
+    bb_std = close.rolling(20).std()
+    bb_upper = bb_sma + 2 * bb_std
+
+    # ATR(14) vs SMA(ATR, 20)
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/14, min_periods=14).mean()
+    atr_sma20 = atr.rolling(20).mean()
+
+    # EMA(21)
+    ema21 = close.ewm(span=21, adjust=False).mean()
+
+    # OE skoru hesapla (vektörel)
+    c_rsi2 = (rsi2 > 90).astype(int)
+    c_rsi14 = (rsi14 > 70).astype(int)
+    c_bb = (close > bb_upper).astype(int)
+    c_atr = (atr > atr_sma20 * 1.05).astype(int)
+    c_ema = (close > ema21 * 1.05).astype(int)
+
+    oe_score = c_rsi2 + c_rsi14 + c_bb + c_atr + c_ema
+    return oe_score, c_rsi2, c_rsi14, c_bb, c_atr, c_ema
+
+
 def compute_forward_returns(signals, all_data, xu_df):
     """Her sinyal için 1g, 3g, 5g forward getiri + XU100 kıyasla."""
     results = []
     _ind_cache = {}  # ticker -> (rsi_series, macd_hist_series)
+    _oe_cache = {}   # ticker -> (oe_score_series, c_rsi2, c_rsi14, c_bb, c_atr, c_ema)
     for sig in signals:
         ticker = sig['ticker']
         df = all_data.get(ticker)
@@ -492,7 +622,7 @@ def compute_forward_returns(signals, all_data, xu_df):
             status = 'tamam'
         row['status'] = status
 
-        # Rejim v3 sinyalleri icin RSI/MACD hesapla
+        # Rejim v3 sinyalleri icin RSI/MACD + OE hesapla
         if sig['screener'] == 'rejim_v3':
             if ticker not in _ind_cache:
                 _ind_cache[ticker] = _compute_indicators(df)
@@ -505,6 +635,27 @@ def compute_forward_returns(signals, all_data, xu_df):
                 v = macd_s.iloc[idx]
                 if pd.notna(v):
                     row['macd_hist'] = round(float(v), 4)
+
+            # OE skoru: CSV'de varsa kullan, yoksa fiyat verisinden hesapla
+            if row.get('oe') is None:
+                if ticker not in _oe_cache:
+                    _oe_cache[ticker] = _compute_oe_series(df)
+                oe_s, cr2, cr14, cbb, catr, cema = _oe_cache[ticker]
+                if idx < len(oe_s) and pd.notna(oe_s.iloc[idx]):
+                    row['oe'] = int(oe_s.iloc[idx])
+                    # oe_detail olustur
+                    parts = []
+                    if cr2.iloc[idx]:
+                        parts.append('RSI2>90')
+                    if cr14.iloc[idx]:
+                        parts.append('RSI14>70')
+                    if cbb.iloc[idx]:
+                        parts.append('BB>1')
+                    if catr.iloc[idx]:
+                        parts.append('ATR exp')
+                    if cema.iloc[idx]:
+                        parts.append('EMA21 uzak')
+                    row['oe_detail'] = ' '.join(parts) if parts else '-'
 
         results.append(row)
 
@@ -604,6 +755,12 @@ def compute_summary(results):
                 and r.get('rs_pass', False)
                 and (r.get('adx_val') or 0) >= 20
             )),
+            # OE (Overextended) bazli kirilimlar
+            ('r3_oe0',   lambda r: r.get('oe') == 0),
+            ('r3_oe1-2', lambda r: r.get('oe') is not None and 1 <= r['oe'] <= 2),
+            ('r3_oe3+',  lambda r: r.get('oe') is not None and r['oe'] >= 3),
+            ('r3_oe4+',  lambda r: r.get('oe') is not None and r['oe'] >= 4),
+            ('r3_oe5',   lambda r: r.get('oe') is not None and r['oe'] == 5),
         ]
         for fkey, ffn in r3_filters:
             sub = [r for r in r3_results if ffn(r)]
@@ -714,6 +871,36 @@ def compute_summary(results):
                     stats[f'avg_5d_{d}'] = None
             summary[rkey] = stats
 
+        # Çapraz sinyal kırılımları
+        nwx_filters = [
+            ('nwx_div+',   'Div Çakışma',  lambda r: r.get('xdiv') == 'agree'),
+            ('nwx_div-',   'Div Çelişki',  lambda r: r.get('xdiv') == 'conflict'),
+            ('nwx_div0',   'Div Yok',      lambda r: r.get('xdiv') is None),
+            ('nwx_rt+',    'RT Aktif',     lambda r: r.get('xrt') is True),
+            ('nwx_rt0',    'RT Yok',       lambda r: r.get('xrt') is not True),
+            ('nwx_smc+',   'SMC Çakışma',  lambda r: r.get('xsmc') == 'agree'),
+            ('nwx_multi',  'Çoklu Onay',   lambda r: (
+                r.get('xdiv') == 'agree' or r.get('xrt') is True or r.get('xsmc') == 'agree'
+            )),
+        ]
+        for fkey, flabel, ffn in nwx_filters:
+            sub = [r for r in nw_results if ffn(r)]
+            if not sub:
+                continue
+            stats = {'screener': fkey, 'n': len(sub)}
+            stats.update(_calc_window_stats(sub, WINDOWS))
+            for d in ['AL', 'SAT']:
+                d_subset = [r for r in sub if r['direction'] == d]
+                stats[f'n_{d}'] = len(d_subset)
+                vals_5 = [r['ret_5d'] for r in d_subset if r.get('ret_5d') is not None]
+                if vals_5:
+                    stats[f'wr_5d_{d}'] = round(sum(1 for v in vals_5 if v > 0) / len(vals_5) * 100, 1)
+                    stats[f'avg_5d_{d}'] = round(sum(vals_5) / len(vals_5), 2)
+                else:
+                    stats[f'wr_5d_{d}'] = None
+                    stats[f'avg_5d_{d}'] = None
+            summary[fkey] = stats
+
     return summary
 
 
@@ -733,6 +920,11 @@ _SCREENER_LABELS = {
     'r3_rsi≤40': 'R3 RSI≤40',
     'r3_macd>0': 'R3 MACD>0',
     'r3_filtreli': 'R3 Filtreli',
+    'r3_oe0': 'R3 OE=0',
+    'r3_oe1-2': 'R3 OE 1-2',
+    'r3_oe3+': 'R3 OE≥3',
+    'r3_oe4+': 'R3 OE≥4',
+    'r3_oe5': 'R3 OE=5',
     'r3s_GUCLU': 'R3 GÜÇLÜ',
     'r3s_CMB': 'R3 CMB',
     'r3s_CMB+': 'R3 CMB+',
@@ -752,6 +944,13 @@ _SCREENER_LABELS = {
     'nwt_EMA_R': 'NW EMA_R',
     'nwr_strong': 'NW RS>1',
     'nwr_weak': 'NW RS≤1',
+    'nwx_div+': 'NW Div+',
+    'nwx_div-': 'NW Div−',
+    'nwx_div0': 'NW Div∅',
+    'nwx_rt+': 'NW RT+',
+    'nwx_rt0': 'NW RT∅',
+    'nwx_smc+': 'NW SMC+',
+    'nwx_multi': 'NW Çoklu',
     'wl_HAZIR': 'WL HAZIR',
     'wl_İZLE': 'WL İZLE',
     'wl_BEKLE': 'WL BEKLE',
@@ -763,12 +962,14 @@ _SCREENER_LABELS = {
 _SCREENER_TAB_ORDER = [
     'genel', 'trend', 'dip', 'sideways', 'rejim_v3',
     'r3_q≥70', 'r3_rs✓', 'r3_adx≥25', 'r3_rsi≤40', 'r3_macd>0', 'r3_filtreli',
+    'r3_oe0', 'r3_oe1-2', 'r3_oe3+', 'r3_oe4+', 'r3_oe5',
     'r3s_GUCLU', 'r3s_CMB', 'r3s_CMB+', 'r3s_BILESEN', 'r3s_ZAYIF',
     'r3s_ERKEN', 'r3s_DONUS', 'r3s_MR', 'r3s_PB',
     'combo',
     'nox_v3_daily', 'nox_v3_weekly',
     'nw_AL', 'nw_SAT', 'nwt_BOS', 'nwt_HC2', 'nwt_EMA_R',
     'nwr_strong', 'nwr_weak',
+    'nwx_div+', 'nwx_div-', 'nwx_div0', 'nwx_rt+', 'nwx_rt0', 'nwx_smc+', 'nwx_multi',
     'wl_HAZIR', 'wl_İZLE', 'wl_BEKLE',
     'smc', 'pine', 'divergence',
 ]
@@ -916,6 +1117,10 @@ def generate_html(results, summary, csv_map):
   <div><label>RS</label>
   <select id="fRS" onchange="af()"><option value="">Tümü</option>
   <option value="pass">Pass</option><option value="fail">Fail</option></select></div>
+  <div><label>OE</label>
+  <select id="fOE" onchange="af()"><option value="">Tümü</option>
+  <option value="0">0</option><option value="1-2">1-2</option>
+  <option value="3+">3+</option><option value="4+">4+</option><option value="5">5</option></select></div>
   <div><button class="nox-btn" onclick="resetF()">Sıfırla</button></div>
 </div>
 
@@ -954,6 +1159,7 @@ def generate_html(results, summary, csv_map):
 <th onclick="sb('rsi_at_signal')">RSI</th>
 <th onclick="sb('macd_hist')">MACD</th>
 <th onclick="sb('adx_val')">ADX</th>
+<th onclick="sb('oe')">OE</th>
 <th onclick="sb('wl_status')">WL</th>
 <th onclick="sb('tb_stage')">TB</th>
 <th onclick="sb('status')">Durum</th>
@@ -979,6 +1185,11 @@ const R3F={{
   'r3_rsi≤40':r=>(r.rsi_at_signal||999)<=40,
   'r3_macd>0':r=>(r.macd_hist||-1)>0,
   'r3_filtreli':r=>(r.quality||0)>=50&&r.rs_pass===true&&(r.adx_val||0)>=20,
+  'r3_oe0':r=>r.oe===0,
+  'r3_oe1-2':r=>r.oe!=null&&r.oe>=1&&r.oe<=2,
+  'r3_oe3+':r=>r.oe!=null&&r.oe>=3,
+  'r3_oe4+':r=>r.oe!=null&&r.oe>=4,
+  'r3_oe5':r=>r.oe===5,
   'r3s_GUCLU':r=>r.signal_type==='GUCLU',
   'r3s_CMB':r=>r.signal_type==='CMB',
   'r3s_CMB+':r=>r.signal_type==='CMB+',
@@ -999,6 +1210,13 @@ const NWF={{
   'nwt_EMA_R':r=>r.trigger_type==='EMA_R',
   'nwr_strong':r=>r.rs_score!=null&&r.rs_score>1,
   'nwr_weak':r=>r.rs_score!=null&&r.rs_score<=1,
+  'nwx_div+':r=>r.xdiv==='agree',
+  'nwx_div-':r=>r.xdiv==='conflict',
+  'nwx_div0':r=>r.xdiv==null,
+  'nwx_rt+':r=>r.xrt===true,
+  'nwx_rt0':r=>r.xrt!==true,
+  'nwx_smc+':r=>r.xsmc==='agree',
+  'nwx_multi':r=>(r.xdiv==='agree'||r.xrt===true||r.xsmc==='agree'),
 }};
 
 // ── TABS ──
@@ -1007,7 +1225,7 @@ function initTabs(){{
   TABS.forEach(t=>{{
     const d=document.createElement('div');
     const isR3=t.startsWith('r3_');
-    const isNW=t.startsWith('nw_')||t.startsWith('nwt_')||t.startsWith('nwr_');
+    const isNW=t.startsWith('nw_')||t.startsWith('nwt_')||t.startsWith('nwr_')||t.startsWith('nwx_');
     d.className='nox-tab'+(t==='genel'?' active':'')+(isR3?' r3-sub':'')+(isNW?' nw-sub':'');
     d.id='tab-'+t;
     let n;
@@ -1098,6 +1316,7 @@ function af(){{
   const fwl=document.getElementById('fWL').value;
   const fq=parseFloat(document.getElementById('fQ').value);
   const frs=document.getElementById('fRS').value;
+  const foe=document.getElementById('fOE').value;
   let f=D.filter(r=>{{
     // Tab filtresi
     if(R3F[curTab]){{
@@ -1119,6 +1338,15 @@ function af(){{
     if(!isNaN(fq)&&fq>0&&(r.quality==null||r.quality<fq))return false;
     if(frs==='pass'&&!r.rs_pass)return false;
     if(frs==='fail'&&r.rs_pass)return false;
+    // OE filtresi
+    if(foe){{
+      if(r.oe==null)return false;
+      if(foe==='0'&&r.oe!==0)return false;
+      if(foe==='1-2'&&(r.oe<1||r.oe>2))return false;
+      if(foe==='3+'&&r.oe<3)return false;
+      if(foe==='4+'&&r.oe<4)return false;
+      if(foe==='5'&&r.oe!==5)return false;
+    }}
     return true;
   }});
   f.sort((a,b)=>{{
@@ -1140,6 +1368,7 @@ function resetF(){{
   document.getElementById('fWL').value='';
   document.getElementById('fQ').value='';
   document.getElementById('fRS').value='';
+  document.getElementById('fOE').value='';
   af();
 }}
 
@@ -1150,6 +1379,12 @@ function retCell(v){{
   return '<td style="color:'+c+';font-weight:600">'+(v>0?'+':'')+v.toFixed(2)+'%</td>';
 }}
 
+function mkOeCell(v,detail){{
+  if(v==null)return '<td style="color:var(--text-muted)">—</td>';
+  const c=v===0?'var(--nox-green)':v<=2?'var(--nox-yellow)':v<=3?'#f97316':'var(--nox-red)';
+  const tip=detail&&detail!=='-'?' title="'+detail+'"':'';
+  return '<td style="color:'+c+';font-weight:700;font-family:var(--font-mono)"'+tip+'>'+v+'</td>';
+}}
 function mkQCell(v){{
   if(v==null)return '<td style="color:var(--text-muted)">—</td>';
   const cls=v>=70?'q-high':v>=40?'q-mid':'q-low';
@@ -1202,6 +1437,7 @@ function render(data){{
       ${{retCell(r.xu_5d)}}${{retCell(r.excess_5d)}}
       ${{mkQCell(r.quality)}}${{mkRsCell(r.rs_score,r.rs_pass)}}
       ${{mkIndCell(r.rsi_at_signal)}}${{mkMacdCell(r.macd_hist)}}${{mkIndCell(r.adx_val)}}
+      ${{mkOeCell(r.oe,r.oe_detail)}}
       ${{mkWlBadge(r.wl_status)}}${{mkTbCell(r.tb_stage)}}
       <td class="${{stC}}" style="font-size:.7rem;font-weight:600">${{stL}}</td>`;
     tb.appendChild(tr);
@@ -1260,6 +1496,8 @@ def main():
     if not signals:
         print("  HATA: Hiçbir sinyal bulunamadı!")
         sys.exit(1)
+    xref = build_xref(signals)
+    annotate_confluence(signals, xref)
     print(f"  Toplam: {len(signals)} sinyal")
 
     # ── 3. Veri Çek ──
