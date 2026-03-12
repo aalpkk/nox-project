@@ -25,20 +25,20 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # gh CLI auth — cross-repo artifact erişimi için PAT ile login
-      - name: Authenticate gh CLI
-        run: echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
-
-      # Debug: artifact erişimini test et
-      - name: Test artifact access
+      # Debug: GH_TOKEN ve artifact erişimi test et
+      - name: Test GH auth and artifact access
         run: |
-          echo "Auth status:"
-          gh auth status
-          echo "---"
-          echo "nox-project artifacts:"
-          gh api repos/aalpkk/nox-project/actions/artifacts --jq '.total_count' || echo "FAIL"
-          echo "bist-tavan-screener artifacts:"
-          gh api repos/aalpkk/bist-tavan-screener/actions/artifacts --jq '.total_count' || echo "FAIL"
+          echo "=== gh auth status ==="
+          gh auth status || true
+          echo ""
+          echo "=== Token ilk 4 karakter ==="
+          echo "${GH_TOKEN:0:4}..."
+          echo ""
+          echo "=== nox-project artifact count ==="
+          gh api repos/aalpkk/nox-project/actions/artifacts --jq '.total_count' 2>&1 || true
+          echo ""
+          echo "=== bist-tavan-screener artifact count ==="
+          gh api repos/aalpkk/bist-tavan-screener/actions/artifacts --jq '.total_count' 2>&1 || true
 
       # workflow_run tetiklendiğinde: o run'ın artifact'larını hızlıca indir
       - name: Download triggering workflow artifacts
@@ -51,14 +51,14 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
-      # Faz 1: Ön analiz shortlist — takas/kademe verisi gerekli hisseleri Telegram'a gönder
+      # Faz 1: Ön analiz shortlist
       - name: Send shortlist (Phase 1)
         run: python -m agent.briefing --shortlist --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
-      # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
+      # Faz 2: Tam brifing
       - name: Generate full briefing (Phase 2)
         run: python -m agent.briefing --notify
         env:
