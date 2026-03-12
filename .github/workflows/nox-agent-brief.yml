@@ -25,6 +25,21 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # gh CLI auth — cross-repo artifact erişimi için PAT ile login
+      - name: Authenticate gh CLI
+        run: echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
+
+      # Debug: artifact erişimini test et
+      - name: Test artifact access
+        run: |
+          echo "Auth status:"
+          gh auth status
+          echo "---"
+          echo "nox-project artifacts:"
+          gh api repos/aalpkk/nox-project/actions/artifacts --jq '.total_count' || echo "FAIL"
+          echo "bist-tavan-screener artifacts:"
+          gh api repos/aalpkk/bist-tavan-screener/actions/artifacts --jq '.total_count' || echo "FAIL"
+
       # workflow_run tetiklendiğinde: o run'ın artifact'larını hızlıca indir
       - name: Download triggering workflow artifacts
         if: github.event_name == 'workflow_run'
