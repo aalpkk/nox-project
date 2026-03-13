@@ -9,9 +9,11 @@ from anthropic import Anthropic
 from agent.prompts import SYSTEM_PROMPT
 from agent.tool_definitions import TOOLS
 
-# Maliyet optimizasyonu: son N mesaj tut
+# Maliyet optimizasyonu
 MAX_HISTORY = 10
-MODEL = "claude-opus-4-6"
+MODEL_CHAT = "claude-haiku-4-5-20251001"      # Bot chat — ucuz, hızlı
+MODEL_BRIEFING = "claude-sonnet-4-5-20250929"  # Brifing — dengeli
+MODEL_ANALYSIS = "claude-sonnet-4-5-20250929"  # Detaylı analiz
 
 
 def _get_client():
@@ -21,7 +23,8 @@ def _get_client():
     return Anthropic(api_key=api_key)
 
 
-def chat(messages, tool_handler, system_prompt=None, max_turns=10):
+def chat(messages, tool_handler, system_prompt=None, max_turns=10,
+         model=None):
     """
     Claude ile tool use loop.
 
@@ -30,12 +33,14 @@ def chat(messages, tool_handler, system_prompt=None, max_turns=10):
         tool_handler: Tool çağrılarını işleyen fonksiyon (name, input) → result
         system_prompt: Özel sistem promptu (None ise varsayılan)
         max_turns: Maksimum tool use döngüsü
+        model: Model seçimi (None ise MODEL_CHAT)
 
     Returns:
         str: Claude'un son yanıtı
     """
     client = _get_client()
     sys_prompt = system_prompt or SYSTEM_PROMPT
+    use_model = model or MODEL_CHAT
 
     # Mesaj geçmişini sınırla
     if len(messages) > MAX_HISTORY:
@@ -43,7 +48,7 @@ def chat(messages, tool_handler, system_prompt=None, max_turns=10):
 
     for turn in range(max_turns):
         response = client.messages.create(
-            model=MODEL,
+            model=use_model,
             max_tokens=4096,
             system=sys_prompt,
             tools=TOOLS,
@@ -88,17 +93,22 @@ def chat(messages, tool_handler, system_prompt=None, max_turns=10):
     return "⚠️ Maksimum işlem adımına ulaşıldı. Lütfen sorunuzu daraltın."
 
 
-def single_prompt(prompt, tool_handler=None, system_prompt=None, max_tokens=4096):
-    """Tek seferlik prompt gönder, yanıt al."""
+def single_prompt(prompt, tool_handler=None, system_prompt=None,
+                  max_tokens=4096, model=None):
+    """Tek seferlik prompt gönder, yanıt al.
+
+    model: None ise MODEL_BRIEFING kullanılır.
+    """
+    use_model = model or MODEL_BRIEFING
     messages = [{"role": "user", "content": prompt}]
     if tool_handler:
-        return chat(messages, tool_handler, system_prompt)
+        return chat(messages, tool_handler, system_prompt, model=use_model)
 
     client = _get_client()
     sys_prompt = system_prompt or SYSTEM_PROMPT
 
     response = client.messages.create(
-        model=MODEL,
+        model=use_model,
         max_tokens=max_tokens,
         system=sys_prompt,
         messages=messages,
@@ -125,7 +135,7 @@ def analyze_image(image_path, prompt="Bu görseli analiz et."):
         image_data = base64.standard_b64encode(f.read()).decode('utf-8')
 
     response = client.messages.create(
-        model=MODEL,
+        model=MODEL_ANALYSIS,
         max_tokens=4096,
         system=SYSTEM_PROMPT,
         messages=[{
