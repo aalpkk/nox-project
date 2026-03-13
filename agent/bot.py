@@ -34,6 +34,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, ContextTypes,
 )
+from aiohttp import web
 
 from agent.tools import handle_tool, invalidate_cache
 from agent.state import Watchlist
@@ -569,12 +570,14 @@ def main():
         filters.PHOTO, handle_photo))
 
     if args.webhook:
-        print(f"🌐 Webhook mode: {args.webhook}")
+        # Render RENDER_EXTERNAL_URL sağlar; yoksa --webhook değerini kullan
+        webhook_base = os.environ.get("RENDER_EXTERNAL_URL") or args.webhook
+        print(f"🌐 Webhook mode: {webhook_base} (port {args.port})")
         app.run_webhook(
             listen="0.0.0.0",
             port=args.port,
             url_path=token,
-            webhook_url=f"{args.webhook}/{token}",
+            webhook_url=f"{webhook_base}/{token}",
         )
     else:
         print("📡 Polling mode (lokal geliştirme)")

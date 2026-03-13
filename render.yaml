@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m agent.bot --webhook https://nox-bot.onrender.com
+    startCommand: python -m agent.bot --webhook ${RENDER_EXTERNAL_URL}
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
