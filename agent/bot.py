@@ -471,14 +471,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from agent.claude_client import analyze_image
         from agent.prompts import TAKAS_IMAGE_PROMPT
 
-        # Takas ekran görüntüsü tespiti
+        # Takas/kademe ekran görüntüsü tespiti
+        # Caption varsa anahtar kelimelerden, yoksa otomatik tespit promptu
         caption_lower = raw_caption.lower()
-        if any(k in caption_lower for k in ('takas', 'kurum', 'custody', 'akd')):
+        if any(k in caption_lower for k in ('takas', 'kurum', 'custody', 'akd', 'pozisyon')):
             prompt = TAKAS_IMAGE_PROMPT
             if raw_caption:
                 prompt += f"\n\nKullanıcı notu: {raw_caption}"
+        elif any(k in caption_lower for k in ('kademe', 'emir', 'depth', 'derinlik', 's/a')):
+            from agent.prompts import KADEME_ANALYSIS_PROMPT
+            prompt = ("Bu görsel bir kademe (emir defteri) ekran görüntüsü. "
+                      "Tabloyu oku ve analiz et.\n\n" + KADEME_ANALYSIS_PROMPT)
+        elif not raw_caption:
+            # Caption yoksa: genel finans görseli analizi,
+            # takas/kademe tablosu olabilir — model karar versin
+            prompt = ("Bu görseli analiz et. "
+                      "Eğer bir takas tablosu (aracı kurum pozisyon değişimi) ise, "
+                      "kurumları sınıflandır (yabancı/banka/emeklilik/fon) ve "
+                      "BİRİKİM/DAĞITIM/NÖTR kararı ver. "
+                      "Eğer kademe (emir defteri) ise S/A oranını hesapla. "
+                      "Eğer grafik ise teknik analiz yap.")
         else:
-            prompt = raw_caption or "Bu görseli analiz et."
+            prompt = raw_caption
 
         response = analyze_image(local_path, prompt)
         await _send_long(update, response)

@@ -548,45 +548,51 @@ def _tool_analyze_takas(input_data):
     if df.empty:
         return {"error": "Dosya boş"}
 
-    # Kolon mapping — Matriks takas Excel formatı:
-    # Aracı Kurum | Takas Son | % Son | Lot Fark | % Lot Fark | Günlük | Haftalık | 3 Aylık
-    # ÖNEMLİ: "% Lot Fark" ile "Lot Fark" karıştırılmamalı
+    # Kolon mapping — Matriks takas Excel formatı (esnek):
+    # Tipik: Aracı Kurum | Takas Son | % Son | Lot Fark | % Lot Fark | 1G Fark | 1H Fark | 1A/3A Fark
+    # Veya: Aracı Kurum | Takas Son | % Son | Lot Fark | % Lot Fark | Günlük | Haftalık | Aylık/3 Aylık
     col_map = {}
-    # İlk geçiş: debug için kolon listesini logla
     col_list = list(df.columns)
+
     for c in col_list:
         cl = str(c).lower().strip()
+
+        # Kurum
         if 'kurum' in cl or 'broker' in cl or 'aracı' in cl or 'araci' in cl:
             col_map['kurum'] = c
-        elif cl == 'lot fark' or cl == 'lot_fark' or cl == 'net_change':
-            # Tam eşleşme — "% lot fark" ile karışmasın
-            col_map['lot_fark'] = c
-        elif '% lot fark' in cl or '% lot_fark' in cl:
-            col_map['pct_lot_fark'] = c  # Yüzdesel fark, ayrı tut
+
+        # Pozisyon: Takas Son / Takas İlk
         elif 'takas son' in cl or 'son pozisyon' in cl or cl == 'quantity':
             col_map['takas_son'] = c
         elif 'takas ilk' in cl or 'ilk pozisyon' in cl:
             col_map['takas_ilk'] = c
-        elif '% son' in cl:
-            col_map['pay'] = c  # Pay oranı (%)
-        elif '3 aylık' in cl or '3 aylik' in cl or '3aylık' in cl:
-            col_map['aylik_fark'] = c
-        elif 'günlük' in cl or 'gunluk' in cl or 'daily' in cl:
-            col_map['gunluk_fark'] = c
-        elif 'haftalık' in cl or 'haftalik' in cl or 'weekly' in cl:
-            col_map['haftalik_fark'] = c
-        elif ('aylık' in cl or 'aylik' in cl or 'monthly' in cl) and 'aylik_fark' not in col_map:
-            col_map['aylik_fark'] = c
 
-    # "Lot Fark" bulunamadıysa ama "% Lot Fark" var → uyar
-    # Bazı Matriks formatlarında kolon adı sadece "Lot Fark" değil
-    # "lot fark" substring match gerekebilir (ama % hariç)
-    if 'lot_fark' not in col_map:
-        for c in col_list:
-            cl = str(c).lower().strip()
-            if 'lot fark' in cl and '%' not in cl and 'pct' not in cl:
-                col_map['lot_fark'] = c
-                break
+        # Pay: "% Son" (0-100 arası pay oranı)
+        elif '% son' in cl and 'lot' not in cl:
+            col_map['pay'] = c
+
+        # % Lot Fark (yüzdesel değişim, pay ile karıştırılmamalı)
+        elif '% lot fark' in cl or '% lot_fark' in cl or 'pct_lot' in cl:
+            col_map['pct_lot_fark'] = c
+
+        # Lot Fark (mutlak lot değişimi — ana metrik)
+        elif ('lot fark' in cl or 'lot_fark' in cl) and '%' not in cl:
+            col_map['lot_fark'] = c
+
+        # Periyot farkları — günlük
+        elif any(k in cl for k in ('günlük', 'gunluk', 'daily', '1g fark', '1g lot')):
+            col_map['gunluk_fark'] = c
+
+        # Periyot farkları — haftalık
+        elif any(k in cl for k in ('haftalık', 'haftalik', 'weekly', '1h fark', '1h lot')):
+            col_map['haftalik_fark'] = c
+
+        # Periyot farkları — aylık / 3 aylık
+        elif any(k in cl for k in ('3 aylık', '3 aylik', '3a fark', '3a lot')):
+            col_map['aylik_fark'] = c
+        elif any(k in cl for k in ('aylık', 'aylik', 'monthly', '1a fark', '1a lot')):
+            if 'aylik_fark' not in col_map:  # 3 aylık öncelikli
+                col_map['aylik_fark'] = c
 
     if 'kurum' not in col_map:
         return {"error": f"Aracı Kurum kolonu bulunamadı. Mevcut kolonlar: {list(df.columns)}"}
