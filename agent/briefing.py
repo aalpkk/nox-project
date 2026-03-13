@@ -197,7 +197,14 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
     tavan_tickers = {}
     for s in latest_signals:
         if s.get('screener') in ('tavan', 'tavan_kandidat'):
-            tavan_tickers[s['ticker']] = s
+            t = s['ticker']
+            # Aynı ticker birden fazla tavan dosyasında varsa yüksek skoru koru
+            if t in tavan_tickers:
+                existing_skor = tavan_tickers[t].get('skor', 0) or 0
+                new_skor = s.get('skor', 0) or 0
+                if new_skor <= existing_skor:
+                    continue
+            tavan_tickers[t] = s
     tavan_cross = {}  # ticker → diğer screener set'i
     for s in latest_signals:
         if s['ticker'] in tavan_tickers and s.get('screener') not in ('tavan', 'tavan_kandidat'):
