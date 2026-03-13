@@ -97,7 +97,10 @@ async def cmd_yardim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/cikar THYAO — Pozisyon çıkar\n"
         "/tavsiye — Al/Sat tavsiyeleri\n"
         "/makro — Makro piyasa özeti\n"
+        "/model — Model seç (haiku/sonnet/opus)\n"
         "/yardim — Bu mesaj\n\n"
+        "📎 Excel/CSV yükle → kademe/takas analizi\n"
+        "📷 Fotoğraf yükle → görsel analiz\n"
         "💬 Serbest metin yazarak da soru sorabilirsiniz.",
         parse_mode='HTML')
 
@@ -242,6 +245,58 @@ async def cmd_makro(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Makro hatası: {e}")
 
 
+async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Model seçimi: /model [haiku|sonnet|opus] [chat|analiz|all]"""
+    if not _authorized(update):
+        return
+
+    from agent.claude_client import (
+        set_model, get_model_status, MODEL_ALIASES, MODEL_INFO,
+    )
+
+    args = context.args
+    if not args:
+        # Mevcut durumu göster
+        await update.message.reply_text(
+            "<b>⬡ Aktif Modeller</b>\n\n"
+            f"{get_model_status()}\n\n"
+            "<b>Kullanım:</b>\n"
+            "/model haiku — Tümü Haiku (en ucuz)\n"
+            "/model sonnet — Tümü Sonnet (dengeli)\n"
+            "/model opus — Tümü Opus (en iyi, pahalı)\n"
+            "/model opus analiz — Sadece analiz Opus\n"
+            "/model sonnet chat — Sadece chat Sonnet",
+            parse_mode='HTML')
+        return
+
+    model_name = args[0].lower().strip()
+    if model_name not in MODEL_ALIASES:
+        await update.message.reply_text(
+            f"⚠️ Bilinmeyen model: {model_name}\n"
+            "Seçenekler: haiku, sonnet, opus")
+        return
+
+    model_id = MODEL_ALIASES[model_name]
+    display_name, cost = MODEL_INFO[model_id]
+
+    # Rol belirleme
+    role = "all"
+    if len(args) > 1:
+        role_arg = args[1].lower().strip()
+        role_map = {"chat": "chat", "analiz": "analysis", "analysis": "analysis",
+                    "brifing": "briefing", "briefing": "briefing", "all": "all",
+                    "hepsi": "all", "tum": "all"}
+        role = role_map.get(role_arg, "all")
+
+    set_model(role, model_id)
+
+    role_display = {"all": "Tümü", "chat": "Chat", "analysis": "Analiz", "briefing": "Brifing"}
+    await update.message.reply_text(
+        f"✅ <b>{role_display.get(role, role)}</b> → {display_name} ({cost})\n\n"
+        f"{get_model_status()}",
+        parse_mode='HTML')
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Serbest metin → Claude API + tool use."""
     if not _authorized(update):
@@ -347,17 +402,37 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ {result['error']}")
             return
 
-        # Claude ile detaylı yorum
+        # Claude ile detaylı yorum — takas/kademe için özel prompt
         try:
-            from agent.claude_client import single_prompt
+            from agent.claude_client import single_prompt, MODEL_ANALYSIS
+            from agent.prompts import TAKAS_ANALYSIS_PROMPT, KADEME_ANALYSIS_PROMPT
             import json
-            tool_name = 'Takas' if analysis_type == 'takas' else 'Kademe'
-            prompt = (f"{tool_name} analiz sonucu:\n"
-                      f"```json\n{json.dumps(result, ensure_ascii=False, default=str)}\n```\n\n"
-                      f"Bu {tool_name.lower()} verisini yorumla. "
-                      f"Mevcut sinyal listesiyle çaprazla ve sıralamayı güncelle. "
-                      f"Kısa ve öz ol.")
-            analysis = single_prompt(prompt)
+
+            if analysis_type == 'takas':
+                sys_prompt = TAKAS_ANALYSIS_PROMPT
+            else:
+                sys_prompt = KADEME_ANALYSIS_PROMPT
+
+            # Sinyal çapraz bilgisi ekle
+            cross_info = ""
+            if ticker:
+                try:
+                    ticker_signals = handle_tool("get_stock_analysis", {"ticker": ticker})
+                    if "error" not in ticker_signals:
+                        conf = ticker_signals.get("confluence", {})
+                        cross_info = (
+                            f"\n\n## Scanner Sinyal Çakışması — {ticker}\n"
+                            f"Skor: {conf.get('score', '?')}, "
+                            f"Tavsiye: {conf.get('recommendation', '?')}\n"
+                            f"Sinyaller: {json.dumps(ticker_signals.get('signals', []), ensure_ascii=False, default=str)}\n"
+                        )
+                except Exception:
+                    pass
+
+            prompt = (f"## Veri\n```json\n{json.dumps(result, ensure_ascii=False, default=str)}\n```"
+                      f"{cross_info}")
+            analysis = single_prompt(prompt, system_prompt=sys_prompt,
+                                     model=MODEL_ANALYSIS)
             await _send_long(update, analysis)
         except Exception:
             # Fallback: ham sonuç
@@ -376,7 +451,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not photos:
         return
 
-    caption = update.message.caption or "Bu görseli analiz et."
+    raw_caption = update.message.caption or ""
     await update.message.reply_text("⏳ Görsel analiz ediliyor...")
 
     # En yüksek çözünürlüklü fotoğrafı al
@@ -393,7 +468,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         from agent.claude_client import analyze_image
-        response = analyze_image(local_path, caption)
+        from agent.prompts import TAKAS_IMAGE_PROMPT
+
+        # Takas ekran görüntüsü tespiti
+        caption_lower = raw_caption.lower()
+        if any(k in caption_lower for k in ('takas', 'kurum', 'custody', 'akd')):
+            prompt = TAKAS_IMAGE_PROMPT
+            if raw_caption:
+                prompt += f"\n\nKullanıcı notu: {raw_caption}"
+        else:
+            prompt = raw_caption or "Bu görseli analiz et."
+
+        response = analyze_image(local_path, prompt)
         await _send_long(update, response)
     except Exception as e:
         logger.error(f"Görsel analiz hatası: {e}")
@@ -469,6 +555,7 @@ def main():
     app.add_handler(CommandHandler("cikar", cmd_cikar))
     app.add_handler(CommandHandler("tavsiye", cmd_tavsiye))
     app.add_handler(CommandHandler("makro", cmd_makro))
+    app.add_handler(CommandHandler("model", cmd_model))
 
     # Serbest metin handler
     app.add_handler(MessageHandler(

@@ -9,11 +9,59 @@ from anthropic import Anthropic
 from agent.prompts import SYSTEM_PROMPT
 from agent.tool_definitions import TOOLS
 
-# Maliyet optimizasyonu
+# Maliyet optimizasyonu — .env'den override edilebilir
 MAX_HISTORY = 10
-MODEL_CHAT = "claude-haiku-4-5-20251001"      # Bot chat — ucuz, hızlı
-MODEL_BRIEFING = "claude-sonnet-4-5-20250929"  # Brifing — dengeli
-MODEL_ANALYSIS = "claude-sonnet-4-5-20250929"  # Detaylı analiz
+MODEL_CHAT = os.environ.get("NOX_MODEL_CHAT", "claude-haiku-4-5-20251001")
+MODEL_BRIEFING = os.environ.get("NOX_MODEL_BRIEFING", "claude-sonnet-4-5-20250929")
+MODEL_ANALYSIS = os.environ.get("NOX_MODEL_ANALYSIS", "claude-sonnet-4-5-20250929")
+
+# Model kısa adları → tam model ID
+MODEL_ALIASES = {
+    "haiku":  "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-5-20250929",
+    "opus":   "claude-opus-4-6",
+}
+
+# Kısa ad → gösterim adı + tahmini maliyet (1K output token)
+MODEL_INFO = {
+    "claude-haiku-4-5-20251001":  ("Haiku 4.5",  "$0.004/1K"),
+    "claude-sonnet-4-5-20250929": ("Sonnet 4.5", "$0.015/1K"),
+    "claude-opus-4-6":            ("Opus 4.6",   "$0.075/1K"),
+}
+
+# Runtime override — Telegram /model komutuyla değiştirilebilir
+_runtime_overrides = {}
+
+
+def set_model(role, model_id):
+    """Runtime model override. role: 'chat', 'analysis', 'briefing' veya 'all'."""
+    global MODEL_CHAT, MODEL_BRIEFING, MODEL_ANALYSIS
+    if role == "all":
+        MODEL_CHAT = model_id
+        MODEL_BRIEFING = model_id
+        MODEL_ANALYSIS = model_id
+        _runtime_overrides["chat"] = model_id
+        _runtime_overrides["briefing"] = model_id
+        _runtime_overrides["analysis"] = model_id
+    elif role == "chat":
+        MODEL_CHAT = model_id
+        _runtime_overrides["chat"] = model_id
+    elif role == "briefing":
+        MODEL_BRIEFING = model_id
+        _runtime_overrides["briefing"] = model_id
+    elif role == "analysis":
+        MODEL_ANALYSIS = model_id
+        _runtime_overrides["analysis"] = model_id
+
+
+def get_model_status():
+    """Mevcut model durumunu döndür."""
+    lines = []
+    for role, model_id in [("Chat", MODEL_CHAT), ("Brifing", MODEL_BRIEFING), ("Analiz", MODEL_ANALYSIS)]:
+        name, cost = MODEL_INFO.get(model_id, (model_id, "?"))
+        override = " 🔧" if role.lower() in _runtime_overrides else ""
+        lines.append(f"  {role}: <b>{name}</b> ({cost}){override}")
+    return "\n".join(lines)
 
 
 def _get_client():
