@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: nox-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m agent.bot --webhook https://nox-bot.onrender.com
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TG_BOT_TOKEN
+        sync: false
+      - key: TG_CHAT_ID
+        sync: false
+      - key: GH_PAGES_BASE_URL
+        value: "https://aalpkk.github.io/nox-signals"

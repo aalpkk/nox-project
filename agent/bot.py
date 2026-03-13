@@ -533,8 +533,9 @@ def main():
     parser = argparse.ArgumentParser(description='NOX Agent Telegram Bot')
     parser.add_argument('--webhook', type=str, default=None,
                         help='Webhook URL (Railway deploy)')
-    parser.add_argument('--port', type=int, default=8443,
-                        help='Webhook port')
+    parser.add_argument('--port', type=int,
+                        default=int(os.environ.get("PORT", "8443")),
+                        help='Webhook port (default: $PORT veya 8443)')
     args = parser.parse_args()
 
     token = os.environ.get("TG_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
