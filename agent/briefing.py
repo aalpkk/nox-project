@@ -192,8 +192,10 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             pts = 15 if window == 'TAZE' else 13
             if cmf > 0.1:
                 pts += 2
+            elif cmf < -0.1:
+                pts -= 2  # Negatif CMF = para akışı ters
             if badge == 'H+PB':
-                pts += 1
+                pts += 3  # H+PB tarihsel olarak en yüksek WR setup
             is_fresh = _is_today(s)
             if is_fresh:
                 pts += 2
@@ -211,7 +213,7 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
         is_fresh_nw = fresh in ('BUGUN', 'BUGÜN')
         has_daily_today = ticker in today_triggered
         if wl == 'HAZIR':
-            pts = 8
+            pts = 10  # WR %77.8 — en güçlü tek sinyal
             label = f"NW HAZIR {trigger} δ{delta:.1f}%" if delta else f"NW HAZIR {trigger}"
         elif wl == 'İZLE':
             pts = 5
@@ -256,11 +258,16 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
                 _add(s['ticker'], 2, f"DÖNÜŞ Q={q}")
 
     # 5. Çakışma bonus (tavan hariç screener'lardan gelen)
+    #    Düşük çakışma skoru (<3) = kaynak bonusu yarıya iner
     if confluence_results:
         for r in confluence_results:
             src = r.get('source_count', 0)
+            score = r.get('score', 0)
             if src >= 3:
-                _add(r['ticker'], src - 1, f"Çakışma {src} kaynak skor={r['score']}")
+                pts = src - 1
+                if score < 3:
+                    pts = max(pts // 2, 1)  # Düşük skor = zayıf teyit
+                _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score}")
 
     # Genel liste: sırala
     ranked = sorted(ticker_scores.items(), key=lambda x: -x[1]['score'])
