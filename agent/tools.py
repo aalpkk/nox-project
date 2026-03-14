@@ -483,10 +483,12 @@ def _analyze_kademe_excel(df, ticker=""):
 
 # Yabancı kurum listesi (nox_agent_prompt.md Section 6)
 _YABANCI_KURUMLAR = {
-    'deutsche bank', 'bank of america', 'merrill lynch', 'citibank',
-    'hsbc', 'jp morgan', 'jpmorgan', 'goldman sachs', 'ubs',
-    'morgan stanley', 'barclays', 'credit suisse', 'bnp paribas',
+    'deutsche', 'bank of america', 'merrill lynch', 'merrill', 'boa',
+    'citibank', 'citi', 'hsbc', 'jp morgan', 'jpmorgan', 'j.p. morgan',
+    'goldman sachs', 'goldman', 'ubs', 'morgan stanley',
+    'barclays', 'credit suisse', 'bnp paribas', 'bnp',
     'societe generale', 'nomura', 'clsa', 'macquarie', 'rbc',
+    'wood & company', 'wood &', 'virtu', 'citadel', 'two sigma',
 }
 
 # Emeklilik/yatırım fonu tespiti
@@ -600,10 +602,23 @@ def _tool_analyze_takas(input_data):
     kurum_col = col_map['kurum']
 
     # Sayısal kolonları temizle
-    for key in ('lot_fark', 'takas_son', 'takas_ilk', 'pay', 'gunluk_fark', 'haftalik_fark', 'aylik_fark'):
+    # Lot kolonları: Türkçe format (1.234.567 → 1234567) — nokta binlik ayracı
+    # Yüzde kolonları: ondalık nokta (8.38 → 8.38) — nokta kaldırılMAMALI
+    lot_keys = ('lot_fark', 'takas_son', 'takas_ilk', 'gunluk_fark', 'haftalik_fark', 'aylik_fark')
+    pct_keys = ('pay', 'pct_lot_fark')
+
+    for key in lot_keys:
         if key in col_map:
             df[col_map[key]] = pd.to_numeric(
                 df[col_map[key]].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+                errors='coerce'
+            ).fillna(0)
+
+    for key in pct_keys:
+        if key in col_map:
+            # Yüzde: virgül → nokta, ama noktayı kaldırma
+            df[col_map[key]] = pd.to_numeric(
+                df[col_map[key]].astype(str).str.replace(',', '.', regex=False),
                 errors='coerce'
             ).fillna(0)
 
