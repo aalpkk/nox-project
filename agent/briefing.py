@@ -192,6 +192,8 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             pts = 15 if window == 'TAZE' else 13
             if cmf > 0.1:
                 pts += 2
+            elif cmf < -0.25:
+                pts -= 4  # Ciddi negatif CMF
             elif cmf < -0.1:
                 pts -= 2  # Negatif CMF = para akışı ters
             if badge == 'H+PB':
@@ -212,9 +214,15 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
         fresh = s.get('fresh', '')
         is_fresh_nw = fresh in ('BUGUN', 'BUGÜN')
         has_daily_today = ticker in today_triggered
+        # Delta kontrolü — δ>%15 zone dışı, tetik eşiğini aşmış
+        d_pct = abs(delta) if delta else 0
         if wl == 'HAZIR':
-            pts = 10  # WR %77.8 — en güçlü tek sinyal
-            label = f"NW HAZIR {trigger} δ{delta:.1f}%" if delta else f"NW HAZIR {trigger}"
+            if d_pct > 15:
+                pts = 5  # Zone dışına çıkmış, HAZIR puanını hak etmiyor
+                label = f"NW HAZIR {trigger} δ{delta:.1f}% ⚠️zone↑"
+            else:
+                pts = 10  # WR %77.8 — en güçlü tek sinyal
+                label = f"NW HAZIR {trigger} δ{delta:.1f}%" if delta else f"NW HAZIR {trigger}"
         elif wl == 'İZLE':
             pts = 5
             label = f"NW İZLE {trigger}"
@@ -258,7 +266,7 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
                 _add(s['ticker'], 2, f"DÖNÜŞ Q={q}")
 
     # 5. Çakışma bonus (tavan hariç screener'lardan gelen)
-    #    Düşük çakışma skoru (<3) = kaynak bonusu yarıya iner
+    #    Düşük çakışma skoru (<3) = kaynak bonusu yarıya iner + uyarı
     if confluence_results:
         for r in confluence_results:
             src = r.get('source_count', 0)
@@ -267,7 +275,9 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
                 pts = src - 1
                 if score < 3:
                     pts = max(pts // 2, 1)  # Düşük skor = zayıf teyit
-                _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score}")
+                    _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score} ⚠️zayıf")
+                else:
+                    _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score}")
 
     # Genel liste: sırala
     ranked = sorted(ticker_scores.items(), key=lambda x: -x[1]['score'])
@@ -328,7 +338,16 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             if cross_has_nw:
                 bonus += 1
             pts += bonus
-            label_parts.append(f"×{cross_count} çapraz")
+            # Çakışan screener isimlerini göster
+            cross_names = []
+            _CROSS_SHORT = {
+                'nox_v3_weekly': 'NW', 'nox_v3_daily': 'ND',
+                'regime_transition': 'RT', 'rejim_v3': 'R3',
+                'alsat': 'AS', 'divergence': 'DIV',
+            }
+            for scr in sorted(tavan_cross.get(ticker, set())):
+                cross_names.append(_CROSS_SHORT.get(scr, scr[:3].upper()))
+            label_parts.append(f"({'+'.join(cross_names)})")
 
         if pts > 0:
             _tadd(ticker, pts, " ".join(label_parts))
