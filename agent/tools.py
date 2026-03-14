@@ -684,7 +684,12 @@ def _tool_analyze_takas(input_data):
     bireysel = banka + emeklilik
     bireysel_toplam_pay = sum(k.get('pay', 0) for k in bireysel)
     bireysel_lot_fark = sum(k.get('lot_fark', 0) for k in bireysel)
+    # Kurumsal = yabancı + yat_fonu (emeklilik ve banka DAHİL DEĞİL)
     kurumsal_lot_fark = sum(k.get('lot_fark', 0) for k in yabanci + yat_fonu)
+    # Yabancı lot fark ayrı (net_yabanci zaten var ama kurumsal karışmasın)
+    yabanci_lot_fark = sum(k.get('lot_fark', 0) for k in yabanci)
+    yat_fonu_lot_fark = sum(k.get('lot_fark', 0) for k in yat_fonu)
+    emeklilik_lot_fark = sum(k.get('lot_fark', 0) for k in emeklilik)
 
     # Uyarılar — ALIŞ tarafına odaklı
     uyarilar = []
@@ -725,13 +730,14 @@ def _tool_analyze_takas(input_data):
         for k in dominant:
             uyarilar.append(f"⚠️ Dominant pozisyon: {k['kurum']} %{k['pay']}")
 
-    # Yabancı sıfırdan birikim tespiti
-    yabanci_sifirdan = [k for k in yabanci
-                        if k.get('lot_fark', 0) > 0
-                        and k.get('takas_ilk', 0) == 0]
-    if yabanci_sifirdan:
-        names = [k['kurum'] for k in yabanci_sifirdan]
-        uyarilar.append(f"🟢 Yabancı sıfırdan birikim: {', '.join(names)}")
+    # Yabancı sıfırdan birikim tespiti — sadece takas_ilk kolonu varsa
+    if 'takas_ilk' in col_map:
+        yabanci_sifirdan = [k for k in yabanci
+                            if k.get('lot_fark', 0) > 0
+                            and k.get('takas_ilk', 0) == 0]
+        if yabanci_sifirdan:
+            names = [k['kurum'] for k in yabanci_sifirdan]
+            uyarilar.append(f"🟢 Yabancı sıfırdan birikim: {', '.join(names)}")
 
     # Top alıcı/satıcılar (lot_fark'a göre)
     if any('lot_fark' in k for k in kurumlar):
@@ -752,11 +758,14 @@ def _tool_analyze_takas(input_data):
         "yabanci_alici": len(yabanci_alici),
         "yabanci_satici": len(yabanci_satici),
         "emeklilik_count": len(emeklilik),
+        "emeklilik_lot_fark": emeklilik_lot_fark,
         "banka_count": len(banka),
         "yatirim_fonu_count": len(yat_fonu),
+        "yatirim_fonu_lot_fark": yat_fonu_lot_fark,
         "bireysel_pay": round(bireysel_toplam_pay, 2),
         "bireysel_lot_fark": bireysel_lot_fark,
         "kurumsal_lot_fark": kurumsal_lot_fark,
+        "yabanci_lot_fark": yabanci_lot_fark,
         "uyarilar": uyarilar,
         "top_alici": top_alici[:5],
         "top_satici": top_satici[:5],

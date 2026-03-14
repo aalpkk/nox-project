@@ -367,9 +367,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Ticker tespiti: dosya adı veya caption'dan
+    # "KRONT_12.12.2025_13.03.2026.xlsx" → "KRONT"
+    import re
     ticker = ""
-    for part in (fname.split('.')[0] + " " + caption).upper().split():
-        part = part.replace('.IS', '').strip()
+    name_part = re.split(r'[_.\-\s]', fname.split('.xlsx')[0].split('.xls')[0].split('.csv')[0])
+    all_parts = [p for p in name_part] + caption.upper().split()
+    for part in all_parts:
+        part = part.strip().upper().replace('.IS', '')
         if len(part) >= 3 and part.isalpha():
             ticker = part
             break
