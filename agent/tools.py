@@ -691,16 +691,22 @@ def _tool_analyze_takas(input_data):
     yabanci_alici = [k for k in yabanci if k.get('lot_fark', 0) > 0]
     yabanci_satici = [k for k in yabanci if k.get('lot_fark', 0) < 0]
 
-    # Bireysel oran: banka + emeklilik = perakende proxy
-    bireysel = banka + emeklilik
+    # Bireysel = banka + yerli + emeklilik (perakende proxy — müşteri emri yürütüyorlar)
+    # yerli = Yatırım Finansman, Meksa, A1 Capital vb. küçük aracı kurumlar
+    # Bunlar da perakende yatırımcı emirlerini yürütür → bireysel'e dahil
+    bireysel = banka + yerli + emeklilik
     bireysel_toplam_pay = sum(k.get('pay', 0) for k in bireysel)
     bireysel_lot_fark = sum(k.get('lot_fark', 0) for k in bireysel)
-    # Kurumsal = yabancı + yat_fonu (emeklilik ve banka DAHİL DEĞİL)
-    kurumsal_lot_fark = sum(k.get('lot_fark', 0) for k in yabanci + yat_fonu)
-    # Yabancı lot fark ayrı (net_yabanci zaten var ama kurumsal karışmasın)
+    # Kurumsal = yabancı + yat_fonu + yat_ortaklığı (kendi kararlarıyla trade eden)
+    yat_ortakligi = [k for k in kurumlar if k['tip'] == 'yatirim_ortakligi']
+    kurumsal = yabanci + yat_fonu + yat_ortakligi
+    kurumsal_lot_fark = sum(k.get('lot_fark', 0) for k in kurumsal)
+    kurumsal_toplam_pay = sum(k.get('pay', 0) for k in kurumsal)
+    # Alt-grup lot farkları (detay için)
     yabanci_lot_fark = sum(k.get('lot_fark', 0) for k in yabanci)
     yat_fonu_lot_fark = sum(k.get('lot_fark', 0) for k in yat_fonu)
     emeklilik_lot_fark = sum(k.get('lot_fark', 0) for k in emeklilik)
+    yerli_lot_fark = sum(k.get('lot_fark', 0) for k in yerli)
 
     # Uyarılar — ALIŞ tarafına odaklı
     uyarilar = []
@@ -775,8 +781,12 @@ def _tool_analyze_takas(input_data):
         "yatirim_fonu_lot_fark": yat_fonu_lot_fark,
         "bireysel_pay": round(bireysel_toplam_pay, 2),
         "bireysel_lot_fark": bireysel_lot_fark,
+        "kurumsal_pay": round(kurumsal_toplam_pay, 2),
         "kurumsal_lot_fark": kurumsal_lot_fark,
         "yabanci_lot_fark": yabanci_lot_fark,
+        "yatirim_fonu_lot_fark": yat_fonu_lot_fark,
+        "emeklilik_lot_fark": emeklilik_lot_fark,
+        "yerli_lot_fark": yerli_lot_fark,
         "uyarilar": uyarilar,
         "top_alici": top_alici[:5],
         "top_satici": top_satici[:5],
