@@ -121,6 +121,11 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
     """Tüm scanner sinyallerinden öncelikli hisse listesi oluştur.
     Kullanıcının takas/kademe verisi girmesi gereken hisseleri belirler.
 
+    Freshness kuralları:
+    - Bugün tetiklenen sinyaller bonus alır (+2)
+    - Haftalık sinyal + bugün günlük tetik çakışması ekstra bonus (+3)
+    - NW'de fresh=BUGÜN olan sinyaller öne çıkar
+
     Returns: [(ticker, score, reasons_list), ...] sıralı
     """
     ticker_scores = {}  # ticker → {'score': int, 'reasons': [], 'signals': {}}
@@ -130,6 +135,17 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             ticker_scores[ticker] = {'score': 0, 'reasons': [], 'signals': {}}
         ticker_scores[ticker]['score'] += pts
         ticker_scores[ticker]['reasons'].append(reason)
+
+    # Bugünün tarih string'leri (signal_date ve csv_date formatları)
+    today = datetime.now(_TZ_TR)
+    today_sd = today.strftime('%Y-%m-%d')   # signal_date formatı
+    today_cd = today.strftime('%Y%m%d')     # csv_date formatı
+
+    def _is_today(s):
+        """Sinyal bugün mü üretildi?"""
+        sd = s.get('signal_date', '')
+        cd = s.get('csv_date', '')
+        return sd == today_sd or cd == today_cd
 
     # NW AL tickers map
     nw_map = {}
@@ -145,27 +161,44 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
         if s.get('screener') == 'regime_transition' and s.get('direction') == 'AL':
             rt_map[s['ticker']] = s
 
-    # 1. BADGE sinyalleri (NW + RT çakışma) — sadece TAZE/2.DALGA pencere
+    # Bugün günlük tetik veren ticker'lar (NW fresh=BUGÜN veya günlük sinyal bugün)
+    today_triggered = set()
+    for s in latest_signals:
+        if not _is_today(s):
+            continue
+        if s.get('fresh') == 'BUGUN' or s.get('fresh') == 'BUGÜN':
+            today_triggered.add(s['ticker'])
+        elif s.get('screener') in ('nox_v3_daily', 'regime_transition'):
+            today_triggered.add(s['ticker'])
+
+    # ── GENEL LİSTE (tavan hariç) ──
+
+    # 1. BADGE sinyalleri (NW + RT çakışma) — EN YÜKSEK ÖNCELİK
     #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
     for s in latest_signals:
         if s.get('screener') == 'regime_transition' and s.get('badge'):
             badge = s['badge']
             window = s.get('entry_window', '')
             if window not in ('TAZE', '2.DALGA'):
-                continue  # GEC/BEKLE penceresi = giriş yok, shortlist'e alma
+                continue
             entry_score = int(s.get('quality', 0) or 0)
             oe = int(s.get('oe', 0) or 0)
             if entry_score < 3:
-                continue  # Giriş skoru yetersiz
+                continue
             if oe > 2:
-                continue  # OE çok yüksek, riskli
+                continue
             cmf = s.get('cmf', 0) or 0
-            pts = 10 if window == 'TAZE' else 8  # 2.DALGA da güçlü
+            # Badge base: 15 (TAZE) / 13 (2.DALGA) — D+W'nin üstünde kalması için
+            pts = 15 if window == 'TAZE' else 13
             if cmf > 0.1:
                 pts += 2
             if badge == 'H+PB':
-                pts += 1  # PB biraz daha güçlü
-            _add(s['ticker'], pts, f"🏅{badge} [{window}] F{entry_score} OE={oe} CMF{cmf:+.2f}")
+                pts += 1
+            is_fresh = _is_today(s)
+            if is_fresh:
+                pts += 2
+            fresh_tag = " 🔥BUGÜN" if is_fresh else ""
+            _add(s['ticker'], pts, f"🏅{badge} [{window}] F{entry_score} OE={oe} CMF{cmf:+.2f}{fresh_tag}")
 
     # 2. NW PIVOT_AL tetikli sinyaller
     for ticker, s in nw_map.items():
@@ -173,46 +206,87 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
         trigger = s.get('trigger_type', '')
         delta = s.get('delta_pct')
         if not trigger:
-            continue  # ZONE_ONLY, skip
+            continue
+        fresh = s.get('fresh', '')
+        is_fresh_nw = fresh in ('BUGUN', 'BUGÜN')
+        has_daily_today = ticker in today_triggered
         if wl == 'HAZIR':
             pts = 8
-            _add(ticker, pts, f"NW HAZIR {trigger} δ{delta:.1f}%" if delta else f"NW HAZIR {trigger}")
+            label = f"NW HAZIR {trigger} δ{delta:.1f}%" if delta else f"NW HAZIR {trigger}"
         elif wl == 'İZLE':
             pts = 5
-            _add(ticker, pts, f"NW İZLE {trigger}")
+            label = f"NW İZLE {trigger}"
         else:
             pts = 3
-            _add(ticker, pts, f"NW BEKLE {trigger}")
+            label = f"NW BEKLE {trigger}"
+        if is_fresh_nw:
+            pts += 2
+            label += " 🔥BUGÜN"
+        if has_daily_today and not is_fresh_nw:
+            pts += 3
+            label += " ⚡D+W"
+        _add(ticker, pts, label)
 
     # 3. RT fırsat ≥ 3 + TAZE/2.DALGA sinyaller (badge olmayanlar)
     #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
     for ticker, s in rt_map.items():
         if ticker in ticker_scores and any('🏅' in r for r in ticker_scores[ticker]['reasons']):
-            continue  # Badge zaten var
+            continue
         window = s.get('entry_window', '')
         entry_score = int(s.get('quality', 0) or 0)
         cmf = s.get('cmf', 0) or 0
         oe = int(s.get('oe', 0) or 0)
         if window in ('TAZE', '2.DALGA') and entry_score >= 3 and oe <= 2:
-            pts = 4 + (entry_score - 3)  # fırsat 3→4p, fırsat 4→5p
+            pts = 4 + (entry_score - 3)
             if cmf > 0.1:
                 pts += 1
-            _add(ticker, pts, f"RT {window} F{entry_score} CMF{cmf:+.2f} OE={oe}")
+            is_fresh = _is_today(s)
+            if is_fresh:
+                pts += 2
+            fresh_tag = " 🔥BUGÜN" if is_fresh else ""
+            _add(ticker, pts, f"RT {window} F{entry_score} CMF{cmf:+.2f} OE={oe}{fresh_tag}")
 
-    # 4. Tavan — skor + hacim + çapraz screener çakışması
-    # Çapraz çakışma: tavan ticker'ının kaç farklı screener'da göründüğünü say
+    # 4. AL/SAT DÖNÜŞ — Q yüksek
+    for s in latest_signals:
+        if s.get('screener') == 'alsat' and s.get('direction') == 'AL':
+            q = s.get('quality', 0) or s.get('q', 0) or 0
+            if q >= 85:
+                _add(s['ticker'], 4, f"DÖNÜŞ Q={q}")
+            elif q >= 70:
+                _add(s['ticker'], 2, f"DÖNÜŞ Q={q}")
+
+    # 5. Çakışma bonus (tavan hariç screener'lardan gelen)
+    if confluence_results:
+        for r in confluence_results:
+            src = r.get('source_count', 0)
+            if src >= 3:
+                _add(r['ticker'], src - 1, f"Çakışma {src} kaynak skor={r['score']}")
+
+    # Genel liste: sırala
+    ranked = sorted(ticker_scores.items(), key=lambda x: -x[1]['score'])
+    general_list = [(t, info['score'], info['reasons']) for t, info in ranked]
+
+    # ── TAVAN LİSTESİ (tavan + çapraz çakışma) ──
+    tavan_scores = {}
+
+    def _tadd(ticker, pts, reason):
+        if ticker not in tavan_scores:
+            tavan_scores[ticker] = {'score': 0, 'reasons': []}
+        tavan_scores[ticker]['score'] += pts
+        tavan_scores[ticker]['reasons'].append(reason)
+
     tavan_tickers = {}
     for s in latest_signals:
         if s.get('screener') in ('tavan', 'tavan_kandidat'):
             t = s['ticker']
-            # Aynı ticker birden fazla tavan dosyasında varsa yüksek skoru koru
             if t in tavan_tickers:
                 existing_skor = tavan_tickers[t].get('skor', 0) or 0
                 new_skor = s.get('skor', 0) or 0
                 if new_skor <= existing_skor:
                     continue
             tavan_tickers[t] = s
-    tavan_cross = {}  # ticker → diğer screener set'i
+
+    tavan_cross = {}
     for s in latest_signals:
         if s['ticker'] in tavan_tickers and s.get('screener') not in ('tavan', 'tavan_kandidat'):
             tavan_cross.setdefault(s['ticker'], set()).add(s['screener'])
@@ -227,56 +301,39 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
         pts = 0
         label_parts = []
 
-        # Temel tavan puanı
         if skor >= 50 and vol < 1.0:
-            pts = 6  # Kilitli tavan
+            pts = 6
             label_parts.append(f"🔒TAVAN skor:{skor} vol:{vol:.1f}x")
         elif skor >= 40 and vol < 1.5:
-            pts = 4  # Alınabilir tavan
+            pts = 4
             label_parts.append(f"TAVAN skor:{skor} vol:{vol:.1f}x")
         elif skor >= 30 and cross_count >= 3:
-            pts = 3  # Skor düşük ama çakışma güçlü
+            pts = 3
             label_parts.append(f"TAVAN skor:{skor} vol:{vol:.1f}x")
         elif skor >= 40:
             pts = 2
             label_parts.append(f"TAVAN skor:{skor} vol:{vol:.1f}x (yüksek hacim)")
 
-        # Çapraz screener bonusu
         if pts > 0 and cross_count >= 2:
-            bonus = min(cross_count - 1, 3)  # max +3
+            bonus = min(cross_count - 1, 3)
             if cross_has_rt:
-                bonus += 1  # RT çakışması ekstra değerli
+                bonus += 1
             if cross_has_nw:
-                bonus += 1  # NW çakışması ekstra değerli
+                bonus += 1
             pts += bonus
             label_parts.append(f"×{cross_count} çapraz")
 
         if pts > 0:
-            _add(ticker, pts, " ".join(label_parts))
+            _tadd(ticker, pts, " ".join(label_parts))
 
-    # 5. AL/SAT DÖNÜŞ — Q yüksek
-    for s in latest_signals:
-        if s.get('screener') == 'alsat' and s.get('direction') == 'AL':
-            q = s.get('quality', 0) or s.get('q', 0) or 0
-            if q >= 85:
-                _add(s['ticker'], 4, f"DÖNÜŞ Q={q}")
-            elif q >= 70:
-                _add(s['ticker'], 2, f"DÖNÜŞ Q={q}")
+    tavan_ranked = sorted(tavan_scores.items(), key=lambda x: -x[1]['score'])
+    tavan_list = [(t, info['score'], info['reasons']) for t, info in tavan_ranked]
 
-    # 6. Çakışma bonus
-    if confluence_results:
-        for r in confluence_results:
-            src = r.get('source_count', 0)
-            if src >= 3:
-                _add(r['ticker'], src - 1, f"Çakışma {src} kaynak skor={r['score']}")
-
-    # Sırala ve döndür
-    ranked = sorted(ticker_scores.items(), key=lambda x: -x[1]['score'])
-    return [(t, info['score'], info['reasons']) for t, info in ranked]
+    return general_list, tavan_list
 
 
-def _build_shortlist_message(shortlist, portfolio=None):
-    """Shortlist'i Telegram mesajı olarak formatla."""
+def _build_shortlist_message(general_list, tavan_list, portfolio=None):
+    """İki shortlist'i Telegram mesajı olarak formatla."""
     now = datetime.now(_TZ_TR)
     held = set()
     watched = set()
@@ -284,29 +341,40 @@ def _build_shortlist_message(shortlist, portfolio=None):
         held = {h['ticker'] for h in portfolio.get('holdings', [])}
         watched = set(portfolio.get('watchlist', []))
 
+    def _tag(ticker):
+        if ticker in held:
+            return " 📌PF"
+        elif ticker in watched:
+            return " 👁️İL"
+        return ""
+
     lines = [
         f"<b>⬡ NOX Ön Analiz — {now.strftime('%d.%m.%Y %H:%M')}</b>",
-        "",
-        "📋 <b>Öncelikli hisseler — takas/kademe verisi gerekli:</b>",
-        "",
     ]
 
+    # ── Genel Liste (badge > D+W > NW > RT > DÖNÜŞ > çakışma) ──
+    lines.append("")
+    lines.append("📋 <b>Sinyal Listesi</b> (badge → D+W → NW → RT → çakışma)")
+    lines.append("")
     takas_needed = []
-    for i, (ticker, score, reasons) in enumerate(shortlist[:25], 1):
-        tag = ""
-        if ticker in held:
-            tag = " 📌PF"
-        elif ticker in watched:
-            tag = " 👁️İL"
+    for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
         reasons_short = " | ".join(reasons[:3])
-        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{tag} — {reasons_short}")
+        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
         takas_needed.append(ticker)
+
+    # ── Tavan Listesi ──
+    if tavan_list:
+        lines.append("")
+        lines.append(f"🔺 <b>Tavan/Kandidat</b> ({len(tavan_list)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
+            reasons_short = " | ".join(reasons[:2])
+            lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
+            if ticker not in takas_needed:
+                takas_needed.append(ticker)
 
     lines.append("")
     lines.append(f"<b>📊 Bu {len(takas_needed)} hisse için kademe S/A + takas verisi yükle.</b>")
-    lines.append(f"Dosya: <code>agent/daily_input/takas_{now.strftime('%Y%m%d')}.md</code>")
-    lines.append("")
-    lines.append("Sonra brifing çalıştır: <code>python -m agent.briefing --fresh --notify</code>")
 
     return "\n".join(lines)
 
@@ -362,16 +430,22 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     # ── SHORTLIST MODE: sadece öncelikli hisse listesi oluştur ──
     if shortlist_only:
         print("\n📋 Öncelikli hisse listesi oluşturuluyor...")
-        shortlist = _compute_priority_shortlist(latest_signals, confluence_results)
+        general_list, tavan_list = _compute_priority_shortlist(
+            latest_signals, confluence_results)
         portfolio = _load_portfolio()
-        print(f"  {len(shortlist)} hisse skorlandı, top 25 gösteriliyor:\n")
-        for i, (ticker, score, reasons) in enumerate(shortlist[:25], 1):
+        print(f"  Genel: {len(general_list)} hisse, Tavan: {len(tavan_list)} hisse\n")
+        print("  ── Sinyal Listesi ──")
+        for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
             print(f"  {i:2d}. {ticker:6s} [{score:2d}p] — {' | '.join(reasons[:3])}")
+        if tavan_list:
+            print(f"\n  ── Tavan ({len(tavan_list)}) ──")
+            for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
+                print(f"  {i:2d}. {ticker:6s} [{score:2d}p] — {' | '.join(reasons[:2])}")
         if notify:
-            msg = _build_shortlist_message(shortlist, portfolio)
+            msg = _build_shortlist_message(general_list, tavan_list, portfolio)
             send_telegram(msg)
             print(f"\n  ✅ Shortlist Telegram'a gönderildi")
-        return {"shortlist": shortlist}
+        return {"shortlist": general_list, "tavan": tavan_list}
 
     # 3. Makro veri çek
     print("\n🌍 Makro veri çekiliyor...")
