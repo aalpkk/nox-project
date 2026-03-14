@@ -19,7 +19,8 @@ sys.path.insert(0, ROOT)
 from dotenv import load_dotenv
 load_dotenv(os.path.join(ROOT, '.env'))
 
-from agent.scanner_reader import get_latest_signals, summarize_signals, get_latest_date_signals, SCREENER_NAMES
+from agent.scanner_reader import (get_latest_signals, summarize_signals, get_latest_date_signals,
+                                   SCREENER_NAMES, export_signals_json)
 from agent.macro import (fetch_macro_data, fetch_macro_snapshot, assess_macro_regime,
                          format_macro_summary, calc_category_regimes)
 from agent.confluence import calc_all_confluence, format_confluence_summary
@@ -333,6 +334,18 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     latest_signals = get_latest_date_signals(signals)
     signal_summary = summarize_signals(latest_signals)
     print(f"  Son tarih: {len(latest_signals)} sinyal")
+
+    # 1b. Sinyalleri JSON olarak export et + GitHub Pages'e push
+    if notify and latest_signals:
+        json_path = os.path.join(ROOT, 'output', 'latest_signals.json')
+        export_signals_json(latest_signals, json_path)
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                json_content = f.read()
+            push_html_to_github(json_content, 'latest_signals.json',
+                                now.strftime('%Y%m%d'))
+        except Exception as e:
+            print(f"  ⚠️ Sinyal JSON push hatası: {e}")
 
     # 2. Çakışma analizi (makro olmadan da çalışır)
     print("\n⬡ Çakışma analizi...")

@@ -9,7 +9,7 @@ import pandas as pd
 
 from agent.scanner_reader import (
     get_latest_signals, get_signals_for_ticker, get_latest_date_signals,
-    summarize_signals, SCREENER_NAMES,
+    summarize_signals, SCREENER_NAMES, fetch_signals_from_url,
 )
 from agent.macro import fetch_macro_snapshot, assess_macro_regime, format_macro_summary
 from agent.confluence import calc_confluence_score, calc_all_confluence
@@ -22,9 +22,15 @@ _watchlist = None
 
 
 def _get_signals():
-    """Sinyal cache — session'da bir kez yükle."""
+    """Sinyal cache — session'da bir kez yükle.
+    Önce lokal CSV, yoksa GitHub Pages'ten JSON indir (Render ortamı).
+    """
     if _signal_cache["signals"] is None:
         signals, csv_map = get_latest_signals()
+        # Lokal CSV boşsa → GitHub Pages'ten JSON dene
+        if not signals:
+            print("  Lokal CSV yok, GitHub Pages'ten indiriliyor...")
+            signals, _ = fetch_signals_from_url()
         _signal_cache["signals"] = signals
         _signal_cache["csv_map"] = csv_map
     return _signal_cache["signals"]
@@ -499,9 +505,9 @@ _YATIRIM_ORTAKLIGI_KEYWORDS = {'yatırım ortaklığı', 'yatirim ortakligi', 'h
 
 # Bankalar = perakende proxy (müşteri emri yürütüyorlar)
 _BANKA_KEYWORDS = {
-    'iş bankası', 'is bankasi', 'isbank',
+    'iş bankası', 'is bankasi', 'isbank', 'iş yat', 'is yat',
     'garanti', 'yapı kredi', 'yapi kredi', 'yapıkredi',
-    'akbank', 'denizbank', 'halkbank', 'halk bankası', 'vakıfbank', 'vakifbank',
+    'akbank', 'ak yat', 'denizbank', 'halkbank', 'halk bankası', 'vakıfbank', 'vakifbank',
     'ziraat', 'teb', 'qnb', 'şekerbank', 'sekerbank', 'odeabank',
     'icbc', 'ing bank', 'fibabanka', 'alternatifbank',
 }
@@ -515,17 +521,22 @@ def _tr_lower(s):
 def _classify_kurum(name):
     """Kurum tipini belirle: yabanci/emeklilik/banka/yatirim_fonu/yatirim_ortakligi/yerli"""
     nl = _tr_lower(name)
-    # Yabancı kurumlar İngilizce isimli → hem Türkçe hem ASCII lowercase ile kontrol
-    nl_ascii = name.lower().replace('ı', 'i')  # AMERICA, CITIBANK gibi isimler için
-    if any(k in nl for k in _YABANCI_KURUMLAR) or any(k in nl_ascii for k in _YABANCI_KURUMLAR):
+    # ASCII lowercase — I→ı (Türkçe) yerine I→i (ASCII) ile de kontrol et
+    # "GARANTI" → _tr_lower → "garantı" (eşleşmez garanti), ama .lower() → "garanti" (eşleşir)
+    nl_ascii = name.lower().replace('ı', 'i')
+
+    def _match(keywords):
+        return any(k in nl for k in keywords) or any(k in nl_ascii for k in keywords)
+
+    if _match(_YABANCI_KURUMLAR):
         return 'yabanci'
-    if any(k in nl for k in _EMEKLILIK_KEYWORDS):
+    if _match(_EMEKLILIK_KEYWORDS):
         return 'emeklilik'
-    if any(k in nl for k in _BANKA_KEYWORDS):
+    if _match(_BANKA_KEYWORDS):
         return 'banka'
-    if any(k in nl for k in _YATIRIM_FONU_KEYWORDS):
+    if _match(_YATIRIM_FONU_KEYWORDS):
         return 'yatirim_fonu'
-    if any(k in nl for k in _YATIRIM_ORTAKLIGI_KEYWORDS):
+    if _match(_YATIRIM_ORTAKLIGI_KEYWORDS):
         return 'yatirim_ortakligi'
     return 'yerli'
 

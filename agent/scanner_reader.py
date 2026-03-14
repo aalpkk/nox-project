@@ -4,9 +4,11 @@ Tum scanner CSV'lerini kesfet, parse et, normalize et.
 GitHub artifact'lerini iki repo'dan indirir:
   - aalpkk/bist-tavan-screener (alsat, rejim_v3, tavan)
   - aalpkk/nox-project (nox_v3, divergence, regime_transition)
+Render/remote ortamda: latest_signals.json'dan HTTP ile yükler.
 """
 import os
 import re
+import json
 import shutil
 import subprocess
 import tempfile
@@ -619,3 +621,51 @@ def summarize_signals(signals):
         "top_tickers": [{"ticker": t, "count": c} for t, c in top_tickers],
         "screener_dates": screener_dates,
     }
+
+
+# -- Signals JSON Export/Import (Render entegrasyonu) --
+
+def export_signals_json(signals, output_path):
+    """Sinyalleri JSON dosyasına yaz (GitHub Pages'e push için)."""
+    from datetime import datetime, timezone, timedelta
+    _TZ_TR = timezone(timedelta(hours=3))
+    now = datetime.now(_TZ_TR)
+
+    data = {
+        "exported_at": now.isoformat(),
+        "total": len(signals),
+        "signals": signals,
+    }
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, default=str)
+    print(f"  ✅ {len(signals)} sinyal → {output_path}")
+    return output_path
+
+
+def fetch_signals_from_url(base_url=None, filename="latest_signals.json"):
+    """GitHub Pages'ten sinyal JSON'u indir (Render ortamı için).
+
+    Returns: (signals_list, None) veya ([], None) hata durumunda.
+    """
+    import requests
+
+    if base_url is None:
+        base_url = os.environ.get("GH_PAGES_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return [], None
+
+    url = f"{base_url}/{filename}"
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            print(f"  ⚠️ Sinyal JSON indirilemedi: HTTP {resp.status_code}")
+            return [], None
+
+        data = resp.json()
+        signals = data.get("signals", [])
+        exported_at = data.get("exported_at", "?")
+        print(f"  ✅ {len(signals)} sinyal indirildi (güncelleme: {exported_at})")
+        return signals, None
+    except Exception as e:
+        print(f"  ⚠️ Sinyal JSON hatası: {e}")
+        return [], None
