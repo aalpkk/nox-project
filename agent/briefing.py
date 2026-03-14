@@ -146,19 +146,26 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             rt_map[s['ticker']] = s
 
     # 1. BADGE sinyalleri (NW + RT çakışma) — sadece TAZE/2.DALGA pencere
+    #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
     for s in latest_signals:
         if s.get('screener') == 'regime_transition' and s.get('badge'):
             badge = s['badge']
             window = s.get('entry_window', '')
             if window not in ('TAZE', '2.DALGA'):
                 continue  # GEC/BEKLE penceresi = giriş yok, shortlist'e alma
+            entry_score = int(s.get('quality', 0) or 0)
+            oe = int(s.get('oe', 0) or 0)
+            if entry_score < 3:
+                continue  # Giriş skoru yetersiz
+            if oe > 2:
+                continue  # OE çok yüksek, riskli
             cmf = s.get('cmf', 0) or 0
             pts = 10 if window == 'TAZE' else 8  # 2.DALGA da güçlü
             if cmf > 0.1:
                 pts += 2
             if badge == 'H+PB':
                 pts += 1  # PB biraz daha güçlü
-            _add(s['ticker'], pts, f"🏅{badge} [{window}] CMF{cmf:+.2f}")
+            _add(s['ticker'], pts, f"🏅{badge} [{window}] F{entry_score} OE={oe} CMF{cmf:+.2f}")
 
     # 2. NW PIVOT_AL tetikli sinyaller
     for ticker, s in nw_map.items():
@@ -178,19 +185,18 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             _add(ticker, pts, f"NW BEKLE {trigger}")
 
     # 3. RT fırsat ≥ 3 + TAZE/2.DALGA sinyaller (badge olmayanlar)
+    #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
     for ticker, s in rt_map.items():
         if ticker in ticker_scores and any('🏅' in r for r in ticker_scores[ticker]['reasons']):
             continue  # Badge zaten var
         window = s.get('entry_window', '')
         entry_score = int(s.get('quality', 0) or 0)
         cmf = s.get('cmf', 0) or 0
-        oe = s.get('oe', 0) or 0
-        if window in ('TAZE', '2.DALGA') and entry_score >= 3:
+        oe = int(s.get('oe', 0) or 0)
+        if window in ('TAZE', '2.DALGA') and entry_score >= 3 and oe <= 2:
             pts = 4 + (entry_score - 3)  # fırsat 3→4p, fırsat 4→5p
             if cmf > 0.1:
                 pts += 1
-            if oe >= 3:
-                pts -= 2
             _add(ticker, pts, f"RT {window} F{entry_score} CMF{cmf:+.2f} OE={oe}")
 
     # 4. Tavan — skor + hacim + çapraz screener çakışması
