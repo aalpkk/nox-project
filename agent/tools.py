@@ -515,7 +515,9 @@ def _tr_lower(s):
 def _classify_kurum(name):
     """Kurum tipini belirle: yabanci/emeklilik/banka/yatirim_fonu/yatirim_ortakligi/yerli"""
     nl = _tr_lower(name)
-    if any(k in nl for k in _YABANCI_KURUMLAR):
+    # Yabancı kurumlar İngilizce isimli → hem Türkçe hem ASCII lowercase ile kontrol
+    nl_ascii = name.lower().replace('ı', 'i')  # AMERICA, CITIBANK gibi isimler için
+    if any(k in nl for k in _YABANCI_KURUMLAR) or any(k in nl_ascii for k in _YABANCI_KURUMLAR):
         return 'yabanci'
     if any(k in nl for k in _EMEKLILIK_KEYWORDS):
         return 'emeklilik'
