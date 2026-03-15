@@ -183,6 +183,26 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None,
 
     # 1. BADGE sinyalleri (NW + RT çakışma) — EN YÜKSEK ÖNCELİK
     #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
+    badge_seen = set()
+
+    def _score_badge(ticker, badge, window, entry_score, oe, cmf, is_fresh):
+        """Badge puanlama (native + cross-check ortak)."""
+        pts = 15 if window == 'TAZE' else 13
+        if cmf > 0.1:
+            pts += 2
+        elif cmf < -0.25:
+            pts -= 4
+        elif cmf < -0.1:
+            pts -= 2
+        if badge == 'H+PB':
+            pts += 3
+        if is_fresh:
+            pts += 2
+        fresh_tag = " 🔥BUGÜN" if is_fresh else ""
+        _add(ticker, pts, f"🏅{badge} [{window}] F{entry_score} OE={oe} CMF{cmf:+.2f}{fresh_tag}")
+        badge_seen.add(ticker)
+
+    # 1a. Native badge (RT CSV'de badge alanı olan)
     for s in latest_signals:
         if s.get('screener') == 'regime_transition' and s.get('badge'):
             badge = s['badge']
@@ -191,26 +211,26 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None,
                 continue
             entry_score = int(s.get('quality', 0) or 0)
             oe = int(s.get('oe', 0) or 0)
-            if entry_score < 3:
-                continue
-            if oe > 2:
+            if entry_score < 3 or oe > 2:
                 continue
             cmf = s.get('cmf', 0) or 0
-            # Badge base: 15 (TAZE) / 13 (2.DALGA) — D+W'nin üstünde kalması için
-            pts = 15 if window == 'TAZE' else 13
-            if cmf > 0.1:
-                pts += 2
-            elif cmf < -0.25:
-                pts -= 4  # Ciddi negatif CMF
-            elif cmf < -0.1:
-                pts -= 2  # Negatif CMF = para akışı ters
-            if badge == 'H+PB':
-                pts += 3  # H+PB tarihsel olarak en yüksek WR setup
-            is_fresh = _is_today(s)
-            if is_fresh:
-                pts += 2
-            fresh_tag = " 🔥BUGÜN" if is_fresh else ""
-            _add(s['ticker'], pts, f"🏅{badge} [{window}] F{entry_score} OE={oe} CMF{cmf:+.2f}{fresh_tag}")
+            _score_badge(s['ticker'], badge, window, entry_score, oe, cmf, _is_today(s))
+
+    # 1b. Çapraz badge (NW AL ∩ RT AL — native badge olmayan)
+    for ticker in set(nw_map.keys()) & set(rt_map.keys()):
+        if ticker in badge_seen:
+            continue
+        s = rt_map[ticker]
+        window = s.get('entry_window', '')
+        if window not in ('TAZE', '2.DALGA'):
+            continue
+        entry_score = int(s.get('quality', 0) or 0)
+        oe = int(s.get('oe', 0) or 0)
+        if entry_score < 3 or oe > 2:
+            continue
+        cmf = s.get('cmf', 0) or 0
+        badge = 'H+PB' if window == '2.DALGA' else 'H+AL'
+        _score_badge(ticker, badge, window, entry_score, oe, cmf, _is_today(s))
 
     # 2. NW PIVOT_AL tetikli sinyaller
     for ticker, s in nw_map.items():
@@ -248,7 +268,7 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None,
     # 3. RT fırsat ≥ 3 + TAZE/2.DALGA sinyaller (badge olmayanlar)
     #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
     for ticker, s in rt_map.items():
-        if ticker in ticker_scores and any('🏅' in r for r in ticker_scores[ticker]['reasons']):
+        if ticker in badge_seen:
             continue
         window = s.get('entry_window', '')
         entry_score = int(s.get('quality', 0) or 0)
