@@ -25,7 +25,8 @@ from agent.scanner_reader import (get_latest_signals, summarize_signals, get_lat
 from agent.macro import (fetch_macro_data, fetch_macro_snapshot, assess_macro_regime,
                          format_macro_summary, calc_category_regimes)
 from agent.confluence import calc_all_confluence, format_confluence_summary
-from agent.smart_money import calc_batch_sms, format_sms_line, sms_icon
+from agent.smart_money import (calc_batch_sms, format_sms_line, sms_icon,
+                               classify_kurum_sms)
 from agent.html_report import generate_briefing_html
 from agent.prompts import BRIEFING_PROMPT
 from core.reports import send_telegram, push_html_to_github
@@ -434,8 +435,97 @@ def _push_priority_tickers(general_list, tavan_list):
         print(f"  ⚠️ Priority tickers push başarısız")
 
 
+def _fmt_lot(lot):
+    """Lot sayısını kompakt formatla: 1500000 → +1.5M, -300000 → -300K."""
+    if abs(lot) >= 1_000_000:
+        return f"{lot / 1_000_000:+.1f}M"
+    elif abs(lot) >= 1000:
+        return f"{lot / 1000:+.0f}K"
+    elif lot != 0:
+        return f"{lot:+d}"
+    return "0"
+
+
+def _build_sm_summary(tickers, takas_data, mkk_data, sms_scores):
+    """Shortlist hisseleri için kompakt SM (takas + MKK) özet satırları.
+
+    Format: TICKER 🟢70 K%45↑2.3 | YB+1.5M F-200K #BoA
+    """
+    lines = []
+    for ticker in tickers:
+        parts = [f"<b>{ticker}</b>"]
+
+        # SMS skoru + ikon
+        if sms_scores:
+            sms = sms_scores.get(ticker)
+            if sms:
+                sv = sms.score if hasattr(sms, 'score') else sms
+                parts.append(f"{sms_icon(sv)}{sv}")
+
+        # MKK: kurumsal % + değişim
+        if mkk_data:
+            mkk = mkk_data.get(ticker)
+            if mkk:
+                k_pct = mkk.get('kurumsal_pct', 0)
+                fark_1g = mkk.get('bireysel_fark_1g')
+                fark_5g = mkk.get('bireysel_fark_5g')
+                # bireysel düşüş = kurumsal artış
+                if fark_5g is not None:
+                    k_chg = -fark_5g
+                    arrow = "↑" if k_chg > 0.2 else ("↓" if k_chg < -0.2 else "→")
+                    parts.append(f"K%{k_pct:.0f}{arrow}{abs(k_chg):.1f}")
+                elif fark_1g is not None:
+                    k_chg = -fark_1g
+                    arrow = "↑" if k_chg > 0.1 else ("↓" if k_chg < -0.1 else "→")
+                    parts.append(f"K%{k_pct:.0f}{arrow}{abs(k_chg):.1f}")
+                else:
+                    parts.append(f"K%{k_pct:.0f}")
+
+        # Takas: net akış by tip (haftalık — daha kararlı)
+        if takas_data:
+            td = takas_data.get(ticker)
+            if td:
+                kurumlar = td.get('kurumlar', [])
+                net_by_tip = {}
+                top_buyer_name = None
+                top_buyer_lot = 0
+                for k in kurumlar:
+                    name = k.get('Aracı Kurum') or k.get('kurum') or ''
+                    h_lot = k.get('Haftalık Fark') or k.get('haftalik_fark') or 0
+                    tip = classify_kurum_sms(name)
+                    net_by_tip[tip] = net_by_tip.get(tip, 0) + h_lot
+                    if h_lot > top_buyer_lot:
+                        top_buyer_name = name
+                        top_buyer_lot = h_lot
+
+                flow_parts = []
+                for tip, short in [('yab_banka', 'YB'), ('fon', 'F'), ('prop', 'P')]:
+                    net = net_by_tip.get(tip, 0)
+                    if abs(net) >= 1000:
+                        flow_parts.append(f"{short}{_fmt_lot(net)}")
+                if flow_parts:
+                    parts.append("| " + " ".join(flow_parts))
+
+                # Top alıcı: isim kısalt, tip göster
+                if top_buyer_name and top_buyer_lot > 0:
+                    tip = classify_kurum_sms(top_buyer_name)
+                    _TIP_SHORT = {'yab_banka': 'YB', 'fon': 'F', 'prop': 'P',
+                                  'yerli_banka': 'YrB', 'diger': ''}
+                    tip_tag = _TIP_SHORT.get(tip, '')
+                    # İlk 2 kelimeyi al, max 15 char
+                    words = top_buyer_name.split()[:2]
+                    short_name = " ".join(words)[:15]
+                    parts.append(f"[{tip_tag}:{short_name}]" if tip_tag else f"[{short_name}]")
+
+        # Verisi olmayan hisseler için satır oluşturma
+        if len(parts) > 1:
+            lines.append(" ".join(parts))
+
+    return lines
+
+
 def _build_shortlist_message(general_list, tavan_list, portfolio=None,
-                             sms_scores=None):
+                             sms_scores=None, takas_data=None, mkk_data=None):
     """İki shortlist'i Telegram mesajı olarak formatla."""
     now = datetime.now(_TZ_TR)
     held = set()
@@ -459,9 +549,8 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None,
     lines.append("")
     lines.append("📋 <b>Sinyal Listesi</b> (badge → D+W → NW → RT → çakışma)")
     lines.append("")
-    takas_needed = []
+    all_tickers = []
     for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
-        # SMS ikonu (reasons'da SM satırından veya sms_scores'dan)
         sm_tag = ""
         if sms_scores:
             sms = sms_scores.get(ticker)
@@ -470,7 +559,7 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None,
                 sm_tag = f" {sms_icon(sm_val)}{sm_val}"
         reasons_short = " | ".join(r for r in reasons[:3] if not r.startswith("SM"))
         lines.append(f"{i}. <b>{ticker}</b> [{score}p]{sm_tag}{_tag(ticker)} — {reasons_short}")
-        takas_needed.append(ticker)
+        all_tickers.append(ticker)
 
     # ── Tavan Listesi ──
     if tavan_list:
@@ -486,11 +575,20 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None,
                     sm_tag = f" {sms_icon(sm_val)}{sm_val}"
             reasons_short = " | ".join(r for r in reasons[:2] if not r.startswith("SM"))
             lines.append(f"{i}. <b>{ticker}</b> [{score}p]{sm_tag}{_tag(ticker)} — {reasons_short}")
-            if ticker not in takas_needed:
-                takas_needed.append(ticker)
+            if ticker not in all_tickers:
+                all_tickers.append(ticker)
 
-    lines.append("")
-    lines.append(f"<b>📊 Bu {len(takas_needed)} hisse için kademe S/A + takas verisi yükle.</b>")
+    # ── Akıllı Para Özeti (takas + MKK) ──
+    if takas_data or mkk_data:
+        sm_lines = _build_sm_summary(all_tickers, takas_data, mkk_data, sms_scores)
+        if sm_lines:
+            lines.append("")
+            lines.append(f"💰 <b>Akıllı Para</b> (SMS K%=kurumsal H=haftalık)")
+            for sl in sm_lines:
+                lines.append(f"  {sl}")
+    else:
+        lines.append("")
+        lines.append(f"<b>📊 Bu {len(all_tickers)} hisse için kademe S/A + takas verisi yükle.</b>")
 
     return "\n".join(lines)
 
@@ -555,10 +653,12 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     # 2b. SMS hesapla (takas verisi varsa)
     sms_scores = None
+    takas_data_map = None
     try:
         takas_json_sms = fetch_takas_data()
         if takas_json_sms and takas_json_sms.get('data'):
-            sms_scores = calc_batch_sms(None, takas_json_sms['data'], mkk_data_map)
+            takas_data_map = takas_json_sms['data']
+            sms_scores = calc_batch_sms(None, takas_data_map, mkk_data_map)
             guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
             dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
             print(f"  SMS: {len(sms_scores)} hisse ({guclu}🟢 güçlü, {dagitim}🔴 dağıtım)")
@@ -581,7 +681,7 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
                 print(f"  {i:2d}. {ticker:6s} [{score:2d}p] — {' | '.join(reasons[:2])}")
         if notify:
             msg = _build_shortlist_message(general_list, tavan_list, portfolio,
-                                            sms_scores)
+                                            sms_scores, takas_data_map, mkk_data_map)
             send_telegram(msg)
             print(f"\n  ✅ Shortlist Telegram'a gönderildi")
             # VDS takas scraper için ticker listesini GitHub Pages'e push
