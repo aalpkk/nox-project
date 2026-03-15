@@ -972,9 +972,13 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
             td = takas_data.get(ticker)
             if td:
                 kurumlar = td.get('kurumlar', [])
-                top3 = sorted(kurumlar, key=lambda k: abs(k.get('lot_fark', 0)), reverse=True)[:3]
+                top3 = sorted(kurumlar, key=lambda k: abs(k.get('Günlük Fark') or k.get('lot_fark') or 0), reverse=True)[:3]
                 if top3:
-                    parts = [f"{k['kurum']}({k.get('lot_fark', 0):+,})" for k in top3]
+                    parts = []
+                    for k in top3:
+                        name = k.get('Aracı Kurum') or k.get('kurum') or '?'
+                        lot = k.get('Günlük Fark') or k.get('lot_fark') or 0
+                        parts.append(f"{name}({lot:+,})")
                     data_context.append(f"  {ticker}: {', '.join(parts)}")
 
         # ── SMS skorları (takas verisi varsa) ──
