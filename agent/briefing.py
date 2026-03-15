@@ -20,10 +20,12 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(ROOT, '.env'))
 
 from agent.scanner_reader import (get_latest_signals, summarize_signals, get_latest_date_signals,
-                                   SCREENER_NAMES, export_signals_json)
+                                   SCREENER_NAMES, export_signals_json,
+                                   fetch_mkk_data, fetch_takas_data)
 from agent.macro import (fetch_macro_data, fetch_macro_snapshot, assess_macro_regime,
                          format_macro_summary, calc_category_regimes)
 from agent.confluence import calc_all_confluence, format_confluence_summary
+from agent.smart_money import calc_batch_sms, format_sms_line, sms_icon
 from agent.html_report import generate_briefing_html
 from agent.prompts import BRIEFING_PROMPT
 from core.reports import send_telegram, push_html_to_github
@@ -117,7 +119,8 @@ def _run_fresh_scanners():
             print(f"    ⚠️ {e}")
 
 
-def _compute_priority_shortlist(latest_signals, confluence_results=None):
+def _compute_priority_shortlist(latest_signals, confluence_results=None,
+                                sms_scores=None):
     """Tüm scanner sinyallerinden öncelikli hisse listesi oluştur.
     Kullanıcının takas/kademe verisi girmesi gereken hisseleri belirler.
 
@@ -126,7 +129,11 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
     - Haftalık sinyal + bugün günlük tetik çakışması ekstra bonus (+3)
     - NW'de fresh=BUGÜN olan sinyaller öne çıkar
 
-    Returns: [(ticker, score, reasons_list), ...] sıralı
+    SMS entegrasyonu:
+    - Badge sinyal + SMS<15 → "⚠️ SM uyarısı" notu
+    - NW İZLE + SMS<30 → shortlist'ten düşür
+
+    Returns: (general_list, tavan_list) — [(ticker, score, reasons_list), ...] sıralı
     """
     ticker_scores = {}  # ticker → {'score': int, 'reasons': [], 'signals': {}}
 
@@ -279,6 +286,36 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
                 else:
                     _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score}")
 
+    # SMS entegrasyonu: ikon + uyarı + filtre
+    if sms_scores:
+        for ticker in list(ticker_scores.keys()):
+            sms = sms_scores.get(ticker)
+            if not sms:
+                continue
+            sms_val = sms.score if hasattr(sms, 'score') else sms
+            icon = sms_icon(sms_val) if callable(sms_icon) else "⚪"
+            reasons = ticker_scores[ticker]['reasons']
+
+            # Badge sinyal + SMS<15 → uyarı notu
+            has_badge = any('🏅' in r for r in reasons)
+            if has_badge and sms_val < 15:
+                reasons.append(f"⚠️SM {sms_val}{icon}")
+
+            # NW İZLE + SMS<30 → puan düşür
+            has_izle = any('NW İZLE' in r for r in reasons)
+            if has_izle and sms_val < 30:
+                ticker_scores[ticker]['score'] -= 2
+                reasons.append(f"SM↓ {sms_val}{icon}")
+
+            # SMS≥45 → bonus
+            if sms_val >= 45:
+                ticker_scores[ticker]['score'] += 2
+                reasons.append(f"SM {sms_val}{icon}")
+            elif sms_val >= 30:
+                reasons.append(f"SM {sms_val}{icon}")
+            elif sms_val < 15:
+                reasons.append(f"SM {sms_val}{icon}")
+
     # Genel liste: sırala
     ranked = sorted(ticker_scores.items(), key=lambda x: -x[1]['score'])
     general_list = [(t, info['score'], info['reasons']) for t, info in ranked]
@@ -350,6 +387,20 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
             label_parts.append(f"({'+'.join(cross_names)})")
 
         if pts > 0:
+            # SMS entegrasyonu — tavan listesine de ikon + bonus/uyarı
+            if sms_scores:
+                sms = sms_scores.get(ticker)
+                if sms:
+                    sms_val = sms.score if hasattr(sms, 'score') else sms
+                    icon = sms_icon(sms_val)
+                    if sms_val >= 45:
+                        pts += 2
+                        label_parts.append(f"SM {sms_val}{icon}")
+                    elif sms_val >= 30:
+                        label_parts.append(f"SM {sms_val}{icon}")
+                    elif sms_val < 15:
+                        label_parts.append(f"⚠️SM {sms_val}{icon}")
+
             _tadd(ticker, pts, " ".join(label_parts))
 
     tavan_ranked = sorted(tavan_scores.items(), key=lambda x: -x[1]['score'])
@@ -358,7 +409,33 @@ def _compute_priority_shortlist(latest_signals, confluence_results=None):
     return general_list, tavan_list
 
 
-def _build_shortlist_message(general_list, tavan_list, portfolio=None):
+def _push_priority_tickers(general_list, tavan_list):
+    """Shortlist ticker'larını priority_tickers.json olarak GitHub Pages'e push et.
+    VDS takas scraper bu dosyayı okuyarak hangi hisseler için veri çekeceğini bilir."""
+    import json
+    tickers = []
+    for ticker, _score, _reasons in general_list[:20]:
+        tickers.append(ticker)
+    for ticker, _score, _reasons in tavan_list[:10]:
+        if ticker not in tickers:
+            tickers.append(ticker)
+
+    payload = json.dumps({
+        "updated_at": datetime.now(_TZ_TR).strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+        "total": len(tickers),
+        "tickers": tickers
+    }, ensure_ascii=False)
+
+    url = push_html_to_github(payload, 'priority_tickers.json',
+                               datetime.now(_TZ_TR).strftime('%Y%m%d'))
+    if url:
+        print(f"  ✅ Priority tickers push OK ({len(tickers)} hisse)")
+    else:
+        print(f"  ⚠️ Priority tickers push başarısız")
+
+
+def _build_shortlist_message(general_list, tavan_list, portfolio=None,
+                             sms_scores=None):
     """İki shortlist'i Telegram mesajı olarak formatla."""
     now = datetime.now(_TZ_TR)
     held = set()
@@ -384,8 +461,15 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None):
     lines.append("")
     takas_needed = []
     for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
-        reasons_short = " | ".join(reasons[:3])
-        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
+        # SMS ikonu (reasons'da SM satırından veya sms_scores'dan)
+        sm_tag = ""
+        if sms_scores:
+            sms = sms_scores.get(ticker)
+            if sms:
+                sm_val = sms.score if hasattr(sms, 'score') else sms
+                sm_tag = f" {sms_icon(sm_val)}{sm_val}"
+        reasons_short = " | ".join(r for r in reasons[:3] if not r.startswith("SM"))
+        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{sm_tag}{_tag(ticker)} — {reasons_short}")
         takas_needed.append(ticker)
 
     # ── Tavan Listesi ──
@@ -394,8 +478,14 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None):
         lines.append(f"🔺 <b>Tavan/Kandidat</b> ({len(tavan_list)} hisse)")
         lines.append("")
         for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
-            reasons_short = " | ".join(reasons[:2])
-            lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
+            sm_tag = ""
+            if sms_scores:
+                sms = sms_scores.get(ticker)
+                if sms:
+                    sm_val = sms.score if hasattr(sms, 'score') else sms
+                    sm_tag = f" {sms_icon(sm_val)}{sm_val}"
+            reasons_short = " | ".join(r for r in reasons[:2] if not r.startswith("SM"))
+            lines.append(f"{i}. <b>{ticker}</b> [{score}p]{sm_tag}{_tag(ticker)} — {reasons_short}")
             if ticker not in takas_needed:
                 takas_needed.append(ticker)
 
@@ -447,17 +537,39 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         except Exception as e:
             print(f"  ⚠️ Sinyal JSON push hatası: {e}")
 
-    # 2. Çakışma analizi (makro olmadan da çalışır)
+    # 2. MKK verisi (VDS auto-fetch — çakışma skorunda kullanılır)
+    mkk_data_map = None
+    try:
+        mkk_json = fetch_mkk_data()
+        if mkk_json and mkk_json.get('data'):
+            mkk_data_map = mkk_json['data']
+            print(f"  MKK: {len(mkk_data_map)} hisse (VDS/{mkk_json.get('extracted_at', '?')[:10]})")
+    except Exception as e:
+        print(f"  ⚠️ MKK veri hatası: {e}")
+
+    # 3. Çakışma analizi (makro olmadan da çalışır)
     print("\n⬡ Çakışma analizi...")
     confluence_results = calc_all_confluence(
-        latest_signals, None, min_score=1)
+        latest_signals, None, min_score=1, mkk_data=mkk_data_map)
     print(f"  {len(confluence_results)} hisse çakışma skoru ≥ 1")
+
+    # 2b. SMS hesapla (takas verisi varsa)
+    sms_scores = None
+    try:
+        takas_json_sms = fetch_takas_data()
+        if takas_json_sms and takas_json_sms.get('data'):
+            sms_scores = calc_batch_sms(None, takas_json_sms['data'], mkk_data_map)
+            guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
+            dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
+            print(f"  SMS: {len(sms_scores)} hisse ({guclu}🟢 güçlü, {dagitim}🔴 dağıtım)")
+    except Exception as e:
+        print(f"  ⚠️ SMS hesaplama hatası: {e}")
 
     # ── SHORTLIST MODE: sadece öncelikli hisse listesi oluştur ──
     if shortlist_only:
         print("\n📋 Öncelikli hisse listesi oluşturuluyor...")
         general_list, tavan_list = _compute_priority_shortlist(
-            latest_signals, confluence_results)
+            latest_signals, confluence_results, sms_scores)
         portfolio = _load_portfolio()
         print(f"  Genel: {len(general_list)} hisse, Tavan: {len(tavan_list)} hisse\n")
         print("  ── Sinyal Listesi ──")
@@ -468,9 +580,12 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
             for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:2d}p] — {' | '.join(reasons[:2])}")
         if notify:
-            msg = _build_shortlist_message(general_list, tavan_list, portfolio)
+            msg = _build_shortlist_message(general_list, tavan_list, portfolio,
+                                            sms_scores)
             send_telegram(msg)
             print(f"\n  ✅ Shortlist Telegram'a gönderildi")
+            # VDS takas scraper için ticker listesini GitHub Pages'e push
+            _push_priority_tickers(general_list, tavan_list)
         return {"shortlist": general_list, "tavan": tavan_list}
 
     # 3. Makro veri çek
@@ -490,9 +605,10 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         print(f"  ⚠️ Makro veri hatası: {e}")
         macro_result = None
 
-    # Çakışmayı makro ile tekrar hesapla
+    # Çakışmayı makro + SMS ile tekrar hesapla
     confluence_results = calc_all_confluence(
-        latest_signals, macro_result, min_score=1)
+        latest_signals, macro_result, min_score=1, mkk_data=mkk_data_map,
+        sms_scores=sms_scores)
 
     # 4. Claude ile brifing üret
     briefing_text = ""
@@ -823,6 +939,55 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
             for s in sat_signals[:20]:
                 scr = SCREENER_NAMES.get(s.get('screener', ''), s.get('screener', '?'))
                 data_context.append(f"  {s['ticker']}: {scr} SAT")
+
+    # ── MKK + Takas verisi (VDS auto-fetch) ──
+    mkk_json = fetch_mkk_data()
+    takas_json = fetch_takas_data()
+    if mkk_json and mkk_json.get('data'):
+        mkk_data = mkk_json['data']
+        data_context.append(f"\n## MKK Yatırımcı Dağılımı ({len(mkk_data)} hisse, tarih: {mkk_json.get('extracted_at', '?')}, {mkk_json.get('history_days', 0)} gün history)")
+        data_context.append("  Gerçek MKK verisi — B+K=%100, bireysel düşüşü = kurumsal birikim")
+        # Shortlist'teki hisseler için MKK göster
+        shortlist_tickers = set()
+        for s in latest_signals or []:
+            if (s.get('screener') == 'nox_v3_weekly'
+                    and s.get('signal_type') == 'PIVOT_AL'):
+                shortlist_tickers.add(s['ticker'])
+            if s.get('screener') == 'regime_transition' and s.get('badge'):
+                shortlist_tickers.add(s['ticker'])
+        for ticker in sorted(shortlist_tickers):
+            mkk = mkk_data.get(ticker)
+            if mkk:
+                line = f"  {ticker}: bireysel=%{mkk.get('bireysel_pct', '?')} kurumsal=%{mkk.get('kurumsal_pct', '?')}"
+                fark_1g = mkk.get('bireysel_fark_1g')
+                if fark_1g is not None:
+                    line += f" (1g: {fark_1g:+.2f}%)"
+                data_context.append(line)
+
+    if takas_json and takas_json.get('data'):
+        takas_data = takas_json['data']
+        data_context.append(f"\n## Takas Verisi ({len(takas_data)} hisse, VDS/{takas_json.get('extracted_at', '?')})")
+        # Shortlist'teki hisseler için öne çıkan takas verisi
+        for ticker in sorted(shortlist_tickers if 'shortlist_tickers' in dir() else []):
+            td = takas_data.get(ticker)
+            if td:
+                kurumlar = td.get('kurumlar', [])
+                top3 = sorted(kurumlar, key=lambda k: abs(k.get('lot_fark', 0)), reverse=True)[:3]
+                if top3:
+                    parts = [f"{k['kurum']}({k.get('lot_fark', 0):+,})" for k in top3]
+                    data_context.append(f"  {ticker}: {', '.join(parts)}")
+
+        # ── SMS skorları (takas verisi varsa) ──
+        sms_results = calc_batch_sms(None, takas_data, mkk_data if 'mkk_data' in dir() else None)
+        if sms_results:
+            sorted_sms = sorted(sms_results.values(), key=lambda x: -x.score)
+            guclu = [s for s in sorted_sms if s.score >= 45]
+            dagitim = [s for s in sorted_sms if s.score < 15]
+            data_context.append(f"\n## Smart Money Score ({len(sms_results)} hisse, {len(guclu)}🟢 güçlü, {len(dagitim)}🔴 dağıtım)")
+            data_context.append("  SMS: Birikim+Yoğunlaşma+KarşıTaraf+Süreklilik+MKK (max 85p)")
+            data_context.append("  ≥45🟢GÜÇLÜ | 30-44🟡ORTA | 15-29⚪ZAYIF | <15🔴DAĞITIM")
+            for sms in sorted_sms[:25]:
+                data_context.append(f"  {format_sms_line(sms)}")
 
     # ── Kategori rejimleri ──
     if macro_result and macro_result.get('category_regimes'):

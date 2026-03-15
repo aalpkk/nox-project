@@ -46,9 +46,17 @@ def _deduplicate_signals(ticker_signals):
     return result
 
 
-def calc_confluence_score(ticker, signals, macro_regime=None):
+def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
+                          sms_scores=None):
     """
     Belirli bir ticker için çakışma skoru hesapla.
+
+    Args:
+        ticker: Hisse kodu
+        signals: Tüm sinyaller listesi
+        macro_regime: Makro rejim dict (opsiyonel)
+        mkk_data: MKK verisi dict {TICKER: {bireysel_pct, yabanci_pct, ...}} (opsiyonel)
+        sms_scores: SMS skorları dict {TICKER: SMSResult} (opsiyonel)
 
     Returns:
         dict: {ticker, score, details[], recommendation, source_count, signals}
@@ -269,6 +277,46 @@ def calc_confluence_score(ticker, signals, macro_regime=None):
             details.append(f"ℹ️ Kademe S/A={sa} (satıcı baskısı — bilgi notu)")
 
     # ══════════════════════════════════════════════════════════════
+    # 6b. MKK Yatırımcı Dağılımı — KONFİRMASYON katmanı
+    #     VDS scraper ile GitHub Pages'ten alınır
+    # ══════════════════════════════════════════════════════════════
+    if mkk_data:
+        mkk_ticker = mkk_data.get(ticker)
+        if mkk_ticker:
+            bireysel_pct = mkk_ticker.get('bireysel_pct', 100) or 100
+            bireysel_fark = mkk_ticker.get('bireysel_fark_1g', 0) or 0
+
+            if bireysel_pct < 30:
+                sources.add('mkk')
+                score += 1
+                details.append(f"+1 MKK kurumsal ağırlıklı (bireysel %{bireysel_pct:.1f})")
+            if bireysel_fark < -0.5:
+                sources.add('mkk')
+                score += 1
+                details.append(f"+1 MKK kurumsal birikim (bireysel {bireysel_fark:+.2f}% günlük)")
+
+    # ══════════════════════════════════════════════════════════════
+    # 6c. Smart Money Score — KONFİRMASYON katmanı
+    #     SMS ≥ 45 → +2, 30-44 → +1, <15 → -1
+    # ══════════════════════════════════════════════════════════════
+    if sms_scores:
+        sms = sms_scores.get(ticker)
+        if sms:
+            sms_val = sms.score if hasattr(sms, 'score') else sms
+            if sms_val >= 45:
+                sources.add('sms')
+                score += 2
+                details.append(f"+2 SMS {sms_val}🟢 (güçlü SM birikim)")
+            elif sms_val >= 30:
+                sources.add('sms')
+                score += 1
+                details.append(f"+1 SMS {sms_val}🟡 (kısmi SM birikim)")
+            elif sms_val < 15:
+                sources.add('sms')
+                score -= 1
+                details.append(f"-1 SMS {sms_val}🔴 (SM dağıtım)")
+
+    # ══════════════════════════════════════════════════════════════
     # 7. Divergence — PASİF (geliştirme bekliyor)
     # ══════════════════════════════════════════════════════════════
     # div_signals = [s for s in ticker_signals if s['screener'] == 'divergence']
@@ -323,12 +371,14 @@ def calc_confluence_score(ticker, signals, macro_regime=None):
     }
 
 
-def calc_all_confluence(signals, macro_regime=None, min_score=1):
+def calc_all_confluence(signals, macro_regime=None, min_score=1, mkk_data=None,
+                        sms_scores=None):
     """Tüm ticker'lar için çakışma skoru hesapla ve sırala."""
     tickers = set(s['ticker'] for s in signals)
     results = []
     for ticker in tickers:
-        result = calc_confluence_score(ticker, signals, macro_regime)
+        result = calc_confluence_score(ticker, signals, macro_regime, mkk_data,
+                                       sms_scores)
         if result['score'] >= min_score:
             results.append(result)
 

@@ -1,6 +1,6 @@
 """
 NOX Agent — Claude Tool JSON Semalari
-8 tool tanimi: scanner, macro, stock, watchlist, confluence, price, kademe, takas
+10 tool tanimi: scanner, macro, stock, watchlist, confluence, price, kademe, takas, mkk, smart_money
 """
 
 TOOLS = [
@@ -125,38 +125,66 @@ TOOLS = [
     },
     {
         "name": "analyze_kademe",
-        "description": "Kademe (emir defteri) analizi. CSV veya Excel dosyasindan S/A oranini hesaplar, destek/direnc seviyelerini bulur, tavan fiyat kontrolu yapar. MatriksIQ scanner CSV ve kullanici Excel formati desteklenir.",
+        "description": "Kademe (emir defteri) analizi. Dosya verilmezse GitHub Pages'ten VDS verisini otomatik ceker. CSV/Excel dosyasindan S/A oranini hesaplar, destek/direnc seviyelerini bulur, tavan fiyat kontrolu yapar.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "CSV veya Excel dosya yolu"
+                    "description": "CSV veya Excel dosya yolu (opsiyonel — yoksa VDS verisinden auto-fetch)"
                 },
                 "ticker": {
                     "type": "string",
-                    "description": "Hisse kodu filtresi (opsiyonel, scanner CSV icin)"
+                    "description": "Hisse kodu filtresi (opsiyonel)"
                 },
             },
-            "required": ["file_path"],
+            "required": [],
         },
     },
     {
         "name": "analyze_takas",
-        "description": "Takas (araci kurum pozisyon degisimi) analizi. Excel dosyasindan yabanci kurum tespiti, net akis, ivme (acceleration), yon degisimi ve eleme kurallari uygular.",
+        "description": "Takas (araci kurum pozisyon degisimi) analizi. Dosya verilmezse GitHub Pages'ten VDS verisini otomatik ceker. Excel dosyasindan yabanci kurum tespiti, net akis, ivme ve eleme kurallari uygular.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Excel veya CSV dosya yolu"
+                    "description": "Excel veya CSV dosya yolu (opsiyonel — yoksa VDS verisinden auto-fetch)"
                 },
                 "ticker": {
                     "type": "string",
                     "description": "Hisse kodu (opsiyonel)"
                 },
             },
-            "required": ["file_path"],
+            "required": [],
+        },
+    },
+    {
+        "name": "get_mkk_data",
+        "description": "MKK (yatirimci dagilimi) verisi — gercek bireysel/kurumsal/yabanci oranlari. VDS scraper ile Matriks IQ'dan cekilir, GitHub Pages'ten sunulur. Takas tahminlerinden cok daha guvenilirdir.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Hisse kodu (opsiyonel — bossa tum veriler)"
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_smart_money_score",
+        "description": "Smart Money Score (SMS) — 5 pillar akilli para analizi. Birikim surekliligi + yogunlasma + karsi taraf zayifligi + sureklilik + MKK rejim teyidi. Skor: >=45 GUCLU, 30-44 ORTA, 15-29 ZAYIF, <15 DAGITIM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Hisse kodu (opsiyonel — bossa shortlist icin toplu hesapla)"
+                },
+            },
+            "required": [],
         },
     },
 ]

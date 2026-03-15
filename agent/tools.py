@@ -1,7 +1,7 @@
 """
 NOX Agent — Tool İmplementasyonları
 Claude tool use handler: scanner, macro, stock analysis, watchlist, confluence, price,
-kademe, takas.
+kademe, takas, mkk.
 """
 import os
 import yfinance as yf
@@ -10,14 +10,17 @@ import pandas as pd
 from agent.scanner_reader import (
     get_latest_signals, get_signals_for_ticker, get_latest_date_signals,
     summarize_signals, SCREENER_NAMES, fetch_signals_from_url,
+    fetch_mkk_data, fetch_takas_data, fetch_kademe_data,
 )
 from agent.macro import fetch_macro_snapshot, assess_macro_regime, format_macro_summary
 from agent.confluence import calc_confluence_score, calc_all_confluence
+from agent.smart_money import calc_smart_money_score, calc_batch_sms, format_sms_line, format_sms_detail
 from agent.state import Watchlist
 
 # Lazy cache — session boyunca bir kez yükle
 _signal_cache = {"signals": None, "csv_map": None}
 _macro_cache = {"result": None}
+_vds_cache = {"mkk": None, "takas": None, "kademe": None}
 _watchlist = None
 
 
@@ -51,11 +54,35 @@ def _get_watchlist():
     return _watchlist
 
 
+def _get_vds_mkk():
+    """MKK veri cache — session'da bir kez yükle."""
+    if _vds_cache["mkk"] is None:
+        _vds_cache["mkk"] = fetch_mkk_data()
+    return _vds_cache["mkk"]
+
+
+def _get_vds_takas():
+    """Takas veri cache — session'da bir kez yükle."""
+    if _vds_cache["takas"] is None:
+        _vds_cache["takas"] = fetch_takas_data()
+    return _vds_cache["takas"]
+
+
+def _get_vds_kademe():
+    """Kademe veri cache — session'da bir kez yükle."""
+    if _vds_cache["kademe"] is None:
+        _vds_cache["kademe"] = fetch_kademe_data()
+    return _vds_cache["kademe"]
+
+
 def invalidate_cache():
     """Cache'i temizle (yeni veri yüklemek için)."""
     _signal_cache["signals"] = None
     _signal_cache["csv_map"] = None
     _macro_cache["result"] = None
+    _vds_cache["mkk"] = None
+    _vds_cache["takas"] = None
+    _vds_cache["kademe"] = None
 
 
 def handle_tool(name, input_data):
@@ -81,6 +108,10 @@ def handle_tool(name, input_data):
         return _tool_analyze_kademe(input_data)
     elif name == "analyze_takas":
         return _tool_analyze_takas(input_data)
+    elif name == "get_mkk_data":
+        return _tool_mkk_data(input_data)
+    elif name == "get_smart_money_score":
+        return _tool_smart_money_score(input_data)
     else:
         return {"error": f"Bilinmeyen tool: {name}"}
 
@@ -155,13 +186,19 @@ def _tool_stock_analysis(input_data):
     signals = _get_signals()
     macro = _get_macro()
 
+    # MKK verisi (varsa)
+    mkk_map = None
+    mkk_json = _get_vds_mkk()
+    if mkk_json:
+        mkk_map = mkk_json.get("data")
+
     # Çakışma skoru
-    confluence = calc_confluence_score(ticker, signals, macro)
+    confluence = calc_confluence_score(ticker, signals, macro, mkk_data=mkk_map)
 
     # Güncel fiyat
     price_info = _fetch_price(ticker)
 
-    return {
+    result = {
         "ticker": ticker,
         "confluence": {
             "score": confluence["score"],
@@ -172,6 +209,14 @@ def _tool_stock_analysis(input_data):
         "price": price_info,
         "macro_regime": macro["regime"],
     }
+
+    # MKK verisi ekle (varsa)
+    if mkk_map:
+        mkk_ticker = mkk_map.get(ticker) or mkk_map.get(f"{ticker}.IS")
+        if mkk_ticker:
+            result["mkk"] = mkk_ticker
+
+    return result
 
 
 def _tool_watchlist(input_data):
@@ -222,13 +267,19 @@ def _tool_confluence(input_data):
     signals = _get_signals()
     macro = _get_macro()
 
+    # MKK verisi (varsa)
+    mkk_map = None
+    mkk_json = _get_vds_mkk()
+    if mkk_json:
+        mkk_map = mkk_json.get("data")
+
     ticker = input_data.get("ticker")
     if ticker:
-        result = calc_confluence_score(ticker, signals, macro)
+        result = calc_confluence_score(ticker, signals, macro, mkk_data=mkk_map)
         return result
 
     min_score = input_data.get("min_score", 1)
-    results = calc_all_confluence(signals, macro, min_score=min_score)
+    results = calc_all_confluence(signals, macro, min_score=min_score, mkk_data=mkk_map)
     return {
         "count": len(results),
         "results": results[:30],  # max 30 sonuç
@@ -301,14 +352,63 @@ def _sa_karar(sa_ratio):
 
 def _tool_analyze_kademe(input_data):
     """Kademe (emir defteri) analizi.
-    file_path: CSV/Excel dosya yolu
+    file_path: CSV/Excel dosya yolu (opsiyonel — yoksa GitHub Pages'ten auto-fetch)
     ticker: opsiyonel ticker (dosyadan bulunamazsa)
     """
     file_path = input_data.get("file_path", "")
     ticker = input_data.get("ticker", "").upper().strip()
 
+    # Auto-fetch: file_path yoksa GitHub Pages'ten kademe JSON dene
     if not file_path or not os.path.exists(file_path):
-        return {"error": f"Dosya bulunamadı: {file_path}"}
+        kademe_json = _get_vds_kademe()
+        if kademe_json and kademe_json.get("data"):
+            data = kademe_json["data"]
+            extracted_at = kademe_json.get("extracted_at", "?")
+
+            if ticker:
+                kd = data.get(ticker) or data.get(f"{ticker}.IS")
+                if kd:
+                    karar, aciklama = _sa_karar(kd.get("sat_al", 1.0))
+                    return {
+                        "format": "vds_json",
+                        "source": "VDS Kademe (auto-fetch)",
+                        "extracted_at": extracted_at,
+                        "ticker": ticker,
+                        "sa_ort": kd.get("sat_al", 1.0),
+                        "bid_depth": kd.get("bid_depth", 0),
+                        "ask_depth": kd.get("ask_depth", 0),
+                        "karar": karar,
+                        "karar_aciklama": aciklama,
+                        "karar_orig": kd.get("karar", ""),
+                    }
+
+            # Tüm semboller
+            results = []
+            for t, kd in data.items():
+                sa = kd.get("sat_al", 1.0)
+                karar, aciklama = _sa_karar(sa)
+                results.append({
+                    "ticker": t,
+                    "sa_ort": round(sa, 3),
+                    "bid_depth": kd.get("bid_depth", 0),
+                    "ask_depth": kd.get("ask_depth", 0),
+                    "karar": karar,
+                    "karar_aciklama": aciklama,
+                })
+            results.sort(key=lambda x: x["sa_ort"])
+            guclu_al = [r for r in results if r["karar"] == "GUCLU_AL"]
+            return {
+                "format": "vds_json",
+                "source": "VDS Kademe (auto-fetch)",
+                "extracted_at": extracted_at,
+                "total": len(results),
+                "guclu_al_count": len(guclu_al),
+                "results": results if len(results) <= 30 else results[:15] + results[-5:],
+            }
+
+        if file_path:
+            return {"error": f"Dosya bulunamadı: {file_path}"}
+        return {"error": "Kademe verisi mevcut değil. Dosya yolu belirtin veya VDS scraper çalıştırın."}
 
     try:
         if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
@@ -543,14 +643,65 @@ def _classify_kurum(name):
 
 def _tool_analyze_takas(input_data):
     """Takas (aracı kurum pozisyon değişimi) analizi.
-    file_path: Excel dosya yolu
+    file_path: Excel dosya yolu (opsiyonel — yoksa GitHub Pages'ten auto-fetch)
     ticker: opsiyonel ticker
     """
     file_path = input_data.get("file_path", "")
     ticker = input_data.get("ticker", "").upper().strip()
 
+    # Auto-fetch: file_path yoksa GitHub Pages'ten takas JSON dene
     if not file_path or not os.path.exists(file_path):
-        return {"error": f"Dosya bulunamadı: {file_path}"}
+        takas_json = _get_vds_takas()
+        if takas_json and takas_json.get("data"):
+            data = takas_json["data"]
+            extracted_at = takas_json.get("extracted_at", "?")
+
+            if ticker:
+                td = data.get(ticker) or data.get(f"{ticker}.IS")
+                if td:
+                    kurumlar = td.get("kurumlar", [])
+                    # Mevcut sınıflandırma mantığını uygula
+                    for k in kurumlar:
+                        k["tip"] = _classify_kurum(k.get("kurum", ""))
+                    yabanci = [k for k in kurumlar if k["tip"] == "yabanci"]
+                    net_yabanci = sum(k.get("lot_fark", 0) for k in yabanci)
+                    return {
+                        "format": "vds_json",
+                        "source": "VDS Takas (auto-fetch)",
+                        "extracted_at": extracted_at,
+                        "ticker": ticker,
+                        "toplam_kurum": len(kurumlar),
+                        "yabanci_count": len(yabanci),
+                        "net_yabanci_lot": net_yabanci,
+                        "kurumlar": kurumlar[:20],
+                        "tarih": td.get("tarih", ""),
+                    }
+
+            # Tüm semboller özet
+            results = []
+            for t, td in data.items():
+                kurumlar = td.get("kurumlar", [])
+                for k in kurumlar:
+                    k["tip"] = _classify_kurum(k.get("kurum", ""))
+                yabanci = [k for k in kurumlar if k["tip"] == "yabanci"]
+                results.append({
+                    "ticker": t,
+                    "kurum_count": len(kurumlar),
+                    "yabanci_count": len(yabanci),
+                    "net_yabanci": sum(k.get("lot_fark", 0) for k in yabanci),
+                })
+            results.sort(key=lambda x: x["net_yabanci"], reverse=True)
+            return {
+                "format": "vds_json",
+                "source": "VDS Takas (auto-fetch)",
+                "extracted_at": extracted_at,
+                "total": len(results),
+                "results": results[:30],
+            }
+
+        if file_path:
+            return {"error": f"Dosya bulunamadı: {file_path}"}
+        return {"error": "Takas verisi mevcut değil. Dosya yolu belirtin veya VDS scraper çalıştırın."}
 
     try:
         if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
@@ -791,4 +942,146 @@ def _tool_analyze_takas(input_data):
         "top_alici": top_alici[:5],
         "top_satici": top_satici[:5],
         "yabanci_detay": yabanci,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# MKK VERİSİ (VDS GUI Otomasyon → GitHub Pages)
+# ══════════════════════════════════════════════════════════════
+
+def _tool_mkk_data(input_data):
+    """MKK (yatırımcı dağılımı) verisi — GitHub Pages'ten.
+    Bireysel/kurumsal oranları + günlük/haftalık fark döndürür.
+    """
+    ticker = input_data.get("ticker", "").upper().strip()
+
+    mkk_json = _get_vds_mkk()
+    if not mkk_json:
+        return {"error": "MKK verisi henüz mevcut değil. VDS scraper çalıştırılmalı."}
+
+    extracted_at = mkk_json.get("extracted_at", "?")
+    history_days = mkk_json.get("history_days", 0)
+    data = mkk_json.get("data", {})
+
+    if ticker:
+        mkk = data.get(ticker)
+        if not mkk:
+            return {"error": f"{ticker} için MKK verisi bulunamadı",
+                    "available_count": len(data),
+                    "extracted_at": extracted_at}
+
+        result = {
+            "ticker": ticker,
+            "source": "MKK (Matriks IQ — gerçek yatırımcı dağılımı)",
+            "tarih": extracted_at,
+            "bireysel_pct": mkk.get("bireysel_pct", 0),
+            "kurumsal_pct": mkk.get("kurumsal_pct", 0),
+            "yatirimci_sayisi": mkk.get("yatirimci_sayisi", 0),
+        }
+
+        # Günlük fark varsa ekle
+        if "bireysel_fark_1g" in mkk:
+            fark = mkk["bireysel_fark_1g"]
+            result["bireysel_degisim_1g"] = f"{fark:+.2f}%"
+            if fark < -0.5:
+                result["yorum_1g"] = "Kurumsal birikim (bireysel azalıyor)"
+            elif fark > 0.5:
+                result["yorum_1g"] = "Bireysel giriş (dikkat)"
+
+        # Haftalık fark varsa ekle
+        if "bireysel_fark_5g" in mkk:
+            fark = mkk["bireysel_fark_5g"]
+            result["bireysel_degisim_5g"] = f"{fark:+.2f}%"
+            if fark < -1:
+                result["yorum_5g"] = "Güçlü kurumsal birikim (haftalık)"
+
+        result["history_days"] = history_days
+        result["not"] = (
+            "MKK verisi gerçek yatırımcı tipini gösterir (B+K=%100). "
+            "Bireysel % düşüşü = kurumsal birikim sinyali."
+        )
+        return result
+
+    # Tüm veriler — sadece özet
+    # En düşük bireysel oranlar (kurumsal ağırlıklı)
+    top_kurumsal = sorted(data.items(), key=lambda x: x[1].get("bireysel_pct", 100))[:20]
+    result = {
+        "source": "MKK (Matriks IQ)",
+        "tarih": extracted_at,
+        "total": len(data),
+        "history_days": history_days,
+        "en_kurumsal_20": [
+            {"ticker": t, "bireysel_pct": v.get("bireysel_pct", 0),
+             "kurumsal_pct": v.get("kurumsal_pct", 0)}
+            for t, v in top_kurumsal
+        ],
+    }
+    return result
+
+
+# ══════════════════════════════════════════════════════════════
+# SMART MONEY SCORE (SMS)
+# ══════════════════════════════════════════════════════════════
+
+def _tool_smart_money_score(input_data):
+    """Smart Money Score — 5 pillar akıllı para analizi.
+    ticker: opsiyonel — boşsa shortlist'teki tüm hisseler.
+    """
+    ticker = input_data.get("ticker", "").upper().strip()
+
+    # Takas verisi — zorunlu
+    takas_json = _get_vds_takas()
+    if not takas_json or not takas_json.get("data"):
+        return {"error": "Takas verisi mevcut değil. VDS scraper çalıştırılmalı."}
+
+    takas_data = takas_json["data"]
+    extracted_at = takas_json.get("extracted_at", "?")
+
+    # MKK verisi — opsiyonel (S5 için)
+    mkk_map = None
+    mkk_json = _get_vds_mkk()
+    if mkk_json and mkk_json.get("data"):
+        mkk_map = mkk_json["data"]
+
+    if ticker:
+        sms = calc_smart_money_score(ticker, takas_data, mkk_map)
+        if not sms:
+            return {"error": f"{ticker} için takas verisi bulunamadı",
+                    "available": list(takas_data.keys())[:20]}
+        return {
+            "ticker": ticker,
+            "sms_score": sms.score,
+            "label": sms.label,
+            "icon": sms.icon,
+            "pillars": {
+                "s1_birikim": {"puan": sms.s1, "detay": sms.s1_detail},
+                "s2_yogunlasma": {"puan": sms.s2, "detay": sms.s2_detail},
+                "s3_karsi_taraf": {"puan": sms.s3, "detay": sms.s3_detail},
+                "s4_sureklilik": {"puan": sms.s4, "detay": sms.s4_detail},
+                "s5_mkk": {"puan": sms.s5, "detay": sms.s5_detail},
+            },
+            "summary": format_sms_line(sms),
+            "detail": format_sms_detail(sms),
+            "source": f"VDS Takas ({extracted_at})",
+        }
+
+    # Toplu: tüm takas verisi
+    results = calc_batch_sms(None, takas_data, mkk_map)
+    sorted_results = sorted(results.values(), key=lambda x: -x.score)
+
+    return {
+        "total": len(sorted_results),
+        "source": f"VDS Takas ({extracted_at})",
+        "results": [
+            {
+                "ticker": sms.ticker,
+                "score": sms.score,
+                "icon": sms.icon,
+                "label": sms.label,
+                "summary": format_sms_line(sms),
+                "s1": sms.s1, "s2": sms.s2, "s3": sms.s3,
+                "s4": sms.s4, "s5": sms.s5,
+            }
+            for sms in sorted_results
+        ],
     }

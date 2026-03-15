@@ -669,3 +669,165 @@ def fetch_signals_from_url(base_url=None, filename="latest_signals.json"):
     except Exception as e:
         print(f"  ⚠️ Sinyal JSON hatası: {e}")
         return [], None
+
+
+# -- VDS JSON Fetch (MKK, Takas, Kademe) --
+
+def _fetch_vds_json(filename, base_url=None):
+    """GitHub Pages'ten VDS JSON dosyası indir.
+
+    Args:
+        filename: ör. "mkk_data.json", "takas_data.json", "kademe_data.json"
+        base_url: GitHub Pages base URL (None ise env'den al)
+
+    Returns:
+        dict veya None
+    """
+    import requests
+
+    if base_url is None:
+        base_url = os.environ.get("GH_PAGES_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return None
+
+    url = f"{base_url}/{filename}"
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            print(f"  ⚠️ {filename} indirilemedi: HTTP {resp.status_code}")
+            return None
+        data = resp.json()
+        extracted = data.get("extracted_at", "?")
+        total = data.get("total", 0)
+        print(f"  ✅ {filename}: {total} kayıt (güncelleme: {extracted})")
+        return data
+    except Exception as e:
+        print(f"  ⚠️ {filename} hatası: {e}")
+        return None
+
+
+def fetch_mkk_data(base_url=None):
+    """GitHub Pages'ten MKK history JSON indir ve en son snapshot'ı döndür.
+
+    mkk_history.json formatı:
+        {"2026-03-13": {"GARAN": {"b": 5.33, "k": 94.67, "ys": 141313}, ...}, ...}
+
+    Returns:
+        dict: {extracted_at, source, total, data: {TICKER: {bireysel_pct, kurumsal_pct, ...}}}
+        veya None
+    """
+    import requests
+
+    if base_url is None:
+        base_url = os.environ.get("GH_PAGES_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return None
+
+    url = f"{base_url}/mkk_history.json"
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            print(f"  ⚠️ mkk_history.json indirilemedi: HTTP {resp.status_code}")
+            return None
+
+        history = resp.json()
+        if not history:
+            return None
+
+        dates = sorted(history.keys())
+        latest_date = dates[-1]
+        latest_snap = history[latest_date]
+
+        # Bir önceki günü bul (fark hesabı için)
+        prev_snap = history[dates[-2]] if len(dates) >= 2 else {}
+
+        # 5 gün önceki snapshot (haftalık fark)
+        week_snap = {}
+        for d in reversed(dates):
+            if d < latest_date and len([x for x in dates if x <= d]) <= len(dates) - 4:
+                week_snap = history[d]
+                break
+
+        # Normalize: b/k/ys -> bireysel_pct/kurumsal_pct/yatirimci_sayisi
+        data = {}
+        for ticker, vals in latest_snap.items():
+            entry = {
+                "bireysel_pct": vals.get("b", 0),
+                "kurumsal_pct": vals.get("k", 0),
+                "yatirimci_sayisi": vals.get("ys", 0),
+                "tarih": latest_date,
+            }
+
+            # Günlük fark
+            prev = prev_snap.get(ticker)
+            if prev:
+                entry["bireysel_fark_1g"] = round(vals.get("b", 0) - prev.get("b", 0), 2)
+
+            # Haftalık fark
+            wk = week_snap.get(ticker)
+            if wk:
+                entry["bireysel_fark_5g"] = round(vals.get("b", 0) - wk.get("b", 0), 2)
+
+            data[ticker] = entry
+
+        print(f"  ✅ MKK: {len(data)} hisse, son tarih: {latest_date} ({len(dates)} gün history)")
+        return {
+            "extracted_at": latest_date,
+            "source": "matriks_iq_mkk",
+            "total": len(data),
+            "history_days": len(dates),
+            "data": data,
+        }
+    except Exception as e:
+        print(f"  ⚠️ MKK history hatası: {e}")
+        return None
+
+
+def fetch_takas_data(base_url=None):
+    """GitHub Pages'ten Takas (aracı kurum pozisyon) JSON indir.
+
+    Returns:
+        dict: {extracted_at, source, total, data: {TICKER: {...}}} veya None
+    """
+    return _fetch_vds_json("takas_data.json", base_url)
+
+
+def fetch_takas_history(base_url=None):
+    """GitHub Pages'ten Takas history JSON indir.
+
+    takas_history.json formatı:
+        {"2026-03-14": {"GARAN": {"top_alici": [...], "net_tip": {...}, ...}}}
+
+    Returns:
+        dict veya None
+    """
+    import requests
+
+    if base_url is None:
+        base_url = os.environ.get("GH_PAGES_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return None
+
+    url = f"{base_url}/takas_history.json"
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            print(f"  ⚠️ takas_history.json indirilemedi: HTTP {resp.status_code}")
+            return None
+        history = resp.json()
+        if history:
+            dates = sorted(history.keys())
+            print(f"  ✅ Takas history: {len(dates)} gün ({dates[0]} → {dates[-1]})")
+        return history
+    except Exception as e:
+        print(f"  ⚠️ Takas history hatası: {e}")
+        return None
+
+
+def fetch_kademe_data(base_url=None):
+    """GitHub Pages'ten Kademe (emir defteri) JSON indir.
+
+    Returns:
+        dict: {extracted_at, source, total, data: {TICKER: {...}}} veya None
+    """
+    return _fetch_vds_json("kademe_data.json", base_url)

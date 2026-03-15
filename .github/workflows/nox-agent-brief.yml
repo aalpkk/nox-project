@@ -42,6 +42,7 @@ jobs:
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
