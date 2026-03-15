@@ -446,87 +446,82 @@ def _fmt_lot(lot):
     return "0"
 
 
-def _build_sm_summary(tickers, takas_data, mkk_data, sms_scores):
-    """Shortlist hisseleri için kompakt SM (takas + MKK) özet satırları.
 
-    Format: TICKER 🟢70 K%45↑2.3 | YB+1.5M F-200K #BoA
+def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores):
+    """Tek hisse için kompakt SM satırı (sinyal satırının altına eklenir).
+
+    Örnek: 💰 🟢68 K%50↓2.8 | YB+7.8M F+7.0M [F:YAT.FONLARI]
     """
-    lines = []
-    for ticker in tickers:
-        parts = [f"<b>{ticker}</b>"]
+    parts = []
 
-        # SMS skoru + ikon
-        if sms_scores:
-            sms = sms_scores.get(ticker)
-            if sms:
-                sv = sms.score if hasattr(sms, 'score') else sms
-                parts.append(f"{sms_icon(sv)}{sv}")
+    # SMS skoru + ikon
+    if sms_scores:
+        sms = sms_scores.get(ticker)
+        if sms:
+            sv = sms.score if hasattr(sms, 'score') else sms
+            parts.append(f"{sms_icon(sv)}{sv}")
 
-        # MKK: kurumsal % + değişim
-        if mkk_data:
-            mkk = mkk_data.get(ticker)
-            if mkk:
-                k_pct = mkk.get('kurumsal_pct', 0)
-                fark_1g = mkk.get('bireysel_fark_1g')
-                fark_5g = mkk.get('bireysel_fark_5g')
-                # bireysel düşüş = kurumsal artış
-                if fark_5g is not None:
-                    k_chg = -fark_5g
-                    arrow = "↑" if k_chg > 0.2 else ("↓" if k_chg < -0.2 else "→")
-                    parts.append(f"K%{k_pct:.0f}{arrow}{abs(k_chg):.1f}")
-                elif fark_1g is not None:
-                    k_chg = -fark_1g
-                    arrow = "↑" if k_chg > 0.1 else ("↓" if k_chg < -0.1 else "→")
-                    parts.append(f"K%{k_pct:.0f}{arrow}{abs(k_chg):.1f}")
-                else:
-                    parts.append(f"K%{k_pct:.0f}")
+    # MKK: kurumsal % + değişim
+    if mkk_data:
+        mkk = mkk_data.get(ticker)
+        if mkk:
+            k_pct = mkk.get('kurumsal_pct', 0)
+            fark_5g = mkk.get('bireysel_fark_5g')
+            fark_1g = mkk.get('bireysel_fark_1g')
+            if fark_5g is not None:
+                k_chg = -fark_5g
+                arrow = "↑" if k_chg > 0.2 else ("↓" if k_chg < -0.2 else "→")
+                parts.append(f"K%{k_pct:.0f}{arrow}{abs(k_chg):.1f}")
+            elif fark_1g is not None:
+                k_chg = -fark_1g
+                arrow = "↑" if k_chg > 0.1 else ("↓" if k_chg < -0.1 else "→")
+                parts.append(f"K%{k_pct:.0f}{arrow}{abs(k_chg):.1f}")
+            else:
+                parts.append(f"K%{k_pct:.0f}")
 
-        # Takas: net akış by tip (haftalık — daha kararlı)
-        if takas_data:
-            td = takas_data.get(ticker)
-            if td:
-                kurumlar = td.get('kurumlar', [])
-                net_by_tip = {}
-                top_buyer_name = None
-                top_buyer_lot = 0
-                for k in kurumlar:
-                    name = k.get('Aracı Kurum') or k.get('kurum') or ''
-                    h_lot = k.get('Haftalık Fark') or k.get('haftalik_fark') or 0
-                    tip = classify_kurum_sms(name)
-                    net_by_tip[tip] = net_by_tip.get(tip, 0) + h_lot
-                    if h_lot > top_buyer_lot:
-                        top_buyer_name = name
-                        top_buyer_lot = h_lot
+    # Takas: net akış by tip (haftalık)
+    if takas_data:
+        td = takas_data.get(ticker)
+        if td:
+            kurumlar = td.get('kurumlar', [])
+            net_by_tip = {}
+            top_buyer_name = None
+            top_buyer_lot = 0
+            for k in kurumlar:
+                name = k.get('Aracı Kurum') or k.get('kurum') or ''
+                h_lot = k.get('Haftalık Fark') or k.get('haftalik_fark') or 0
+                tip = classify_kurum_sms(name)
+                net_by_tip[tip] = net_by_tip.get(tip, 0) + h_lot
+                if h_lot > top_buyer_lot:
+                    top_buyer_name = name
+                    top_buyer_lot = h_lot
 
-                flow_parts = []
-                for tip, short in [('yab_banka', 'YB'), ('fon', 'F'), ('prop', 'P')]:
-                    net = net_by_tip.get(tip, 0)
-                    if abs(net) >= 1000:
-                        flow_parts.append(f"{short}{_fmt_lot(net)}")
-                if flow_parts:
-                    parts.append("| " + " ".join(flow_parts))
+            flow_parts = []
+            for tip, short in [('yab_banka', 'YB'), ('fon', 'F'), ('prop', 'P')]:
+                net = net_by_tip.get(tip, 0)
+                if abs(net) >= 1000:
+                    flow_parts.append(f"{short}{_fmt_lot(net)}")
+            if flow_parts:
+                parts.append("| " + " ".join(flow_parts))
 
-                # Top alıcı: isim kısalt, tip göster
-                if top_buyer_name and top_buyer_lot > 0:
-                    tip = classify_kurum_sms(top_buyer_name)
-                    _TIP_SHORT = {'yab_banka': 'YB', 'fon': 'F', 'prop': 'P',
-                                  'yerli_banka': 'YrB', 'diger': ''}
-                    tip_tag = _TIP_SHORT.get(tip, '')
-                    # İlk 2 kelimeyi al, max 15 char
-                    words = top_buyer_name.split()[:2]
-                    short_name = " ".join(words)[:15]
-                    parts.append(f"[{tip_tag}:{short_name}]" if tip_tag else f"[{short_name}]")
+            if top_buyer_name and top_buyer_lot > 0:
+                tip = classify_kurum_sms(top_buyer_name)
+                _TIP_SHORT = {'yab_banka': 'YB', 'fon': 'F', 'prop': 'P',
+                              'yerli_banka': 'YrB', 'diger': ''}
+                tip_tag = _TIP_SHORT.get(tip, '')
+                words = top_buyer_name.split()[:2]
+                short_name = " ".join(words)[:15]
+                parts.append(f"[{tip_tag}:{short_name}]" if tip_tag else f"[{short_name}]")
 
-        # Verisi olmayan hisseler için satır oluşturma
-        if len(parts) > 1:
-            lines.append(" ".join(parts))
-
-    return lines
+    if parts:
+        return "   💰 " + " ".join(parts)
+    return None
 
 
 def _build_shortlist_message(general_list, tavan_list, portfolio=None,
                              sms_scores=None, takas_data=None, mkk_data=None):
-    """İki shortlist'i Telegram mesajı olarak formatla."""
+    """İki shortlist'i Telegram mesajı olarak formatla.
+    Her hissenin altında kompakt SM (takas+MKK) satırı gösterir."""
     now = datetime.now(_TZ_TR)
     held = set()
     watched = set()
@@ -541,24 +536,24 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None,
             return " 👁️İL"
         return ""
 
+    has_sm = bool(takas_data or mkk_data)
+
     lines = [
         f"<b>⬡ NOX Ön Analiz — {now.strftime('%d.%m.%Y %H:%M')}</b>",
     ]
 
-    # ── Genel Liste (badge > D+W > NW > RT > DÖNÜŞ > çakışma) ──
+    # ── Genel Liste ──
     lines.append("")
     lines.append("📋 <b>Sinyal Listesi</b> (badge → D+W → NW → RT → çakışma)")
     lines.append("")
     all_tickers = []
     for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
-        sm_tag = ""
-        if sms_scores:
-            sms = sms_scores.get(ticker)
-            if sms:
-                sm_val = sms.score if hasattr(sms, 'score') else sms
-                sm_tag = f" {sms_icon(sm_val)}{sm_val}"
         reasons_short = " | ".join(r for r in reasons[:3] if not r.startswith("SM"))
-        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{sm_tag}{_tag(ticker)} — {reasons_short}")
+        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
+        if has_sm:
+            sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores)
+            if sm_line:
+                lines.append(sm_line)
         all_tickers.append(ticker)
 
     # ── Tavan Listesi ──
@@ -567,28 +562,18 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None,
         lines.append(f"🔺 <b>Tavan/Kandidat</b> ({len(tavan_list)} hisse)")
         lines.append("")
         for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
-            sm_tag = ""
-            if sms_scores:
-                sms = sms_scores.get(ticker)
-                if sms:
-                    sm_val = sms.score if hasattr(sms, 'score') else sms
-                    sm_tag = f" {sms_icon(sm_val)}{sm_val}"
             reasons_short = " | ".join(r for r in reasons[:2] if not r.startswith("SM"))
-            lines.append(f"{i}. <b>{ticker}</b> [{score}p]{sm_tag}{_tag(ticker)} — {reasons_short}")
+            lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores)
+                if sm_line:
+                    lines.append(sm_line)
             if ticker not in all_tickers:
                 all_tickers.append(ticker)
 
-    # ── Akıllı Para Özeti (takas + MKK) ──
-    if takas_data or mkk_data:
-        sm_lines = _build_sm_summary(all_tickers, takas_data, mkk_data, sms_scores)
-        if sm_lines:
-            lines.append("")
-            lines.append(f"💰 <b>Akıllı Para</b> (SMS K%=kurumsal H=haftalık)")
-            for sl in sm_lines:
-                lines.append(f"  {sl}")
-    else:
+    if not has_sm:
         lines.append("")
-        lines.append(f"<b>📊 Bu {len(all_tickers)} hisse için kademe S/A + takas verisi yükle.</b>")
+        lines.append(f"<b>📊 Bu {len(all_tickers)} hisse için takas verisi yükle.</b>")
 
     return "\n".join(lines)
 

@@ -36,13 +36,14 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
-      # Faz 1: Ön analiz shortlist — takas/kademe verisi gerekli hisseleri Telegram'a gönder
+      # Faz 1: Ön analiz shortlist — SM verileri + sinyal listesi
       - name: Send shortlist (Phase 1)
         run: python -m agent.briefing --shortlist --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+          GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
