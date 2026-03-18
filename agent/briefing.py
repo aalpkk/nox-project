@@ -19,14 +19,19 @@ sys.path.insert(0, ROOT)
 from dotenv import load_dotenv
 load_dotenv(os.path.join(ROOT, '.env'))
 
-from agent.scanner_reader import (get_latest_signals, summarize_signals, get_latest_date_signals,
-                                   SCREENER_NAMES, export_signals_json,
-                                   fetch_mkk_data, fetch_takas_data)
+from agent.scanner_reader import (summarize_signals, SCREENER_NAMES,
+                                   export_signals_json,
+                                   fetch_mkk_data, fetch_takas_data,
+                                   fetch_takas_history)
+from agent.html_signals import fetch_all_html_signals
 from agent.macro import (fetch_macro_data, fetch_macro_snapshot, assess_macro_regime,
                          format_macro_summary, calc_category_regimes)
 from agent.confluence import calc_all_confluence, format_confluence_summary
 from agent.smart_money import (calc_batch_sms, format_sms_line, sms_icon,
                                classify_kurum_sms)
+from agent.institutional import calc_batch_ice
+from agent.institutional import format_sms_line as ice_format_line
+from agent.institutional import sms_icon as ice_sms_icon
 from agent.html_report import generate_briefing_html
 from agent.prompts import BRIEFING_PROMPT
 from core.reports import send_telegram, push_html_to_github
@@ -120,326 +125,545 @@ def _run_fresh_scanners():
             print(f"    ⚠️ {e}")
 
 
-def _compute_priority_shortlist(latest_signals, confluence_results=None,
-                                sms_scores=None):
-    """Tüm scanner sinyallerinden öncelikli hisse listesi oluştur.
-    Kullanıcının takas/kademe verisi girmesi gereken hisseleri belirler.
-
-    Freshness kuralları:
-    - Bugün tetiklenen sinyaller bonus alır (+2)
-    - Haftalık sinyal + bugün günlük tetik çakışması ekstra bonus (+3)
-    - NW'de fresh=BUGÜN olan sinyaller öne çıkar
-
-    SMS entegrasyonu:
-    - Badge sinyal + SMS<15 → "⚠️ SM uyarısı" notu
-    - NW İZLE + SMS<30 → shortlist'ten düşür
-
-    Returns: (general_list, tavan_list) — [(ticker, score, reasons_list), ...] sıralı
+def _get_sm_info(ticker, ice_results, sms_scores):
+    """ICE/SMS bilgisini çek (ICE öncelikli, SMS fallback).
+    Returns: (score_val, icon_str, mult_tag) veya (None, None, None)
     """
-    ticker_scores = {}  # ticker → {'score': int, 'reasons': [], 'signals': {}}
+    active = ice_results or sms_scores
+    if not active:
+        return None, None, None
+    sm = active.get(ticker)
+    if not sm and ice_results and sms_scores:
+        sm = sms_scores.get(ticker)
+    if not sm:
+        return None, None, None
+    sm_val = sm.score if hasattr(sm, 'score') else sm
+    sm_icon_str = (sm.icon if hasattr(sm, 'icon')
+                   else (sms_icon(sm_val) if callable(sms_icon) else "⚪"))
+    mult_tag = f"×{sm.multiplier:.2f}" if hasattr(sm, 'multiplier') else ""
+    return sm_val, sm_icon_str, mult_tag
 
-    def _add(ticker, pts, reason):
-        if ticker not in ticker_scores:
-            ticker_scores[ticker] = {'score': 0, 'reasons': [], 'signals': {}}
-        ticker_scores[ticker]['score'] += pts
-        ticker_scores[ticker]['reasons'].append(reason)
 
-    # Bugünün tarih string'leri (signal_date ve csv_date formatları)
+def _compute_4_lists(latest_signals, confluence_results=None,
+                     sms_scores=None, ice_results=None):
+    """4 kaynak bazlı öncelikli hisse listesi oluştur.
+
+    Returns: dict with keys: 'alsat', 'tavan', 'nw', 'rt', 'tier1', 'tier2'
+    Her value: [(ticker, score, reasons_list, signal_dict), ...] sıralı
+    tier1: 2+ listede çakışan hisseler
+    tier2: her listeden en kaliteli tekil hisseler
+    """
     today = datetime.now(_TZ_TR)
-    today_sd = today.strftime('%Y-%m-%d')   # signal_date formatı
-    today_cd = today.strftime('%Y%m%d')     # csv_date formatı
+    today_sd = today.strftime('%Y-%m-%d')
+    today_cd = today.strftime('%Y%m%d')
 
     def _is_today(s):
-        """Sinyal bugün mü üretildi?"""
         sd = s.get('signal_date', '')
         cd = s.get('csv_date', '')
         return sd == today_sd or cd == today_cd
 
-    # NW AL tickers map
-    nw_map = {}
-    for s in latest_signals:
-        if (s.get('screener') == 'nox_v3_weekly'
-                and s.get('direction') == 'AL'
-                and s.get('signal_type') == 'PIVOT_AL'):
-            nw_map[s['ticker']] = s
-
-    # RT AL map
+    # RT haritaları (CMF cross-ref için)
     rt_map = {}
     for s in latest_signals:
-        if s.get('screener') == 'regime_transition' and s.get('direction') == 'AL':
+        if s.get('screener') == 'regime_transition':
             rt_map[s['ticker']] = s
 
-    # Bugün günlük tetik veren ticker'lar (NW fresh=BUGÜN veya günlük sinyal bugün)
-    today_triggered = set()
+    # ── LİSTE 1: AL/SAT Tarama ──
+    # Sadece karar=AL (İZLE dahil değil), ERKEN hariç
+    # Öncelik: ZAYIF (RS 20-60 + MACD>0 + Q≥50) > GUCLU (RS 30-60) > BILESEN (Q≥70 + MACD>0)
+    alsat_items = []
     for s in latest_signals:
-        if not _is_today(s):
+        if s.get('screener') != 'alsat':
             continue
-        if s.get('fresh') == 'BUGUN' or s.get('fresh') == 'BUGÜN':
-            today_triggered.add(s['ticker'])
-        elif s.get('screener') in ('nox_v3_daily', 'regime_transition'):
-            today_triggered.add(s['ticker'])
-
-    # ── GENEL LİSTE (tavan hariç) ──
-
-    # 1. BADGE sinyalleri (NW + RT çakışma) — EN YÜKSEK ÖNCELİK
-    #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
-    badge_seen = set()
-
-    def _score_badge(ticker, badge, window, entry_score, oe, cmf, is_fresh):
-        """Badge puanlama (native + cross-check ortak)."""
-        pts = 15 if window == 'TAZE' else 13
-        if cmf > 0.1:
-            pts += 2
-        elif cmf < -0.25:
-            pts -= 4
-        elif cmf < -0.1:
-            pts -= 2
-        if badge == 'H+PB':
-            pts += 3
-        if is_fresh:
-            pts += 2
-        fresh_tag = " 🔥BUGÜN" if is_fresh else ""
-        _add(ticker, pts, f"🏅{badge} [{window}] F{entry_score} OE={oe} CMF{cmf:+.2f}{fresh_tag}")
-        badge_seen.add(ticker)
-
-    # 1a. Native badge (RT CSV'de badge alanı olan)
-    for s in latest_signals:
-        if s.get('screener') == 'regime_transition' and s.get('badge'):
-            badge = s['badge']
-            window = s.get('entry_window', '')
-            if window not in ('TAZE', '2.DALGA'):
-                continue
-            entry_score = int(s.get('quality', 0) or 0)
-            oe = int(s.get('oe', 0) or 0)
-            if entry_score < 3 or oe > 2:
-                continue
-            cmf = s.get('cmf', 0) or 0
-            _score_badge(s['ticker'], badge, window, entry_score, oe, cmf, _is_today(s))
-
-    # 1b. Çapraz badge (NW AL ∩ RT AL — native badge olmayan)
-    for ticker in set(nw_map.keys()) & set(rt_map.keys()):
-        if ticker in badge_seen:
+        karar = s.get('karar', '')
+        if karar != 'AL':
             continue
-        s = rt_map[ticker]
-        window = s.get('entry_window', '')
-        if window not in ('TAZE', '2.DALGA'):
+        sig_type = s.get('signal_type', '')
+        if sig_type == 'ERKEN':
             continue
-        entry_score = int(s.get('quality', 0) or 0)
-        oe = int(s.get('oe', 0) or 0)
-        if entry_score < 3 or oe > 2:
+        q = s.get('quality', 0) or 0
+        rs = s.get('rs_score', 0) or 0
+        macd = s.get('macd', 0) or 0
+        oe = s.get('oe', '')
+        rr = s.get('rr', '')
+        stop = s.get('stop_price', '')
+        tp = s.get('target_price', '')
+
+        # Kalite filtreleri — sadece kriterleri karşılayanlar listeye girer
+        passes = False
+        tier_label = ''
+        if sig_type == 'ZAYIF' and 20 <= rs <= 60 and macd > 0 and q >= 50:
+            passes = True
+            tier_label = 'ZAYIF✓'
+            score = 300 + q  # En yüksek öncelik
+        elif sig_type in ('GUCLU', 'GÜÇLÜ') and 30 <= rs <= 60:
+            passes = True
+            tier_label = 'GÜÇLÜ✓'
+            score = 200 + q
+        elif sig_type in ('BILESEN', 'BİLEŞEN') and q >= 70 and macd > 0:
+            passes = True
+            tier_label = 'BİLEŞEN✓'
+            score = 100 + q
+        elif sig_type in ('CMB+', 'CMB'):
+            passes = True
+            tier_label = sig_type
+            score = 400 + q  # CMB her zaman güçlü
+        elif sig_type in ('DONUS', 'DÖNÜŞ') and q >= 70:
+            passes = True
+            tier_label = 'DÖNÜŞ'
+            score = 50 + q
+        # PB ve düşük kaliteli sinyaller dahil değil
+
+        if not passes:
             continue
-        cmf = s.get('cmf', 0) or 0
-        badge = 'H+PB' if window == '2.DALGA' else 'H+AL'
-        _score_badge(ticker, badge, window, entry_score, oe, cmf, _is_today(s))
 
-    # 2. NW PIVOT_AL tetikli sinyaller
-    for ticker, s in nw_map.items():
-        wl = s.get('wl_status', 'BEKLE')
-        trigger = s.get('trigger_type', '')
-        delta = s.get('delta_pct')
-        if not trigger:
-            continue
-        fresh = s.get('fresh', '')
-        is_fresh_nw = fresh in ('BUGUN', 'BUGÜN')
-        has_daily_today = ticker in today_triggered
-        # Delta kontrolü — δ>%15 zone dışı, tetik eşiğini aşmış
-        d_pct = abs(delta) if delta else 0
-        if wl == 'HAZIR':
-            if d_pct > 15:
-                pts = 5  # Zone dışına çıkmış, HAZIR puanını hak etmiyor
-                label = f"NW HAZIR {trigger} δ{delta:.1f}% ⚠️zone↑"
-            else:
-                pts = 10  # WR %77.8 — en güçlü tek sinyal
-                label = f"NW HAZIR {trigger} δ{delta:.1f}%" if delta else f"NW HAZIR {trigger}"
-        elif wl == 'İZLE':
-            pts = 5
-            label = f"NW İZLE {trigger}"
-        else:
-            pts = 3
-            label = f"NW BEKLE {trigger}"
-        if is_fresh_nw:
-            pts += 2
-            label += " 🔥BUGÜN"
-        if has_daily_today and not is_fresh_nw:
-            pts += 3
-            label += " ⚡D+W"
-        _add(ticker, pts, label)
+        reasons = [tier_label, f"Q={q}", f"RS={rs:.0f}", f"MACD={'+'if macd>0 else ''}{macd:.4f}"]
+        if oe != '':
+            reasons.append(f"OE={oe}")
+        if rr != '':
+            reasons.append(f"R:R={rr}")
 
-    # 3. RT fırsat ≥ 3 + TAZE/2.DALGA sinyaller (badge olmayanlar)
-    #    Giriş skoru 3+ ve OE ≤ 2 zorunlu
-    for ticker, s in rt_map.items():
-        if ticker in badge_seen:
-            continue
-        window = s.get('entry_window', '')
-        entry_score = int(s.get('quality', 0) or 0)
-        cmf = s.get('cmf', 0) or 0
-        oe = int(s.get('oe', 0) or 0)
-        if window in ('TAZE', '2.DALGA') and entry_score >= 3 and oe <= 2:
-            pts = 4 + (entry_score - 3)
-            if cmf > 0.1:
-                pts += 1
-            is_fresh = _is_today(s)
-            if is_fresh:
-                pts += 2
-            fresh_tag = " 🔥BUGÜN" if is_fresh else ""
-            _add(ticker, pts, f"RT {window} F{entry_score} CMF{cmf:+.2f} OE={oe}{fresh_tag}")
+        # ICE/SMS
+        sm_val, sm_ic, sm_mult = _get_sm_info(s['ticker'], ice_results, sms_scores)
+        if sm_val is not None:
+            if sm_val >= 45:
+                score += 5
+            elif sm_val < 15:
+                reasons.append("⚠️SM")
 
-    # 4. AL/SAT DÖNÜŞ — Q yüksek
-    for s in latest_signals:
-        if s.get('screener') == 'alsat' and s.get('direction') == 'AL':
-            q = s.get('quality', 0) or s.get('q', 0) or 0
-            if q >= 85:
-                _add(s['ticker'], 4, f"DÖNÜŞ Q={q}")
-            elif q >= 70:
-                _add(s['ticker'], 2, f"DÖNÜŞ Q={q}")
+        alsat_items.append((s['ticker'], score, reasons, s))
 
-    # 5. Çakışma bonus (tavan hariç screener'lardan gelen)
-    #    Düşük çakışma skoru (<3) = kaynak bonusu yarıya iner + uyarı
-    if confluence_results:
-        for r in confluence_results:
-            src = r.get('source_count', 0)
-            score = r.get('score', 0)
-            if src >= 3:
-                pts = src - 1
-                if score < 3:
-                    pts = max(pts // 2, 1)  # Düşük skor = zayıf teyit
-                    _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score} ⚠️zayıf")
-                else:
-                    _add(r['ticker'], pts, f"Çakışma {src} kaynak skor={score}")
+    alsat_items.sort(key=lambda x: -x[1])
 
-    # SMS entegrasyonu: ikon + uyarı + filtre
-    if sms_scores:
-        for ticker in list(ticker_scores.keys()):
-            sms = sms_scores.get(ticker)
-            if not sms:
-                continue
-            sms_val = sms.score if hasattr(sms, 'score') else sms
-            icon = sms_icon(sms_val) if callable(sms_icon) else "⚪"
-            reasons = ticker_scores[ticker]['reasons']
-
-            # Badge sinyal + SMS<15 → uyarı notu
-            has_badge = any('🏅' in r for r in reasons)
-            if has_badge and sms_val < 15:
-                reasons.append(f"⚠️SM {sms_val}{icon}")
-
-            # NW İZLE + SMS<30 → puan düşür
-            has_izle = any('NW İZLE' in r for r in reasons)
-            if has_izle and sms_val < 30:
-                ticker_scores[ticker]['score'] -= 2
-                reasons.append(f"SM↓ {sms_val}{icon}")
-
-            # SMS≥45 → bonus
-            if sms_val >= 45:
-                ticker_scores[ticker]['score'] += 2
-                reasons.append(f"SM {sms_val}{icon}")
-            elif sms_val >= 30:
-                reasons.append(f"SM {sms_val}{icon}")
-            elif sms_val < 15:
-                reasons.append(f"SM {sms_val}{icon}")
-
-    # Genel liste: sırala
-    ranked = sorted(ticker_scores.items(), key=lambda x: -x[1]['score'])
-    general_list = [(t, info['score'], info['reasons']) for t, info in ranked]
-
-    # ── TAVAN LİSTESİ (tavan + çapraz çakışma) ──
-    tavan_scores = {}
-
-    def _tadd(ticker, pts, reason):
-        if ticker not in tavan_scores:
-            tavan_scores[ticker] = {'score': 0, 'reasons': []}
-        tavan_scores[ticker]['score'] += pts
-        tavan_scores[ticker]['reasons'].append(reason)
-
+    # ── LİSTE 2: Tavan Tarayıcı ──
+    # Tavan: skor + hacim düşüklüğü + CMF pozitif
+    # Tavan kandidat: hacim yüksek olabilir, öncelik skor + CMF
+    tavan_items = []
     tavan_tickers = {}
     for s in latest_signals:
-        if s.get('screener') in ('tavan', 'tavan_kandidat'):
-            t = s['ticker']
-            if t in tavan_tickers:
-                existing_skor = tavan_tickers[t].get('skor', 0) or 0
-                new_skor = s.get('skor', 0) or 0
-                if new_skor <= existing_skor:
-                    continue
-            tavan_tickers[t] = s
-
-    tavan_cross = {}
-    for s in latest_signals:
-        if s['ticker'] in tavan_tickers and s.get('screener') not in ('tavan', 'tavan_kandidat'):
-            tavan_cross.setdefault(s['ticker'], set()).add(s['screener'])
+        if s.get('screener') not in ('tavan', 'tavan_kandidat'):
+            continue
+        t = s['ticker']
+        if t in tavan_tickers:
+            if (s.get('skor', 0) or 0) <= (tavan_tickers[t].get('skor', 0) or 0):
+                continue
+        tavan_tickers[t] = s
 
     for ticker, s in tavan_tickers.items():
         skor = s.get('skor', 0) or 0
         vol = s.get('volume_ratio', 0) or 0
-        cross_count = len(tavan_cross.get(ticker, set()))
-        cross_has_rt = 'regime_transition' in tavan_cross.get(ticker, set())
-        cross_has_nw = 'nox_v3_weekly' in tavan_cross.get(ticker, set())
+        seri = s.get('streak', 0) or 0
+        rs = s.get('rs', 0) or 0
+        is_kandidat = s.get('screener') == 'tavan_kandidat'
 
-        pts = 0
-        label_parts = []
+        # CMF cross-ref from RT
+        cmf = None
+        rt_sig = rt_map.get(ticker)
+        if rt_sig:
+            cmf = rt_sig.get('cmf')
 
+        # Skor hesaplama
+        score = skor * 10
+        if is_kandidat:
+            # Kandidat: hacim yüksek olabilir, öncelik skor + CMF
+            if cmf is not None and cmf > 0:
+                score += int(cmf * 100)  # CMF bonus
+        else:
+            # Tavan: düşük hacim bonus
+            if vol < 1.0:
+                score += 30  # Kilitli tavan
+            elif vol < 1.5:
+                score += 15
+            # CMF pozitif bonus
+            if cmf is not None and cmf > 0:
+                score += int(cmf * 100)
+
+        reasons = []
+        if is_kandidat:
+            reasons.append(f"KND skor:{skor}")
+        elif skor >= 50 and vol < 1.0:
+            reasons.append(f"🔒skor:{skor}")
+        else:
+            reasons.append(f"skor:{skor}")
+        reasons.append(f"vol:{vol:.1f}x")
+        if seri > 1:
+            reasons.append(f"seri:{seri}")
+        if rs != 0:
+            reasons.append(f"RS{rs:+.0f}%")
+        if cmf is not None:
+            reasons.append(f"CMF{cmf:+.2f}")
+
+        # ICE/SMS
+        sm_val, sm_ic, sm_mult = _get_sm_info(ticker, ice_results, sms_scores)
+        if sm_val is not None:
+            if sm_val >= 45:
+                score += 15
+            elif sm_val < 15:
+                reasons.append("⚠️SM")
+
+        tavan_items.append((ticker, score, reasons, s))
+
+    tavan_items.sort(key=lambda x: -x[1])
+
+    # ── LİSTE 3: NW Pivot AL (Günlük) ──
+    # SADECE bugünün yeni sinyalleri (fresh=BUGÜN) + gate=AÇIK
+    # D+W overlap günceldir (bugünün daily + weekly overlap)
+    nw_items = []
+    for s in latest_signals:
+        if s.get('screener') != 'nox_v3_daily':
+            continue
+        if s.get('direction') != 'AL':
+            continue
+        fresh = s.get('fresh', '')
+        if fresh not in ('BUGUN', 'BUGÜN'):
+            continue  # Sadece bugünün yeni sinyalleri
+        if not s.get('gate'):
+            continue  # Sadece gate açık (onaylı sinyal)
+        delta = s.get('delta_pct')
+        dw = s.get('dw_overlap', False)
+        rs = s.get('rs_score')
+        adx = s.get('adx')
+        rsi = s.get('rsi')
+
+        # Sıralama: D+W önce, sonra delta% (pivot yakınlığı)
+        score = 30
+        if dw:
+            score += 50  # D+W en üstte
+        # Delta düşük = pivota yakın = daha iyi
+        if delta is not None:
+            score += max(0, int(20 - delta))
+
+        reasons = []
+        if dw:
+            reasons.append("⚡D+W")
+        reasons.append("🔥BUGÜN")
+        if delta is not None:
+            reasons.append(f"δ{delta:.1f}%")
+        if adx is not None:
+            reasons.append(f"ADX={adx:.0f}")
+        if rsi is not None:
+            reasons.append(f"RSI={rsi:.0f}")
+        if rs is not None:
+            reasons.append(f"RS={rs:.1f}")
+
+        # ICE/SMS
+        sm_val, sm_ic, sm_mult = _get_sm_info(s['ticker'], ice_results, sms_scores)
+        if sm_val is not None:
+            if sm_val >= 45:
+                score += 5
+            elif sm_val < 15:
+                reasons.append("⚠️SM")
+
+        nw_items.append((s['ticker'], score, reasons, s))
+
+    nw_items.sort(key=lambda x: -x[1])
+
+    # ── LİSTE 4: Regime Transition ──
+    # Tarih bugün olmalı, giriş ≥ 3, OE ≤ 2
+    rt_items = []
+    for s in latest_signals:
+        if s.get('screener') != 'regime_transition' or s.get('direction') != 'AL':
+            continue
+        if not _is_today(s):
+            continue  # Sadece bugünün sinyalleri
+        window = s.get('entry_window', '')
+        if window not in ('TAZE', '2.DALGA'):
+            continue  # Sadece TAZE ve 2.DALGA — YAKIN/BEKLE/GEÇ dahil değil
+        badge = s.get('badge', '')
+        entry_score = int(s.get('quality', 0) or 0)
+        if entry_score < 3:
+            continue  # Giriş 3/4 veya 4/4 olmalı
+        cmf = s.get('cmf', 0) or 0
+        adx = s.get('adx', 0) or 0
+        oe = int(s.get('oe', 0) or 0)
+        if oe > 2:
+            continue  # OE 0, 1, 2 olabilir — 3+ dahil değil
+
+        # transition_date: rejim geçişinin gerçek tarihi
+        t_date = s.get('transition_date', '')
+        is_today_transition = (t_date == today_sd)
+
+        # Sıralama
+        score = 0
+        if badge == 'H+PB':
+            score += 100
+        elif badge == 'H+AL':
+            score += 80
+        elif badge:
+            score += 60
+        score += entry_score * 10
+        window_pts = {'TAZE': 20, '2.DALGA': 10, 'YAKIN': 5}.get(window, 0)
+        score += window_pts
+        # TAZE + aynı gün geçiş = en taze sinyal → bonus
+        if window == 'TAZE' and is_today_transition:
+            score += 15
+
+        reasons = []
+        if badge:
+            reasons.append(f"🏅{badge}")
+        reasons.append(window)
+        # TAZE ise geçiş tarihini göster
+        if window == 'TAZE' and t_date:
+            short_date = t_date[5:].replace('-', '/')  # 03/17
+            if is_today_transition:
+                reasons.append("📍BUGÜN")
+            else:
+                reasons.append(f"📅{short_date}")
+        reasons.append(f"F{entry_score}")
+        if cmf != 0:
+            reasons.append(f"CMF{cmf:+.2f}")
+        if oe > 0:
+            reasons.append(f"OE={oe}")
+        if adx:
+            reasons.append(f"ADX={adx:.0f}")
+
+        # ICE/SMS
+        sm_val, sm_ic, sm_mult = _get_sm_info(s['ticker'], ice_results, sms_scores)
+        if sm_val is not None:
+            if sm_val >= 45:
+                score += 10
+            elif sm_val < 15:
+                reasons.append("⚠️SM")
+
+        rt_items.append((s['ticker'], score, reasons, s))
+
+    rt_items.sort(key=lambda x: -x[1])
+
+    # ── Çapraz Çakışma Tagging ──
+    list_data = {'alsat': alsat_items, 'tavan': tavan_items, 'nw': nw_items, 'rt': rt_items}
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT'}
+    ticker_list_count = {}
+    for list_name, items in list_data.items():
+        for ticker, _, _, _ in items:
+            ticker_list_count.setdefault(ticker, set()).add(list_name)
+
+    for list_name, items in list_data.items():
+        for i, (ticker, score, reasons, sig) in enumerate(items):
+            cnt = len(ticker_list_count.get(ticker, set()))
+            if cnt >= 3:
+                reasons.insert(0, f"⚡{cnt}LİSTE")
+            elif cnt == 2:
+                others = ticker_list_count[ticker] - {list_name}
+                other_tags = "+".join(_LIST_SHORT.get(o, o) for o in sorted(others))
+                reasons.insert(0, f"∩{other_tags}")
+
+    # ── Tier 1: Çapraz çakışmalar (2+ listede) — kalite bazlı skor ──
+    def _overlap_quality(ticker):
+        """Normalize overlap quality: farklı kaynak kalitelerini eşit tartır."""
+        quality = 0
+        in_lists = []
+        for list_name in ('alsat', 'tavan', 'nw', 'rt'):
+            for t, sc, reas, sig in list_data[list_name]:
+                if t != ticker:
+                    continue
+                in_lists.append(list_name)
+                if list_name == 'rt':
+                    badge = sig.get('badge', '')
+                    if badge == 'H+PB':
+                        quality += 50
+                    elif badge == 'H+AL':
+                        quality += 40
+                    elif badge:
+                        quality += 30
+                    entry_s = int(sig.get('quality', 0) or 0)
+                    quality += entry_s * 8  # F3=24, F4=32
+                    if sig.get('entry_window') == 'TAZE':
+                        quality += 10
+                    cmf = sig.get('cmf', 0) or 0
+                    if cmf > 0.1:
+                        quality += 5
+                elif list_name == 'nw':
+                    if sig.get('dw_overlap'):
+                        quality += 35  # D+W çok güçlü
+                    else:
+                        quality += 20
+                    delta = sig.get('delta_pct')
+                    if delta is not None and delta < 10:
+                        quality += 10  # Pivota yakın
+                elif list_name == 'alsat':
+                    sig_type = sig.get('signal_type', '')
+                    if sig_type in ('CMB', 'CMB+'):
+                        quality += 35
+                    elif sig_type in ('ZAYIF', 'GUCLU', 'GÜÇLÜ'):
+                        quality += 30  # Kalite filtrelerini geçmiş
+                    elif sig_type in ('BILESEN', 'BİLEŞEN'):
+                        quality += 25
+                    else:
+                        quality += 10  # DÖNÜŞ
+                    q = sig.get('quality', 0) or 0
+                    quality += q // 10  # Q=100→10, Q=75→7
+                elif list_name == 'tavan':
+                    skor = sig.get('skor', 0) or 0
+                    vol = sig.get('volume_ratio', 0) or 0
+                    if skor >= 50 and vol < 1.0:
+                        quality += 30  # Kilitli tavan
+                    elif skor >= 50:
+                        quality += 20
+                    elif skor >= 40:
+                        quality += 15
+                    else:
+                        quality += 8
+                    # CMF cross-ref (tavan sinyalinde RT CMF varsa)
+                    rt_s = rt_map.get(ticker)
+                    if rt_s:
+                        cmf_t = rt_s.get('cmf', 0) or 0
+                        if cmf_t > 0.1:
+                            quality += 5
+                break
+        # Çakışma çeşitliliği bonusu
+        if len(in_lists) >= 3:
+            quality += 20
+        elif len(in_lists) >= 2:
+            quality += 5
+        # RT veya NW içeren çakışma daha anlamlı (farklı soru cevaplıyorlar)
+        has_technical = bool({'alsat', 'tavan'} & set(in_lists))
+        has_structural = bool({'nw', 'rt'} & set(in_lists))
+        if has_technical and has_structural:
+            quality += 15  # Teknik + yapısal çakışma bonusu
+        return quality, in_lists
+
+    tier1 = []
+    for ticker, lists in ticker_list_count.items():
+        if len(lists) < 2:
+            continue
+        quality, in_lists = _overlap_quality(ticker)
+        # Kalite eşiği: sadece anlamlı çakışmalar
+        # AS+TVN DÖNÜŞ düşük kalite = gürültü, minimum 40p gerekli
+        if quality < 40:
+            continue
+        list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
+        # Teknik+yapısal çakışma etiketi
+        has_tech = bool({'alsat', 'tavan'} & set(in_lists))
+        has_struct = bool({'nw', 'rt'} & set(in_lists))
+        ty_tag = " 🔀T+Y" if has_tech and has_struct else ""
+        reasons_all = [f"⚡{list_tags} [{quality}p]{ty_tag}"]
+        for l in sorted(in_lists):
+            for t, sc, reas, sig in list_data[l]:
+                if t == ticker:
+                    short_reason = f"[{_LIST_SHORT[l]}] {' '.join(reas[:4])}"
+                    reasons_all.append(short_reason)
+                    break
+        tier1.append((ticker, quality, reasons_all, {}))
+
+    # ── Gevşek RT çakışma: güçlü sinyal + RT badge (F serbest) ──
+    # Normal RT filtresi (F≥3 OE≤2) çok sıkı — güçlü AS/NW/TVN sinyali varsa
+    # badge + TAZE/2.DALGA + OE≤3 yetsin, F serbest
+    tier1_tickers = {t for t, _, _, _ in tier1}
+    strong_tickers = {}  # ticker → (list_name, reasons, sig)
+    # Güçlü AS sinyalleri (kalite filtrelerinden geçen)
+    for t, sc, reas, sig in alsat_items:
+        st = sig.get('signal_type', '')
+        if st in ('ZAYIF', 'GUCLU', 'GÜÇLÜ', 'CMB', 'CMB+', 'BILESEN', 'BİLEŞEN'):
+            strong_tickers[t] = ('alsat', reas, sig)
+    # Kilitli tavan
+    for t, sc, reas, sig in tavan_items:
+        skor = sig.get('skor', 0) or 0
+        vol = sig.get('volume_ratio', 0) or 0
         if skor >= 50 and vol < 1.0:
-            pts = 6
-            label_parts.append(f"🔒TAVAN skor:{skor} vol:{vol:.1f}x")
-        elif skor >= 40 and vol < 1.5:
-            pts = 4
-            label_parts.append(f"TAVAN skor:{skor} vol:{vol:.1f}x")
-        elif skor >= 30 and cross_count >= 3:
-            pts = 3
-            label_parts.append(f"TAVAN skor:{skor} vol:{vol:.1f}x")
-        elif skor >= 40:
-            pts = 2
-            label_parts.append(f"TAVAN skor:{skor} vol:{vol:.1f}x (yüksek hacim)")
+            strong_tickers.setdefault(t, ('tavan', reas, sig))
+    # NW D+W
+    for t, sc, reas, sig in nw_items:
+        if sig.get('dw_overlap'):
+            strong_tickers.setdefault(t, ('nw', reas, sig))
 
-        if pts > 0 and cross_count >= 2:
-            bonus = min(cross_count - 1, 3)
-            if cross_has_rt:
-                bonus += 1
-            if cross_has_nw:
-                bonus += 1
-            pts += bonus
-            # Çakışan screener isimlerini göster
-            cross_names = []
-            _CROSS_SHORT = {
-                'nox_v3_weekly': 'NW', 'nox_v3_daily': 'ND',
-                'regime_transition': 'RT', 'rejim_v3': 'R3',
-                'alsat': 'AS', 'divergence': 'DIV',
-            }
-            for scr in sorted(tavan_cross.get(ticker, set())):
-                cross_names.append(_CROSS_SHORT.get(scr, scr[:3].upper()))
-            label_parts.append(f"({'+'.join(cross_names)})")
+    # Tüm RT sinyallerinden gevşek tarama
+    for s in latest_signals:
+        if s.get('screener') != 'regime_transition' or s.get('direction') != 'AL':
+            continue
+        if not _is_today(s):
+            continue
+        ticker = s['ticker']
+        if ticker in tier1_tickers:
+            continue  # Zaten Tier 1'de
+        if ticker not in strong_tickers:
+            continue  # Güçlü karşı sinyal yok
+        badge = s.get('badge', '')
+        if not badge:
+            continue  # Badge zorunlu
+        window = s.get('entry_window', '')
+        if window not in ('TAZE', '2.DALGA'):
+            continue  # Window hala gerekli
+        oe = int(s.get('oe', 0) or 0)
+        if oe > 3:
+            continue  # OE≤3 (gevşetilmiş)
+        entry_score = int(s.get('quality', 0) or 0)
+        cmf = s.get('cmf', 0) or 0
 
-        if pts > 0:
-            # SMS entegrasyonu — tavan listesine de ikon + bonus/uyarı
-            if sms_scores:
-                sms = sms_scores.get(ticker)
-                if sms:
-                    sms_val = sms.score if hasattr(sms, 'score') else sms
-                    icon = sms_icon(sms_val)
-                    if sms_val >= 45:
-                        pts += 2
-                        label_parts.append(f"SM {sms_val}{icon}")
-                    elif sms_val >= 30:
-                        label_parts.append(f"SM {sms_val}{icon}")
-                    elif sms_val < 15:
-                        label_parts.append(f"⚠️SM {sms_val}{icon}")
+        # Kalite skoru
+        src_name, src_reas, src_sig = strong_tickers[ticker]
+        quality, _ = _overlap_quality(ticker)  # Base quality from lists
+        # RT badge kalitesi ekle (gevşek giriş olduğu için biraz düşür)
+        rt_quality = 20  # Base for relaxed badge
+        if badge == 'H+PB':
+            rt_quality += 15
+        if window == 'TAZE':
+            rt_quality += 5
+        if cmf > 0.1:
+            rt_quality += 5
+        quality += rt_quality
 
-            _tadd(ticker, pts, " ".join(label_parts))
+        src_tag = _LIST_SHORT[src_name]
+        src_short = ' '.join(src_reas[:3])
+        # Transition date for RT↓
+        t_date_r = s.get('transition_date', '')
+        date_tag = ""
+        if window == 'TAZE' and t_date_r:
+            if t_date_r == today_sd:
+                date_tag = " 📍BUGÜN"
+            else:
+                date_tag = f" 📅{t_date_r[5:].replace('-', '/')}"
+        rt_reasons = f"🏅{badge} {window}{date_tag} F{entry_score} OE={oe} CMF{cmf:+.2f}"
+        # Teknik+yapısal çakışma etiketi
+        is_structural = True  # RT = yapısal
+        is_technical = src_name in ('alsat', 'tavan')
+        ty_tag = " 🔀T+Y" if is_technical and is_structural else ""
+        reasons_all = [
+            f"⚡{src_tag}+RT [{quality}p]{ty_tag}",
+            f"[{src_tag}] {src_short}",
+            f"[RT↓] {rt_reasons}",  # ↓ = gevşek filtre
+        ]
+        tier1.append((ticker, quality, reasons_all, {}))
+        tier1_tickers.add(ticker)
 
-    tavan_ranked = sorted(tavan_scores.items(), key=lambda x: -x[1]['score'])
-    tavan_list = [(t, info['score'], info['reasons']) for t, info in tavan_ranked]
+    tier1.sort(key=lambda x: -x[1])
 
-    return general_list, tavan_list
+    # ── Tier 2: Her listeden en kaliteli tekil hisseler ──
+    tier1_tickers = {t for t, _, _, _ in tier1}
+    tier2 = []
+    for list_name in ('nw', 'rt', 'alsat', 'tavan'):  # NW/RT önce (daha anlamlı)
+        items = list_data[list_name]
+        count = 0
+        for ticker, score, reasons, sig in items:
+            if ticker in tier1_tickers:
+                continue
+            if ticker in {t for t, _, _, _ in tier2}:
+                continue
+            tag = _LIST_SHORT[list_name]
+            tier2.append((ticker, score, [f"[{tag}]"] + reasons, sig))
+            count += 1
+            if count >= 5:
+                break
+    # Tier 2'yi liste etiketine göre grupla ama sıra koru
+    # (NW → RT → AS → TVN sırasıyla zaten eklenmiş)
+
+    result = dict(list_data)
+    result['tier1'] = tier1
+    result['tier2'] = tier2
+    return result
 
 
-def _push_priority_tickers(general_list, tavan_list):
-    """Shortlist ticker'larını priority_tickers.json olarak GitHub Pages'e push et.
+def _push_priority_tickers(lists_dict):
+    """4 listeden tüm unique ticker'ları priority_tickers.json olarak GitHub Pages'e push et.
     VDS takas scraper bu dosyayı okuyarak hangi hisseler için veri çekeceğini bilir."""
     import json
+    seen = set()
     tickers = []
-    for ticker, _score, _reasons in general_list[:20]:
-        tickers.append(ticker)
-    for ticker, _score, _reasons in tavan_list[:10]:
-        if ticker not in tickers:
-            tickers.append(ticker)
+    for list_name in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt'):
+        for item in lists_dict.get(list_name, []):
+            ticker = item[0]
+            if ticker not in seen:
+                seen.add(ticker)
+                tickers.append(ticker)
 
     payload = json.dumps({
         "updated_at": datetime.now(_TZ_TR).strftime("%Y-%m-%dT%H:%M:%S+03:00"),
@@ -467,15 +691,31 @@ def _fmt_lot(lot):
 
 
 
-def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores):
+def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results=None):
     """Tek hisse için kompakt SM satırı (sinyal satırının altına eklenir).
 
-    Örnek: 💰 🟢68 K%50↓2.8 | YB+7.8M F+7.0M [F:YAT.FONLARI]
+    ICE varsa: 💰 ×1.15🟢 T=var B=guc KV=dest | YB+7.8M F+7.0M
+    SMS fallback: 💰 🟢68 K%50↓2.8 | YB+7.8M F+7.0M [F:YAT.FONLARI]
     """
     parts = []
 
-    # SMS skoru + ikon
-    if sms_scores:
+    # ICE öncelikli, SMS fallback
+    ice_shown = False
+    if ice_results:
+        ice = ice_results.get(ticker)
+        if ice:
+            ice_shown = True
+            t = ice.labels.get("kurumsal_teyit")
+            b = ice.labels.get("tasinan_birikim")
+            kv = ice.labels.get("kisa_vade")
+            t_s = t.value[:3] if t else "?"
+            b_s = b.value[:3] if b else "?"
+            kv_s = kv.value[:4] if kv else "?"
+            dt20 = ice.metrics.get("takas_20_change")
+            dt_str = f" ΔT20={dt20:+,.0f}" if dt20 is not None else ""
+            parts.append(f"×{ice.multiplier:.2f}{ice.icon} T={t_s} B={b_s} KV={kv_s}{dt_str}")
+
+    if not ice_shown and sms_scores:
         sms = sms_scores.get(ticker)
         if sms:
             sv = sms.score if hasattr(sms, 'score') else sms
@@ -538,9 +778,10 @@ def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores):
     return None
 
 
-def _build_shortlist_message(general_list, tavan_list, portfolio=None,
-                             sms_scores=None, takas_data=None, mkk_data=None):
-    """İki shortlist'i Telegram mesajı olarak formatla.
+def _build_shortlist_message(lists_dict, portfolio=None,
+                             sms_scores=None, takas_data=None, mkk_data=None,
+                             ice_results=None):
+    """4 kaynak bazlı shortlist'i Telegram mesajı olarak formatla.
     Her hissenin altında kompakt SM (takas+MKK) satırı gösterir."""
     now = datetime.now(_TZ_TR)
     held = set()
@@ -556,44 +797,95 @@ def _build_shortlist_message(general_list, tavan_list, portfolio=None,
             return " 👁️İL"
         return ""
 
-    has_sm = bool(takas_data or mkk_data)
+    has_sm = bool(takas_data or mkk_data or ice_results)
 
     lines = [
         f"<b>⬡ NOX Ön Analiz — {now.strftime('%d.%m.%Y %H:%M')}</b>",
     ]
 
-    # ── Genel Liste ──
-    lines.append("")
-    lines.append("📋 <b>Sinyal Listesi</b> (badge → D+W → NW → RT → çakışma)")
-    lines.append("")
-    all_tickers = []
-    for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
-        reasons_short = " | ".join(r for r in reasons[:3] if not r.startswith("SM"))
-        lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
-        if has_sm:
-            sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores)
-            if sm_line:
-                lines.append(sm_line)
-        all_tickers.append(ticker)
-
-    # ── Tavan Listesi ──
-    if tavan_list:
+    # ── 1. AL/SAT Tarama ──
+    alsat_list = lists_dict.get('alsat', [])
+    if alsat_list:
         lines.append("")
-        lines.append(f"🔺 <b>Tavan/Kandidat</b> ({len(tavan_list)} hisse)")
+        lines.append(f"📋 <b>1. AL/SAT Tarama</b> (Q skoru sıralı, {len(alsat_list)} sinyal)")
         lines.append("")
-        for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
-            reasons_short = " | ".join(r for r in reasons[:2] if not r.startswith("SM"))
-            lines.append(f"{i}. <b>{ticker}</b> [{score}p]{_tag(ticker)} — {reasons_short}")
+        for i, (ticker, score, reasons, sig) in enumerate(alsat_list[:8], 1):
+            reasons_str = " ".join(reasons)
+            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
             if has_sm:
-                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores)
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
                     lines.append(sm_line)
-            if ticker not in all_tickers:
-                all_tickers.append(ticker)
 
-    if not has_sm:
+    # ── 2. Tavan Tarayıcı ──
+    tavan_list = lists_dict.get('tavan', [])
+    if tavan_list:
         lines.append("")
-        lines.append(f"<b>📊 Bu {len(all_tickers)} hisse için takas verisi yükle.</b>")
+        lines.append(f"🔺 <b>2. Tavan Tarayıcı</b> (skor/vol sıralı, {len(tavan_list)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons, sig) in enumerate(tavan_list[:8], 1):
+            reasons_str = " ".join(reasons)
+            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
+
+    # ── 3. NW Pivot AL ──
+    nw_list = lists_dict.get('nw', [])
+    if nw_list:
+        lines.append("")
+        lines.append(f"📊 <b>3. NW Pivot AL</b> (günlük gate açık, {len(nw_list)} sinyal)")
+        lines.append("")
+        for i, (ticker, score, reasons, sig) in enumerate(nw_list[:10], 1):
+            reasons_str = " ".join(reasons)
+            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
+
+    # ── 4. Regime Transition ──
+    rt_list = lists_dict.get('rt', [])
+    if rt_list:
+        lines.append("")
+        lines.append(f"⚡ <b>4. Regime Transition</b> (F≥3 OE≤2, {len(rt_list)} sinyal)")
+        lines.append("")
+        for i, (ticker, score, reasons, sig) in enumerate(rt_list[:10], 1):
+            reasons_str = " ".join(reasons)
+            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
+
+    # ── Tier 1: Çapraz Çakışmalar ──
+    tier1 = lists_dict.get('tier1', [])
+    if tier1:
+        lines.append("")
+        lines.append(f"🔥 <b>Tier 1 — Çakışmalar</b> ({len(tier1)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons, _) in enumerate(tier1[:10], 1):
+            reasons_str = " | ".join(reasons)
+            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
+
+    # ── Tier 2: En Kaliteli Tekil ──
+    tier2 = lists_dict.get('tier2', [])
+    if tier2:
+        lines.append("")
+        lines.append(f"⭐ <b>Tier 2 — Tekil Kalite</b> ({len(tier2)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons, _) in enumerate(tier2[:10], 1):
+            reasons_str = " ".join(reasons)
+            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
 
     return "\n".join(lines)
 
@@ -614,19 +906,17 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         _run_fresh_scanners()
         print()
 
-    # 1. Scanner sinyallerini yükle
-    print("📋 Scanner sinyalleri yükleniyor...")
-    signals, csv_map = get_latest_signals(fetch_gh=True)
-    if not signals:
+    # 1. Scanner sinyallerini HTML raporlardan yükle (tek kaynak)
+    print("📋 Scanner sinyalleri yükleniyor (HTML)...")
+    latest_signals = fetch_all_html_signals()
+    if not latest_signals:
         msg = "⚠️ Hiç sinyal bulunamadı — brifing üretilemiyor."
         print(msg)
         if notify:
             send_telegram(msg)
         return
 
-    latest_signals = get_latest_date_signals(signals)
     signal_summary = summarize_signals(latest_signals)
-    print(f"  Son tarih: {len(latest_signals)} sinyal")
 
     # 1b. Sinyalleri JSON olarak export et + GitHub Pages'e push
     if notify and latest_signals:
@@ -670,28 +960,89 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     except Exception as e:
         print(f"  ⚠️ SMS hesaplama hatası: {e}")
 
+    # 2c. ICE hesapla (takas history varsa — SMS'e öncelikli)
+    ice_results = None
+    try:
+        takas_history = fetch_takas_history()
+        if takas_history:
+            signal_tickers = list({s['ticker'] for s in latest_signals})
+            ice_results = calc_batch_ice(
+                signal_tickers, takas_history, takas_data_map, mkk_data_map)
+            if ice_results:
+                guclu_ice = sum(1 for r in ice_results.values() if r.multiplier >= 1.15)
+                red_ice = sum(1 for r in ice_results.values() if r.multiplier < 0.90)
+                partial = sum(1 for r in ice_results.values() if r.status == "partial")
+                print(f"  ICE: {len(ice_results)} hisse ({guclu_ice} güçlü teyit, {red_ice} dağıtım riski"
+                      f"{f', {partial} kısmi veri' if partial else ''})")
+                # ICE/SMS fallback loglama
+                ice_tickers = set(ice_results.keys())
+                sms_only = set((sms_scores or {}).keys()) - ice_tickers
+                sms_fallback = len(sms_only & set(signal_tickers))
+                if sms_fallback:
+                    print(f"  ICE aktif: {len(ice_tickers)}/{len(signal_tickers)} | SMS fallback: {sms_fallback}")
+                # A/B karşılaştırma (ICE vs SMS, kalibrasyon)
+                if sms_scores and ice_results:
+                    diffs = []
+                    for t in sorted(ice_results.keys())[:10]:
+                        sms = sms_scores.get(t)
+                        ice_r = ice_results[t]
+                        if sms:
+                            sms_l = sms.label[0] if hasattr(sms, 'label') else '?'
+                            ice_l = ice_r.label[0]
+                            if sms_l != ice_l:
+                                diffs.append(f"{t}:SMS={sms.score}{sms_l}/ICE={ice_r.score_100}{ice_l}")
+                    if diffs:
+                        print(f"  A/B fark: {' | '.join(diffs[:8])}")
+    except Exception as e:
+        print(f"  ⚠️ ICE hesaplama hatası: {e}")
+
     # ── SHORTLIST MODE: sadece öncelikli hisse listesi oluştur ──
     if shortlist_only:
-        print("\n📋 Öncelikli hisse listesi oluşturuluyor...")
-        general_list, tavan_list = _compute_priority_shortlist(
-            latest_signals, confluence_results, sms_scores)
+        print("\n📋 4 kaynak bazlı öncelikli liste oluşturuluyor...")
+        lists_dict = _compute_4_lists(
+            latest_signals, confluence_results, sms_scores, ice_results)
         portfolio = _load_portfolio()
-        print(f"  Genel: {len(general_list)} hisse, Tavan: {len(tavan_list)} hisse\n")
-        print("  ── Sinyal Listesi ──")
-        for i, (ticker, score, reasons) in enumerate(general_list[:20], 1):
-            print(f"  {i:2d}. {ticker:6s} [{score:2d}p] — {' | '.join(reasons[:3])}")
-        if tavan_list:
-            print(f"\n  ── Tavan ({len(tavan_list)}) ──")
-            for i, (ticker, score, reasons) in enumerate(tavan_list[:10], 1):
-                print(f"  {i:2d}. {ticker:6s} [{score:2d}p] — {' | '.join(reasons[:2])}")
+
+        _LIST_LABELS = [
+            ('alsat', '📋 AL/SAT Tarama'),
+            ('tavan', '🔺 Tavan Tarayıcı'),
+            ('nw', '📊 NW Pivot AL (günlük gate açık)'),
+            ('rt', '⚡ Regime Transition (F≥3 OE≤2)'),
+        ]
+        core_total = sum(len(lists_dict.get(k, [])) for k in ('alsat', 'tavan', 'nw', 'rt'))
+        print(f"  Toplam: {core_total} sinyal (4 liste)\n")
+        for key, label in _LIST_LABELS:
+            items = lists_dict.get(key, [])
+            if not items:
+                print(f"  ── {label} (0) ──\n")
+                continue
+            limit = 10 if key in ('nw', 'rt') else 8
+            print(f"  ── {label} ({len(items)}) ──")
+            for i, (ticker, score, reasons, _sig) in enumerate(items[:limit], 1):
+                print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:6])}")
+            print()
+
+        # Tier 1 + Tier 2
+        tier1 = lists_dict.get('tier1', [])
+        tier2 = lists_dict.get('tier2', [])
+        if tier1:
+            print(f"  ── 🔥 Tier 1: Çakışmalar ({len(tier1)}) ──")
+            for i, (ticker, score, reasons, _) in enumerate(tier1[:10], 1):
+                print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' | '.join(reasons[:4])}")
+            print()
+        if tier2:
+            print(f"  ── ⭐ Tier 2: Tekil Kalite ({len(tier2)}) ──")
+            for i, (ticker, score, reasons, _) in enumerate(tier2[:10], 1):
+                print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:5])}")
+            print()
         if notify:
-            msg = _build_shortlist_message(general_list, tavan_list, portfolio,
-                                            sms_scores, takas_data_map, mkk_data_map)
+            msg = _build_shortlist_message(lists_dict, portfolio,
+                                            sms_scores, takas_data_map, mkk_data_map,
+                                            ice_results)
             send_telegram(msg)
-            print(f"\n  ✅ Shortlist Telegram'a gönderildi")
-            # VDS takas scraper için ticker listesini GitHub Pages'e push
-            _push_priority_tickers(general_list, tavan_list)
-        return {"shortlist": general_list, "tavan": tavan_list}
+            print(f"  ✅ Shortlist Telegram'a gönderildi")
+            _push_priority_tickers(lists_dict)
+        return {"lists": lists_dict}
 
     # 3. Makro veri çek
     print("\n🌍 Makro veri çekiliyor...")
@@ -710,10 +1061,10 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         print(f"  ⚠️ Makro veri hatası: {e}")
         macro_result = None
 
-    # Çakışmayı makro + SMS ile tekrar hesapla
+    # Çakışmayı makro + SMS + ICE ile tekrar hesapla
     confluence_results = calc_all_confluence(
         latest_signals, macro_result, min_score=1, mkk_data=mkk_data_map,
-        sms_scores=sms_scores)
+        sms_scores=sms_scores, ice_results=ice_results)
 
     # 4. Claude ile brifing üret
     briefing_text = ""
