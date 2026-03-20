@@ -1,6 +1,6 @@
 """
 NOX Agent — Claude Tool JSON Semalari
-10 tool tanimi: scanner, macro, stock, watchlist, confluence, price, kademe, takas, mkk, smart_money
+11 tool tanimi: scanner, macro, stock, watchlist, confluence, price, kademe, takas, mkk, smart_money, ice
 """
 
 TOOLS = [
@@ -182,6 +182,20 @@ TOOLS = [
                 "ticker": {
                     "type": "string",
                     "description": "Hisse kodu (opsiyonel — bossa shortlist icin toplu hesapla)"
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_institutional_confirmation",
+        "description": "Kurumsal Teyit Motoru (ICE) — 4 etiketli akilli para analizi. 70 gunluk takas history'den: kurumsal teyit (SM birikimi), tasinan birikim (uzun vadeli sureklilik), maliyet avantaji (Faz 2), kisa vadeli davranis. Carpan: 0.65-1.20.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Hisse kodu (opsiyonel — bossa sinyal listesi icin toplu hesapla)"
                 },
             },
             "required": [],

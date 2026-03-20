@@ -3,8 +3,11 @@ NOX Agent — Makro Veri Toplama
 DXY, USDTRY, EURTRY, XU100, SPY, QQQ, VIX, altın, petrol, bakır, BTC, ETH, TNX
 yfinance batch download + trend hesaplama + rejim sınıflandırma
 """
+import xml.etree.ElementTree as ET
+
 import pandas as pd
 import numpy as np
+import requests
 import yfinance as yf
 
 pd.set_option('future.no_silent_downcasting', True)
@@ -428,6 +431,40 @@ def format_macro_summary(macro_result):
             lines.append(f"  {s}")
 
     return "\n".join(lines)
+
+
+def fetch_market_news(max_items=10):
+    """Google News RSS'den BIST/borsa haberlerini çek.
+
+    Returns: [{"title": str, "link": str, "pub_date": str, "source": str}, ...]
+    Hata durumunda boş liste döner.
+    """
+    url = ("https://news.google.com/rss/search?"
+           "q=BIST+borsa+piyasa&hl=tr&gl=TR&ceid=TR:tr")
+    try:
+        resp = requests.get(url, timeout=5, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; NOXBot/1.0)"
+        })
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        items = []
+        for item in root.iter("item"):
+            if len(items) >= max_items:
+                break
+            title = item.findtext("title", "")
+            link = item.findtext("link", "")
+            pub_date = item.findtext("pubDate", "")
+            source = item.findtext("source", "")
+            items.append({
+                "title": title,
+                "link": link,
+                "pub_date": pub_date,
+                "source": source,
+            })
+        return items
+    except Exception as e:
+        print(f"  ⚠️ Haber çekme hatası: {e}")
+        return []
 
 
 if __name__ == "__main__":

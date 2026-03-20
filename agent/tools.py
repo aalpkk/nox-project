@@ -15,12 +15,15 @@ from agent.scanner_reader import (
 from agent.macro import fetch_macro_snapshot, assess_macro_regime, format_macro_summary
 from agent.confluence import calc_confluence_score, calc_all_confluence
 from agent.smart_money import calc_smart_money_score, calc_batch_sms, format_sms_line, format_sms_detail
+from agent.institutional import calc_ice, calc_batch_ice
+from agent.institutional import format_sms_line as ice_format_line
+from agent.institutional import format_sms_detail as ice_format_detail
 from agent.state import Watchlist
 
 # Lazy cache — session boyunca bir kez yükle
 _signal_cache = {"signals": None, "csv_map": None}
 _macro_cache = {"result": None}
-_vds_cache = {"mkk": None, "takas": None, "kademe": None}
+_vds_cache = {"mkk": None, "takas": None, "kademe": None, "takas_history": None}
 _watchlist = None
 
 
@@ -75,6 +78,14 @@ def _get_vds_kademe():
     return _vds_cache["kademe"]
 
 
+def _get_takas_history():
+    """Takas history cache — session'da bir kez yükle (70g sliding window)."""
+    if _vds_cache["takas_history"] is None:
+        from agent.scanner_reader import fetch_takas_history
+        _vds_cache["takas_history"] = fetch_takas_history()
+    return _vds_cache["takas_history"]
+
+
 def invalidate_cache():
     """Cache'i temizle (yeni veri yüklemek için)."""
     _signal_cache["signals"] = None
@@ -83,6 +94,7 @@ def invalidate_cache():
     _vds_cache["mkk"] = None
     _vds_cache["takas"] = None
     _vds_cache["kademe"] = None
+    _vds_cache["takas_history"] = None
 
 
 def handle_tool(name, input_data):
@@ -112,6 +124,8 @@ def handle_tool(name, input_data):
         return _tool_mkk_data(input_data)
     elif name == "get_smart_money_score":
         return _tool_smart_money_score(input_data)
+    elif name == "get_institutional_confirmation":
+        return _tool_institutional_confirmation(input_data)
     else:
         return {"error": f"Bilinmeyen tool: {name}"}
 
@@ -1083,5 +1097,82 @@ def _tool_smart_money_score(input_data):
                 "s4": sms.s4, "s5": sms.s5,
             }
             for sms in sorted_results
+        ],
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# KURUMSAL TEYİT MOTORU (ICE)
+# ══════════════════════════════════════════════════════════════
+
+def _tool_institutional_confirmation(input_data):
+    """Kurumsal Teyit Motoru (ICE) — 4 etiket + multiplier.
+    ticker: opsiyonel — boşsa shortlist'teki tüm hisseler.
+    """
+    ticker = input_data.get("ticker", "").upper().strip()
+
+    # Takas history — birincil veri kaynağı
+    takas_history = _get_takas_history()
+
+    # Takas snapshot — ek veri
+    takas_json = _get_vds_takas()
+    takas_data = takas_json.get("data") if takas_json else None
+
+    # MKK verisi — opsiyonel
+    mkk_map = None
+    mkk_json = _get_vds_mkk()
+    if mkk_json and mkk_json.get("data"):
+        mkk_map = mkk_json["data"]
+
+    if not takas_history and not takas_data:
+        return {"error": "Takas verisi mevcut değil (history veya snapshot). VDS scraper çalıştırılmalı."}
+
+    history_days = len(takas_history) if takas_history else 0
+
+    if ticker:
+        ice = calc_ice(ticker, takas_history, takas_data, mkk_map)
+        if not ice:
+            return {"error": f"{ticker} için veri bulunamadı"}
+
+        labels_out = {}
+        for key, lbl in ice.labels.items():
+            labels_out[key] = {"value": lbl.value, "detail": lbl.detail}
+
+        return {
+            "ticker": ticker,
+            "multiplier": ice.multiplier,
+            "score": ice.score,
+            "label": ice.label,
+            "icon": ice.icon,
+            "labels": labels_out,
+            "metrics": ice.metrics,
+            "detail": ice_format_detail(ice),
+            "history_days": history_days,
+        }
+
+    # Toplu: sinyal ticker'ları
+    signals = _get_signals()
+    tickers = list({s['ticker'] for s in signals}) if signals else []
+    if not tickers and takas_history:
+        # History'deki en son gündeki ticker'ları al
+        latest_date = max(takas_history.keys())
+        tickers = list(takas_history[latest_date].keys())
+
+    results = calc_batch_ice(tickers, takas_history, takas_data, mkk_map)
+    sorted_results = sorted(results.values(), key=lambda x: -x.multiplier)
+
+    return {
+        "total": len(sorted_results),
+        "history_days": history_days,
+        "results": [
+            {
+                "ticker": ice.ticker,
+                "multiplier": ice.multiplier,
+                "score": ice.score,
+                "icon": ice.icon,
+                "label": ice.label,
+                "summary": ice_format_line(ice),
+            }
+            for ice in sorted_results
         ],
     }

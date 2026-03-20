@@ -766,6 +766,7 @@ def _generate_html(d_buys, d_sells, d_cands, d_n, d_date,
                 'signal_date': b.get('signal_date', ''),
                 'fresh': b.get('fresh', 'YAKIN'),
                 'rs_score': round(b.get('rs_score', 0), 3) if b.get('rs_score') else None,
+                'trigger_type': b.get('trigger_type', ''),
             }
             if weekly:
                 row['wk_mom'] = b.get('wk_mom', False)

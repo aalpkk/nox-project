@@ -182,19 +182,82 @@ GitHub Actions workflow'u ile günlük çalışan 5 screener + 1 ek kaynak var. 
 
 ---
 
-## 4. ÇAPRAZ SINYAL ANALİZİ
+## 4. ÇAPRAZ SINYAL ANALİZİ (6 Kaynak Metodoloji)
 
 **Sinyal çakışması hisse seçiminin TEMELİDİR.** Tek kaynaktan gelen sinyal zayıftır, birden fazla kaynakta çakışan sinyal güçlüdür.
 
-### Çakışma Sıralama Mantığı:
-- **4 kaynak çakışma**: Çok nadir, çok güçlü (ör: AL/SAT + RT + Tavan + NW)
-- **3 kaynak çakışma**: Güçlü giriş sinyali
-- **2 kaynak çakışma**: İyi ama ek konfirmasyon iste (kademe/takas)
+### 6 Kaynak Tanımı:
+| # | Kısa Ad | Kaynak | Güncelleme |
+|---|---------|--------|------------|
+| 1 | **RT-W** | Regime Transition Haftalık (`regime_transition_weekly.html`) | Haftada 1 |
+| 2 | **RT-D** | Regime Transition Günlük (`regime_transition.html`) | Günlük |
+| 3 | **NW** | NOX v3 Haftalık Pivot (`nox_v3_weekly.html`) | Günlük |
+| 4 | **D+W** | NW Günlük+Haftalık Çakışma (NW raporundaki `dw_overlap` tab'ı) | Günlük |
+| 5 | **TVN** | Tavan Scanner (`tavan.html`) | Günlük |
+| 6 | **R3** | Rejim v3 Filtre (`rejim_v3_YYYYMMDD.html`, kullanıcı paylaşır) | Günlük |
+
+### Çakışma Sayma:
+- Her kaynak (RT-W, RT-D, NW, TVN, R3) ayrı sayılır → max 5 kaynak
+- **D+W ayrı kaynak olarak SAYILMAZ** — "+D+W" boost etiketi eklenir
+- Örnek: "4 kaynak + D+W" = 4 farklı kaynakta sinyal + D+W yapısal teyit
+- NW ADAY → kaynak olarak sayılmaz (onaysız pivot)
+- R3 ERKEN → kaynak olarak sayılmaz (yanlış alarm riski)
+
+### Çakışma Sıralama:
+- **5 kaynak**: En nadir, en güçlü
+- **4 kaynak + D+W**: Çok güçlü + yapısal teyit
+- **4 kaynak**: Çok güçlü
+- **3 kaynak + D+W**: Güçlü + teyitli
+- **3 kaynak**: Güçlü giriş sinyali
+- **2 kaynak**: İyi ama ek konfirmasyon iste (kademe/takas)
 - **1 kaynak**: Tek başına zayıf, çakışma olmadan işlem yapma
 
-### Çakışma Puanlama:
+### R3 Sinyal Hiyerarşisi:
+- CMB+ > CMB > GÜÇLÜ > ZAYIF > DÖNÜŞ > BİLEŞEN
+- **KRİTİK**: R3'te `swing_bias` alanı SİNYAL YÖNÜ DEĞİL. Tüm R3 sinyalleri **AL**.
+- swing_bias = önceki swing yapısı (1=LONG, -1=SHORT yapıdan dönüyor)
+- DÖNÜŞ + swing_bias=-1 = düşüşten dönüyor = AL dip sinyali
+
+### Tazelik Sınıflandırma:
+Her sinyal için tazelik etiketi belirle:
+
+**RT-D**:
+- **TAZE**: Bugün yeni günlük rejim geçişi → en acil dikkat
+- **2.DALGA**: İkinci giriş penceresi → hâlâ geçerli
+- **BEKLE/GEC**: Pencere kapanmış → yeni TAZE pencere açılırsa gir
+
+**RT-W**:
+- **TAZE**: Bu hafta yeni haftalık geçiş → aktif
+- Eski: Önceki haftalarda girmiş, hâlâ devam ediyor
+
+**NW**:
+- **BUGÜN**: O gün yeni pivot tetik → en acil sinyal
+- **YAKIN**: Son 1-2 hafta → hâlâ geçerli
+- Boş/eski: 2+ hafta önce tetiklenmiş
+
+**Çift-TAZE**: Hem RT-D hem RT-W aynı anda TAZE → en yüksek öncelik (çok nadir)
+
+### Öncelik Sıralama Algoritması (6 katman):
 ```
-+3: NW PIVOT_AL + WL=HAZIR
+1. Kaynak sayısı (EN ÖNEMLİ): 5 > 4 > 3 > 2
+2. D+W boost: Var → aynı kaynak sayısında öne geçer
+3. Tazelik: ÇİFT_TAZE > RT-D_TAZE > RT-W_TAZE > NW_BUGÜN > eski
+4. Badge: H+PB > H+AL > yok
+5. Entry Score: E4 > E3 > E2 > E1 > E0
+6. R3 tipi: CMB+ > CMB > GÜÇLÜ > ZAYIF > DÖNÜŞ > BİLEŞEN
+```
+
+### Tier Sistemi:
+| Tier | Tanım |
+|------|--------|
+| **A** | TAZE + Yüksek çakışma (≥3 kaynak + herhangi TAZE sinyali olan) |
+| **B** | TAZE ama düşük çakışma VEYA yüksek çakışma (≥4) eski |
+| **C** | Eski ama güçlü çakışma (≥3 kaynak, badge var) |
+| **D** | Eski + düşük çakışma veya sadece badge |
+
+### Çakışma Puanlama (mevcut):
+```
++3: NW PIVOT_AL + WL=HAZIR (WR %77.8)
 +2: NW PIVOT_AL veya (ZONE_ONLY + WL=İZLE)
 +2: RT FULL_TREND/TREND + TAZE window
 +2: AL/SAT AL + DÖNÜŞ sinyali + Q≥80
@@ -202,10 +265,20 @@ GitHub Actions workflow'u ile günlük çalışan 5 screener + 1 ek kaynak var. 
 +1: HC2 tetik bonusu
 +1: H+AL veya H+PB badge
 +1: Divergence AL + NW AL overlap
--2: OE ≥ 3
+-2: OE ≥ 4
+-1: OE = 3
 -2: NW PIVOT_SAT (çelişki durumunda eleme)
 -1: CMF negatif
 ```
+
+### Uyarı Bayrakları:
+- **OE≥3**: Pozisyon küçült notu ekle
+- **OE≥4**: "Pullback bekle, giriş yapma" uyarısı
+- **GEC window**: "Geç giriş, pencere kapanmış" notu
+- **Delta >%30**: "Zone'dan çok uzaklaşmış" uyarısı
+- **CMF < -0.1**: "Para çıkışı" notu
+- **RS < 0**: Tavan için eleme (WR %34.6)
+- **R3 ERKEN**: "Kaynak olarak sayma" notu
 
 ### Çelişki Kuralları:
 - Bir hisse RT'de H+AL ama NW'de PIVOT_SAT → **çelişki, bekle**
@@ -213,6 +286,13 @@ GitHub Actions workflow'u ile günlük çalışan 5 screener + 1 ek kaynak var. 
 - Tavan skor <50 ama takas'ta yabancı çıkıyor → **takas kazanır, eleme**
 - 4 kaynak çakışma ama OE≥4 → **pullback bekle**
 - Takas güçlü (3+ yabancı birikim) ama teknik zayıf → **takas tekniği geçer, TUT**
+
+### Kritik Hatalar — YAPMA:
+1. **R3 swing_bias'ı sinyal yönü olarak OKUMA** — tüm R3 sinyalleri AL
+2. **GEC window'lu hisseyi kaliteli sinyal olarak GÖSTERİLME** — GEC = geç, kaçırılmış
+3. **Günlük NW'yi tek başına güçlü sinyal olarak KULLANMA** — WR %41.6, sadece D+W
+4. **NW trigger tarihini kontrol etmeden BUGÜN etiketi KOYMA** — signal_date'e değil trigger'a bak
+5. **Tavan hisselerini genel listeyle KARIŞTIRMA** — ayrı trade stratejisi, ayrı liste
 
 ---
 

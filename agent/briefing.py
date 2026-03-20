@@ -25,7 +25,8 @@ from agent.scanner_reader import (summarize_signals, SCREENER_NAMES,
                                    fetch_takas_history)
 from agent.html_signals import fetch_all_html_signals
 from agent.macro import (fetch_macro_data, fetch_macro_snapshot, assess_macro_regime,
-                         format_macro_summary, calc_category_regimes)
+                         format_macro_summary, calc_category_regimes,
+                         fetch_market_news)
 from agent.confluence import calc_all_confluence, format_confluence_summary
 from agent.smart_money import (calc_batch_sms, format_sms_line, sms_icon,
                                classify_kurum_sms)
@@ -543,7 +544,10 @@ def _compute_4_lists(latest_signals, confluence_results=None,
                     short_reason = f"[{_LIST_SHORT[l]}] {' '.join(reas[:4])}"
                     reasons_all.append(short_reason)
                     break
-        tier1.append((ticker, quality, reasons_all, {}))
+        tier1.append((ticker, quality, reasons_all, {
+            'overlap_count': len(in_lists),
+            'in_lists': in_lists,
+        }))
 
     # ── Gevşek RT çakışma: güçlü sinyal + RT badge (F serbest) ──
     # Normal RT filtresi (F≥3 OE≤2) çok sıkı — güçlü AS/NW/TVN sinyali varsa
@@ -622,7 +626,11 @@ def _compute_4_lists(latest_signals, confluence_results=None,
             f"[{src_tag}] {src_short}",
             f"[RT↓] {rt_reasons}",  # ↓ = gevşek filtre
         ]
-        tier1.append((ticker, quality, reasons_all, {}))
+        tier1.append((ticker, quality, reasons_all, {
+            'overlap_count': 2,
+            'in_lists': [src_name, 'rt'],
+            'relaxed': True,
+        }))
         tier1_tickers.add(ticker)
 
     tier1.sort(key=lambda x: -x[1])
@@ -921,6 +929,7 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     # 1b. Sinyalleri JSON olarak export et + GitHub Pages'e push
     if notify and latest_signals:
         json_path = os.path.join(ROOT, 'output', 'latest_signals.json')
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
         export_signals_json(latest_signals, json_path)
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -1082,10 +1091,19 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         briefing_text = _generate_fallback_briefing(
             signal_summary, macro_result, confluence_results)
 
+    # 4b. Shortlist listeleri + haberler (HTML rapor için)
+    print("\n📋 4 liste + haberler hesaplanıyor...")
+    lists_dict = _compute_4_lists(
+        latest_signals, confluence_results, sms_scores, ice_results)
+    news_items = fetch_market_news()
+    if news_items:
+        print(f"  📰 {len(news_items)} haber çekildi")
+
     # 5. HTML rapor oluştur
     print("\n📊 HTML rapor oluşturuluyor...")
     html = generate_briefing_html(
-        briefing_text, macro_result, confluence_results, signal_summary)
+        briefing_text, macro_result, confluence_results, signal_summary,
+        lists_dict=lists_dict, news_items=news_items)
     date_str = now.strftime('%Y%m%d')
     html_path = os.path.join(ROOT, 'output', f'nox_briefing_{date_str}.html')
     os.makedirs(os.path.dirname(html_path), exist_ok=True)

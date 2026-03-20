@@ -47,7 +47,7 @@ def _deduplicate_signals(ticker_signals):
 
 
 def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
-                          sms_scores=None):
+                          sms_scores=None, ice_results=None):
     """
     Belirli bir ticker için çakışma skoru hesapla.
 
@@ -57,6 +57,7 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
         macro_regime: Makro rejim dict (opsiyonel)
         mkk_data: MKK verisi dict {TICKER: {bireysel_pct, yabanci_pct, ...}} (opsiyonel)
         sms_scores: SMS skorları dict {TICKER: SMSResult} (opsiyonel)
+        ice_results: ICE sonuçları dict {TICKER: ICEResult} (opsiyonel, SMS'e öncelikli)
 
     Returns:
         dict: {ticker, score, details[], recommendation, source_count, signals}
@@ -296,10 +297,29 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
                 details.append(f"+1 MKK kurumsal birikim (bireysel {bireysel_fark:+.2f}% günlük)")
 
     # ══════════════════════════════════════════════════════════════
-    # 6c. Smart Money Score — KONFİRMASYON katmanı
-    #     SMS ≥ 45 → +2, 30-44 → +1, <15 → -1
+    # 6c. Kurumsal Teyit — ICE öncelikli, SMS fallback
+    #     score ≥ 45 → +2, 30-44 → +1, <15 → -1
     # ══════════════════════════════════════════════════════════════
-    if sms_scores:
+    _sm_applied = False
+    if ice_results:
+        ice = ice_results.get(ticker)
+        if ice:
+            _sm_applied = True
+            sv = ice.score
+            if sv >= 45:
+                sources.add('ice')
+                score += 2
+                details.append(f"+2 ICE ×{ice.multiplier:.2f}🟢 (güçlü kurumsal teyit)")
+            elif sv >= 30:
+                sources.add('ice')
+                score += 1
+                details.append(f"+1 ICE ×{ice.multiplier:.2f}🟡 (kısmi kurumsal teyit)")
+            elif sv < 15:
+                sources.add('ice')
+                score -= 1
+                details.append(f"-1 ICE ×{ice.multiplier:.2f}🔴 (dağıtım riski)")
+
+    if not _sm_applied and sms_scores:
         sms = sms_scores.get(ticker)
         if sms:
             sms_val = sms.score if hasattr(sms, 'score') else sms
@@ -372,13 +392,13 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
 
 
 def calc_all_confluence(signals, macro_regime=None, min_score=1, mkk_data=None,
-                        sms_scores=None):
+                        sms_scores=None, ice_results=None):
     """Tüm ticker'lar için çakışma skoru hesapla ve sırala."""
     tickers = set(s['ticker'] for s in signals)
     results = []
     for ticker in tickers:
         result = calc_confluence_score(ticker, signals, macro_regime, mkk_data,
-                                       sms_scores)
+                                       sms_scores, ice_results)
         if result['score'] >= min_score:
             results.append(result)
 
