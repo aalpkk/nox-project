@@ -158,10 +158,29 @@ def _compute_4_lists(latest_signals, confluence_results=None,
     today_sd = today.strftime('%Y-%m-%d')
     today_cd = today.strftime('%Y%m%d')
 
+    # Her screener'ın en son tarihi = "güncel veri" tarihi
+    # Hafta sonu veya tatil günlerinde bugünün tarihi sinyallerle eşleşmez
+    _screener_latest_sd = {}
+    _screener_latest_cd = {}
+    for s in latest_signals:
+        scr = s.get('screener', '')
+        sd = s.get('signal_date', '')
+        cd = s.get('csv_date', '')
+        if sd:
+            if sd > _screener_latest_sd.get(scr, ''):
+                _screener_latest_sd[scr] = sd
+        if cd:
+            if cd > _screener_latest_cd.get(scr, ''):
+                _screener_latest_cd[scr] = cd
+
     def _is_today(s):
         sd = s.get('signal_date', '')
         cd = s.get('csv_date', '')
-        return sd == today_sd or cd == today_cd
+        if sd == today_sd or cd == today_cd:
+            return True
+        # Screener'ın en son tarihiyle karşılaştır (tatil/hafta sonu)
+        scr = s.get('screener', '')
+        return sd == _screener_latest_sd.get(scr, '') or cd == _screener_latest_cd.get(scr, '')
 
     # RT haritaları (CMF cross-ref için)
     rt_map = {}
