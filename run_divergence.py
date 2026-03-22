@@ -32,8 +32,9 @@ import pandas as pd
 
 from markets.bist import data as data_mod
 from markets.bist.divergence import (
-    scan_divergences, DIV_CFG, _find_swings,
+    scan_divergences, DIV_CFG, _find_swings, _find_structural_swings,
     _calc_atr, _calc_rsi, _calc_macd, _calc_obv, _calc_mfi, _calc_adx,
+    DivergenceSetup, BUCKET_MAP,
 )
 from core.indicators import ema, resample_weekly, resample_monthly
 from core.reports import send_telegram, push_html_to_github, _NOX_CSS, _sanitize
@@ -76,6 +77,25 @@ TYPE_LABELS = {
     'PRICE_VOLUME': 'Fiyat-Hacim',
 }
 
+BUCKET_LABELS = {
+    'REVERSAL': 'DONUS',
+    'CONTINUATION': 'DEVAM',
+    'CONFIRMATION': 'TEYIT',
+    'EXHAUSTION': 'BITIM',
+}
+
+STATE_LABELS = {
+    'SETUP': 'KURULUM',
+    'TRIGGERED': 'TETIK',
+    'STALE': 'ESKI',
+    'INVALIDATED': 'GECERSIZ',
+}
+
+SIGNAL_LABEL_SHORT = {
+    'ENTRY_LONG': 'EL', 'ENTRY_SHORT': 'ES',
+    'REDUCE': 'RED', 'COVER': 'COV', 'WATCH': 'W',
+}
+
 SECTION_TITLES = {
     'triple_buy': 'UCLU UYUMSUZLUK (RSI + MACD + Hacim) — AL',
     'triple_sell': 'UCLU UYUMSUZLUK (RSI + MACD + Hacim) — SAT',
@@ -95,14 +115,108 @@ SECTION_TITLES = {
 
 
 # =============================================================================
+# KURAL BAZLI SINIFLANDIRMA (Backtest 2y, trigger_bar fix, discovery/validation dogrulanmis)
+# =============================================================================
+# A kaldirildi — TRIGGERED tek basina edge yok (%48.5 WR, forward-looking bias idi)
+# D yeniden tanimlandi — MACD_HIDDEN+RR>=2+YAPISAL (premium, dogrulanmis %62.5)
+# C STALE kisitlamasi kaldirildi — dogrulama combo state gerektirmiyordu
+
+RULE_DEFS = {
+    'B': {
+        'name': 'Kisa Setup',
+        'desc': 'ENTRY_SHORT + SETUP + RR>=1.5 (SAT)',
+        'color': 'var(--nox-red)',
+        'stats': {'1g_wr': 62.7, '1g_avg': 0.24, '3g_wr': 59.7, '3g_avg': 0.48,
+                  '5g_wr': 76.1, '5g_avg': 1.66, 'n_bt': 67},
+    },
+    'D': {
+        'name': 'MACD Premium',
+        'desc': 'MACD_HIDDEN + RR>=2.0 + Yapisal — dogrulanmis premium katman',
+        'color': 'var(--nox-orange)',
+        'stats': {'1g_wr': 54.2, '1g_avg': 0.52, '3g_wr': 57.1, '3g_avg': 1.57,
+                  '5g_wr': 61.1, '5g_avg': 2.27, 'n_bt': 275},
+    },
+    'C': {
+        'name': 'Yapisal Gizli',
+        'desc': 'ENTRY_LONG + Yapisal + Hidden tip — ana AL motoru',
+        'color': 'var(--nox-green)',
+        'stats': {'1g_wr': 49.9, '1g_avg': 0.35, '3g_wr': 50.7, '3g_avg': 0.45,
+                  '5g_wr': 59.2, '5g_avg': 1.50, 'n_bt': 507},
+    },
+    'E': {
+        'name': 'Cover',
+        'desc': 'COVER + STALE + RR>=1.0 — taktik pozisyon (dusuk agirlik)',
+        'color': 'var(--nox-blue)',
+        'stats': {'1g_wr': 44.2, '1g_avg': 0.24, '3g_wr': 53.8, '3g_avg': 1.40,
+                  '5g_wr': 54.8, '5g_avg': 1.93, 'n_bt': 104},
+    },
+}
+
+RULE_ORDER = ['B', 'D', 'C', 'E']
+
+# Modifier (booster/caution) tag'leri — sinyalin yaninda gosterilir
+MOD_DEFS = {
+    'FT': {'label': '↑FT', 'desc': 'FULL_TREND rejim', 'color': 'var(--nox-green)'},
+    'RR': {'label': '↑RR', 'desc': 'RR>=2.0', 'color': 'var(--nox-cyan)'},
+    'RSI': {'label': '↑RSI', 'desc': 'RSI_HIDDEN (en tutarli div type)', 'color': 'var(--nox-cyan)'},
+    'K60': {'label': '⚠K60', 'desc': 'K>=60 — dogrulamada kirilgan, dikkat', 'color': 'var(--nox-yellow)'},
+}
+
+
+def _classify_rule(sig):
+    """Sinyali 4 kuraldan birine esle. None = gurultu, kesilecek.
+    Oncelik: B > D > C > E (D daha spesifik, C'den once kontrol)."""
+    state = getattr(sig, 'state', '')
+    label = getattr(sig, 'signal_label', '')
+    rr = getattr(sig, 'rr_ratio', 0) or 0
+    struct = getattr(sig, 'structural', False)
+    dt = getattr(sig, 'div_type', '')
+    is_hidden = 'HIDDEN' in dt
+
+    # B: Setup + Entry Short + RR>=1.5 (SAT)
+    if state == 'SETUP' and label == 'ENTRY_SHORT' and rr >= 1.5:
+        return 'B'
+    # D: MACD_HIDDEN + RR>=2 + Yapisal (premium AL, C'den once)
+    if dt == 'MACD_HIDDEN' and rr >= 2.0 and struct:
+        return 'D'
+    # C: Entry Long + Yapisal + Hidden (ana AL motoru, state kisitlamasi yok)
+    if label == 'ENTRY_LONG' and struct and is_hidden:
+        return 'C'
+    # E: Cover + Stale + RR>=1 (taktik)
+    if state == 'STALE' and label == 'COVER' and rr >= 1.0:
+        return 'E'
+    # Gurultu
+    return None
+
+
+def _classify_modifiers(sig):
+    """Global modifier etiketleri — sinyalin kalitesini belirler."""
+    mods = []
+    regime = getattr(sig, 'regime', -1)
+    if regime == 3:
+        mods.append('FT')  # FULL_TREND boost
+    rr = getattr(sig, 'rr_ratio', 0) or 0
+    if rr >= 2.0:
+        mods.append('RR')  # RR>=2 boost
+    dt = getattr(sig, 'div_type', '')
+    if dt == 'RSI_HIDDEN':
+        mods.append('RSI')  # RSI_HIDDEN premium
+    q = getattr(sig, 'quality', 0)
+    if q >= 60:
+        mods.append('K60')  # K>=60 caution
+    return mods
+
+
+# =============================================================================
 # TARAMA
 # =============================================================================
 
-def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10, min_bars=60):
+def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10, min_bars=60, weekly_data=None):
     """Tum hisselerde divergence taramasi."""
     all_results = {
         'rsi': [], 'macd': [], 'obv': [], 'mfi': [], 'adx': [],
         'triple': [], 'pv': [],
+        'primary': [], 'confirmation': [], 'exhaustion': [],
     }
     n_scanned = 0
     last_date = None
@@ -117,14 +231,16 @@ def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10, min_bars=60):
             if debug_ticker and ticker == debug_ticker:
                 _print_debug(ticker, df)
 
-            result = scan_divergences(df, scan_bars=scan_bars)
+            wdf = weekly_data.get(ticker) if weekly_data else None
+            result = scan_divergences(df, scan_bars=scan_bars, weekly_df=wdf)
             n_scanned += 1
 
             if last_date is None and len(df) > 0:
                 last_date = df.index[-1]
 
-            for sig_type in ('rsi', 'macd', 'obv', 'mfi', 'adx', 'triple', 'pv'):
-                for sig in result[sig_type]:
+            for sig_type in ('rsi', 'macd', 'obv', 'mfi', 'adx', 'triple', 'pv',
+                             'primary', 'confirmation', 'exhaustion'):
+                for sig in result.get(sig_type, []):
                     if sig.bar_idx < len(df):
                         sig_date = df.index[sig.bar_idx]
                     else:
@@ -152,9 +268,9 @@ def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10, min_bars=60):
 def _print_debug(ticker, df):
     """Tek hisse detayli swing + indicator + sinyal ciktisi."""
     cfg = DIV_CFG
-    print(f"\n  {'=' * 70}")
+    print(f"\n  {'=' * 80}")
     print(f"  DEBUG: {ticker}")
-    print(f"  {'=' * 70}")
+    print(f"  {'=' * 80}")
 
     atr = _calc_atr(df, cfg['atr_len'])
     rsi = _calc_rsi(df['close'], cfg['rsi_len'])
@@ -174,20 +290,25 @@ def _print_debug(ticker, df):
     print(f"  Son MFI: {mfi.iloc[-1]:.1f}")
     print(f"  Son ADX: {adx.iloc[-1]:.1f}")
 
-    # Swing'ler (pivot yerine)
-    swing_lows, swing_highs = _find_swings(df['close'], cfg['swing_order'])
+    # Structural swing'ler
+    struct_lows, struct_highs = _find_structural_swings(
+        df['close'], atr, cfg['swing_order'],
+        cfg['structural_min_atr_dist'], cfg['structural_min_bar_gap']
+    )
 
-    print(f"\n  Swing Lows ({len(swing_lows)} toplam, son 10):")
-    print(f"  {'SwingIdx':>8} {'SinyalIdx':>9} {'Fiyat':>10}")
-    print(f"  {'─' * 30}")
-    for sw in swing_lows[-10:]:
-        print(f"  {sw[0]:>8} {sw[1]:>9} {sw[2]:>10.4f}")
+    print(f"\n  Structural Swing Lows ({sum(1 for s in struct_lows if s[3])} yapisal / {len(struct_lows)} toplam, son 10):")
+    print(f"  {'SwingIdx':>8} {'SinyalIdx':>9} {'Fiyat':>10} {'Yapisal':>8}")
+    print(f"  {'─' * 40}")
+    for sw in struct_lows[-10:]:
+        tag = '  ✓' if sw[3] else ''
+        print(f"  {sw[0]:>8} {sw[1]:>9} {sw[2]:>10.4f} {tag:>8}")
 
-    print(f"\n  Swing Highs ({len(swing_highs)} toplam, son 10):")
-    print(f"  {'SwingIdx':>8} {'SinyalIdx':>9} {'Fiyat':>10}")
-    print(f"  {'─' * 30}")
-    for sw in swing_highs[-10:]:
-        print(f"  {sw[0]:>8} {sw[1]:>9} {sw[2]:>10.4f}")
+    print(f"\n  Structural Swing Highs ({sum(1 for s in struct_highs if s[3])} yapisal / {len(struct_highs)} toplam, son 10):")
+    print(f"  {'SwingIdx':>8} {'SinyalIdx':>9} {'Fiyat':>10} {'Yapisal':>8}")
+    print(f"  {'─' * 40}")
+    for sw in struct_highs[-10:]:
+        tag = '  ✓' if sw[3] else ''
+        print(f"  {sw[0]:>8} {sw[1]:>9} {sw[2]:>10.4f} {tag:>8}")
 
     # Son 15 bar indicator degerleri
     n = len(df)
@@ -209,14 +330,15 @@ def _print_debug(ticker, df):
 
     # Sinyalleri genis scan ile tara
     result = scan_divergences(df, scan_bars=30)
-    total = sum(len(v) for v in result.values())
+    # Legacy key'ler icin say
+    legacy_total = sum(len(result.get(k, [])) for k in ('triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv'))
 
-    if total > 0:
-        print(f"\n  Bulunan Sinyaller ({total}):")
-        print(f"  {'Bar':>5} {'Yon':<5} {'Tip':<15} {'Kalite':>7} {'Detay'}")
-        print(f"  {'─' * 70}")
+    if legacy_total > 0:
+        print(f"\n  Bulunan Sinyaller ({legacy_total}):")
+        print(f"  {'Bar':>5} {'Yon':<5} {'Tip':<15} {'K':>3} {'Bucket':<7} {'State':<8} {'Trg':<6} {'S':>1} {'Detay'}")
+        print(f"  {'─' * 90}")
         for sig_type in ('triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv'):
-            for sig in result[sig_type]:
+            for sig in result.get(sig_type, []):
                 det_parts = []
                 d = sig.details
                 if 'prev_rsi' in d:
@@ -228,11 +350,10 @@ def _print_debug(ticker, df):
                 if 'prev_mfi' in d:
                     det_parts.append(f"MFI: {d['prev_mfi']:.0f}→{d['curr_mfi']:.0f}")
                 if 'adx_slope' in d:
-                    det_parts.append(f"ADX: {d['adx_value']:.0f} slope={d['adx_slope']:.2f}")
+                    det_parts.append(f"ADX: {d['adx_value']:.0f} s={d['adx_slope']:.2f}")
                 if 'sub_type' in d:
                     det_parts.append(f"{d['sub_type']}")
                     det_parts.append(f"VolR: {d.get('vol_ratio', 0):.1f}")
-                    det_parts.append(f"R/ATR: {d.get('range_atr', 0):.3f}")
                     if d.get('limit_tag'):
                         det_parts.append(f"[{d['limit_tag']}]")
                 elif 'vol_ratio' in d:
@@ -240,21 +361,61 @@ def _print_debug(ticker, df):
                 if d.get('has_mfi'):
                     det_parts.append("MFI+")
                 det_str = ', '.join(det_parts) if det_parts else '-'
+                bucket = getattr(sig, 'bucket', '-')[:5]
+                state = getattr(sig, 'state', '-')[:6]
+                trg = getattr(sig, 'trigger_type', '-')[:6] if getattr(sig, 'trigger_type', 'NONE') != 'NONE' else '-'
+                struct = '✓' if getattr(sig, 'structural', False) else ' '
                 print(f"  {sig.bar_idx:>5} {sig.direction:<5} {sig.div_type:<15} "
-                      f"{sig.quality:>7} {det_str}")
-        print(f"  {'─' * 70}")
+                      f"{sig.quality:>3} {bucket:<7} {state:<8} {trg:<6} {struct:>1} {det_str}")
+
+        # State dagilimi ozeti
+        all_sigs = []
+        for k in ('triple', 'rsi', 'macd', 'mfi', 'adx'):
+            all_sigs.extend(result.get(k, []))
+        state_counts = {}
+        for s in all_sigs:
+            st = getattr(s, 'state', 'SETUP')
+            state_counts[st] = state_counts.get(st, 0) + 1
+        if state_counts:
+            sc_str = ' | '.join(f"{k}:{v}" for k, v in sorted(state_counts.items()))
+            print(f"\n  State Dagilimi: {sc_str}")
+        print(f"  {'─' * 90}")
     else:
         print(f"\n  Sinyal bulunamadi (son 30 bar).")
 
-    print(f"  {'=' * 70}\n")
+    print(f"  {'=' * 80}\n")
 
 
 # =============================================================================
 # KONSOL RAPOR
 # =============================================================================
 
+def _state_tag(sig):
+    """DivergenceSetup icin kompakt state etiketi."""
+    state = getattr(sig, 'state', None)
+    trg = getattr(sig, 'trigger_type', 'NONE')
+    label = getattr(sig, 'signal_label', 'WATCH')
+    label_short = SIGNAL_LABEL_SHORT.get(label, '')
+    parts = []
+    if state == 'TRIGGERED':
+        trg_short = {'SWING_BREAK': 'SB', 'EMA_RECLAIM': 'ER', 'VOLUME_REVERSAL': 'VR'}.get(trg, '?')
+        parts.append(f"TETIK({trg_short})")
+    elif state == 'STALE':
+        parts.append('ESKI')
+    elif state == 'INVALIDATED':
+        parts.append('GCR')
+    if label_short and label_short != 'W':
+        parts.append(label_short)
+    return (' ' + ' '.join(parts)) if parts else ''
+
+
 def _print_section(title, items, section_type):
     """Bir bolum icin tablo yazdir."""
+    if not items:
+        return
+
+    # INVALIDATED sinyalleri filtrele
+    items = [i for i in items if getattr(i['signal'], 'state', 'SETUP') != 'INVALIDATED']
     if not items:
         return
 
@@ -262,12 +423,11 @@ def _print_section(title, items, section_type):
     items.sort(key=lambda x: x['signal'].quality, reverse=True)
 
     print(f"\n  ◆ {title} ({count})")
-    print(f"  {'─' * 75}")
+    print(f"  {'─' * 85}")
 
     if section_type in ('triple',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'RSI Div':>8} {'MACD Div':>9} "
-              f"{'Hacim':>6} {'MFI':>4} {'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Hacim':>6} {'MFI':>4} {'K':>3} {'Tarih':>6} {'Durum'}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
@@ -275,29 +435,27 @@ def _print_section(title, items, section_type):
             vol_str = f"x{vol_r:.1f}" if vol_r > 0 else '-'
             mfi_str = '+' if d.get('has_mfi') else '-'
             date_str = _fmt_date(item['signal_date'])
-            print(f"  {item['ticker']:<8} {item['close']:>8.2f} {'Klasik':>8} "
-                  f"{'Klasik':>9} {vol_str:>6} {mfi_str:>4} {sig.quality:>7} {date_str:>6}")
+            st = _state_tag(sig)
+            print(f"  {item['ticker']:<8} {item['close']:>8.2f} {vol_str:>6} {mfi_str:>4} "
+                  f"{sig.quality:>3} {date_str:>6}{st}")
 
     elif section_type in ('rsi',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'RSI1':>6} {'RSI2':>6} "
-              f"{'Fark':>6} {'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'RSI':>12} {'K':>3} {'Tarih':>6} {'Durum'}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
             tip = 'Klasik' if sig.div_type == 'RSI_CLASSIC' else 'Gizli'
-            rsi1 = d.get('prev_rsi', 0)
-            rsi2 = d.get('curr_rsi', 0)
-            diff = d.get('rsi_diff', 0)
+            r1 = d.get('prev_rsi', 0)
+            r2 = d.get('curr_rsi', 0)
             date_str = _fmt_date(item['signal_date'])
+            st = _state_tag(sig)
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {tip:>8} "
-                  f"{rsi1:>6.1f} {rsi2:>6.1f} {diff:>6.1f} "
-                  f"{sig.quality:>7} {date_str:>6}")
+                  f"{r1:>5.0f}→{r2:<5.0f} {sig.quality:>3} {date_str:>6}{st}")
 
     elif section_type in ('macd',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'Hist1':>9} {'Hist2':>9} "
-              f"{'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'Hist1':>9} {'Hist2':>9} {'K':>3} {'Tarih':>6} {'Durum'}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
@@ -305,14 +463,13 @@ def _print_section(title, items, section_type):
             h1 = d.get('prev_hist', 0)
             h2 = d.get('curr_hist', 0)
             date_str = _fmt_date(item['signal_date'])
+            st = _state_tag(sig)
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {tip:>8} "
-                  f"{h1:>9.4f} {h2:>9.4f} "
-                  f"{sig.quality:>7} {date_str:>6}")
+                  f"{h1:>9.4f} {h2:>9.4f} {sig.quality:>3} {date_str:>6}{st}")
 
     elif section_type in ('obv',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'OBV1':>12} {'OBV2':>12} "
-              f"{'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'OBV1':>12} {'OBV2':>12} {'K':>3} {'Tarih':>6}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
@@ -321,29 +478,25 @@ def _print_section(title, items, section_type):
             o2 = d.get('curr_obv', 0)
             date_str = _fmt_date(item['signal_date'])
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {tip:>8} "
-                  f"{o1:>12.0f} {o2:>12.0f} "
-                  f"{sig.quality:>7} {date_str:>6}")
+                  f"{o1:>12.0f} {o2:>12.0f} {sig.quality:>3} {date_str:>6}")
 
     elif section_type in ('mfi',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'MFI1':>6} {'MFI2':>6} "
-              f"{'Fark':>6} {'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'MFI':>12} {'K':>3} {'Tarih':>6} {'Durum'}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
             tip = 'Klasik' if sig.div_type == 'MFI_CLASSIC' else 'Gizli'
             m1 = d.get('prev_mfi', 0)
             m2 = d.get('curr_mfi', 0)
-            diff = d.get('mfi_diff', 0)
             date_str = _fmt_date(item['signal_date'])
+            st = _state_tag(sig)
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {tip:>8} "
-                  f"{m1:>6.1f} {m2:>6.1f} {diff:>6.1f} "
-                  f"{sig.quality:>7} {date_str:>6}")
+                  f"{m1:>5.0f}→{m2:<5.0f} {sig.quality:>3} {date_str:>6}{st}")
 
     elif section_type in ('adx',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'ADX':>6} {'Slope':>7} {'F.Slope':>8} "
-              f"{'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'ADX':>6} {'Slope':>7} {'F.Slope':>8} {'K':>3} {'Tarih':>6} {'Durum'}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
@@ -351,14 +504,13 @@ def _print_section(title, items, section_type):
             adx_sl = d.get('adx_slope', 0)
             cs = d.get('close_slope', 0)
             date_str = _fmt_date(item['signal_date'])
+            st = _state_tag(sig)
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {adx_val:>6.1f} "
-                  f"{adx_sl:>7.2f} {cs:>8.3f} "
-                  f"{sig.quality:>7} {date_str:>6}")
+                  f"{adx_sl:>7.2f} {cs:>8.3f} {sig.quality:>3} {date_str:>6}{st}")
 
     elif section_type in ('pv',):
-        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'VolR':>6} {'R/ATR':>7} "
-              f"{'Kalite':>7} {'Tarih':>6}")
-        print(f"  {'─' * 75}")
+        print(f"  {'Hisse':<8} {'Fiyat':>8} {'Tip':>8} {'VolR':>6} {'R/ATR':>7} {'K':>3} {'Tarih':>6}")
+        print(f"  {'─' * 85}")
         for item in items:
             sig = item['signal']
             d = sig.details
@@ -370,9 +522,9 @@ def _print_section(title, items, section_type):
             vol_str = f"x{vol_r:.1f}"
             tag = f" [{lt}]" if lt else ""
             print(f"  {item['ticker']:<8} {item['close']:>8.2f} {sub:>8} "
-                  f"{vol_str:>6} {ra:>7.3f} {sig.quality:>7} {date_str:>6}{tag}")
+                  f"{vol_str:>6} {ra:>7.3f} {sig.quality:>3} {date_str:>6}{tag}")
 
-    print(f"  {'─' * 75}")
+    print(f"  {'─' * 85}")
 
 
 def _fmt_date(sig_date):
@@ -383,97 +535,92 @@ def _fmt_date(sig_date):
 
 
 def _print_results(all_results, n_scanned, date_str, type_filter=None, top_n=None, tf_label=''):
-    """Konsol rapor."""
-    w = 75
+    """Konsol rapor — kural bazli gruplama."""
+    w = 85
+    _LEGACY_KEYS = ('triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv')
+
+    print(f"\n{'═' * w}")
+    print(f"  NOX UYUMSUZLUK TARAMASI v3{tf_label} — {date_str} — {n_scanned} hisse tarandi")
+    print(f"{'═' * w}")
+
+    # Tum sinyalleri topla ve kural siniflandir
+    all_classified = []
+    n_noise = 0
+    for sig_type in _LEGACY_KEYS:
+        for item in all_results.get(sig_type, []):
+            sig = item['signal']
+            rule = _classify_rule(sig)
+            if rule is None:
+                n_noise += 1
+                continue
+            all_classified.append({
+                'rule': rule,
+                'ticker': item['ticker'],
+                'close': item['close'],
+                'signal': sig,
+                'signal_date': item['signal_date'],
+                'sig_type': sig_type,
+            })
 
     # Type filtresi
     if type_filter:
         tf = type_filter.upper()
         filter_map = {
-            'TRIPLE': ['triple'],
-            'UCLU': ['triple'],
-            'RSI': ['rsi'],
-            'MACD': ['macd'],
-            'OBV': ['obv'],
-            'MFI': ['mfi'],
-            'ADX': ['adx'],
-            'PV': ['pv'],
-            'PRICE_VOLUME': ['pv'],
-            'FH': ['pv'],
-            'FIYAT': ['pv'],
+            'TRIPLE': ['triple'], 'UCLU': ['triple'], 'RSI': ['rsi'],
+            'MACD': ['macd'], 'OBV': ['obv'], 'MFI': ['mfi'],
+            'ADX': ['adx'], 'PV': ['pv'], 'PRICE_VOLUME': ['pv'],
+            'FH': ['pv'], 'FIYAT': ['pv'],
         }
-        allowed = filter_map.get(tf, list(all_results.keys()))
-        for key in list(all_results.keys()):
-            if key not in allowed:
-                all_results[key] = []
+        allowed = filter_map.get(tf, list(_LEGACY_KEYS))
+        all_classified = [i for i in all_classified if i['sig_type'] in allowed]
 
-    # Top N — tum sinyalleri birlestir, kaliteye gore sirala, sonra kes
+    # Top N
     if top_n and top_n > 0:
-        all_flat = []
-        for sig_type, items in all_results.items():
-            for item in items:
-                all_flat.append((sig_type, item))
-        all_flat.sort(key=lambda x: x[1]['signal'].quality, reverse=True)
-        all_flat = all_flat[:top_n]
-        for key in all_results:
-            all_results[key] = []
-        for sig_type, item in all_flat:
-            all_results[sig_type].append(item)
+        all_classified.sort(key=lambda x: x['signal'].quality, reverse=True)
+        all_classified = all_classified[:top_n]
 
-    # Sayimlar
-    total_buy = 0
-    total_sell = 0
-    type_counts = {}
-    for sig_type, items in all_results.items():
-        for item in items:
-            d = item['signal'].direction
-            if d == 'BUY':
-                total_buy += 1
-            else:
-                total_sell += 1
-            type_counts[sig_type] = type_counts.get(sig_type, 0) + 1
-
-    print(f"\n{'═' * w}")
-    print(f"  NOX UYUMSUZLUK TARAMASI v2{tf_label} — {date_str} — {n_scanned} hisse tarandi")
-    print(f"{'═' * w}")
-
-    # Bolumler: triple > rsi > macd > obv > mfi > adx > pv
-    sections = [
-        ('triple', 'triple_buy', 'triple_sell'),
-        ('rsi', 'rsi_buy', 'rsi_sell'),
-        ('macd', 'macd_buy', 'macd_sell'),
-        ('obv', 'obv_buy', 'obv_sell'),
-        ('mfi', 'mfi_buy', 'mfi_sell'),
-        ('adx', 'adx_buy', 'adx_sell'),
-        ('pv', 'pv_buy', 'pv_sell'),
-    ]
-
-    for sig_type, buy_key, sell_key in sections:
-        items = all_results.get(sig_type, [])
-        if not items:
+    # Kural bazli gruplama
+    for rule_key in RULE_ORDER:
+        rd = RULE_DEFS[rule_key]
+        rule_items = [i for i in all_classified if i['rule'] == rule_key]
+        if not rule_items:
             continue
-        buy_items = [i for i in items if i['signal'].direction == 'BUY']
-        sell_items = [i for i in items if i['signal'].direction == 'SELL']
 
-        if buy_items:
-            _print_section(SECTION_TITLES[buy_key], buy_items, sig_type)
-        if sell_items:
-            _print_section(SECTION_TITLES[sell_key], sell_items, sig_type)
+        rule_items.sort(key=lambda x: x['signal'].quality, reverse=True)
+        st = rd['stats']
+        print(f"\n  ◆ KURAL {rule_key}: {rd['name'].upper()} ({len(rule_items)} sinyal)")
+        print(f"    BT: 1G WR %{st['1g_wr']:.0f} (+{st['1g_avg']}%) | "
+              f"3G WR %{st['3g_wr']:.0f} (+{st['3g_avg']}%) | "
+              f"5G WR %{st['5g_wr']:.0f} (+{st['5g_avg']}%) | N={st['n_bt']}")
+        print(f"  {'─' * 80}")
+        print(f"  {'Hisse':<8} {'Yon':<5} {'Tip':<15} {'Fiyat':>8} {'K':>3} {'RR':>5} {'Tarih':>6}")
+        print(f"  {'─' * 80}")
+
+        for item in rule_items:
+            sig = item['signal']
+            dir_str = 'AL' if sig.direction == 'BUY' else 'SAT'
+            tip = TYPE_LABELS.get(sig.div_type, sig.div_type)[:14]
+            date_str_fmt = _fmt_date(item['signal_date'])
+            rr = getattr(sig, 'rr_ratio', 0) or 0
+            rr_str = f"{rr:.1f}" if rr > 0 else '  —'
+            mods = _classify_modifiers(sig)
+            mod_str = f" {''.join(MOD_DEFS[m]['label'] for m in mods)}" if mods else ''
+            print(f"  {item['ticker']:<8} {dir_str:<5} {tip:<15} "
+                  f"{item['close']:>8.2f} {sig.quality:>3} {rr_str:>5} {date_str_fmt:>6}{mod_str}")
+        print(f"  {'─' * 80}")
 
     # Ozet
-    type_labels_tr = {
-        'triple': 'UCLU', 'rsi': 'RSI', 'macd': 'MACD',
-        'obv': 'OBV', 'mfi': 'MFI', 'adx': 'ADX', 'pv': 'FH',
-    }
-    counts_parts = []
-    for key in ('triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv'):
-        c = type_counts.get(key, 0)
-        if c > 0:
-            counts_parts.append(f"{c} {type_labels_tr[key]}")
-    counts_str = ', '.join(counts_parts) if counts_parts else 'yok'
-
+    total = len(all_classified)
+    total_buy = sum(1 for i in all_classified if i['signal'].direction == 'BUY')
+    total_sell = total - total_buy
+    rule_counts = ' | '.join(
+        f"{r}:{sum(1 for i in all_classified if i['rule'] == r)}"
+        for r in RULE_ORDER
+        if sum(1 for i in all_classified if i['rule'] == r) > 0
+    )
     print(f"\n{'═' * w}")
-    print(f"  OZET: {total_buy} AL + {total_sell} SAT ({counts_str})")
+    print(f"  OZET: {total} sinyal ({total_buy} AL + {total_sell} SAT) | {rule_counts}")
+    print(f"  Elenen: {n_noise} gurultu sinyal")
     print(f"{'═' * w}")
 
 
@@ -482,16 +629,28 @@ def _print_results(all_results, n_scanned, date_str, type_filter=None, top_n=Non
 # =============================================================================
 
 def _save_csv(all_results, date_str, output_dir):
-    """Sinyalleri CSV dosyasina kaydet."""
+    """Sinyalleri CSV dosyasina kaydet — sadece kural eslesen sinyaller."""
     os.makedirs(output_dir, exist_ok=True)
     rows = []
 
     for sig_type, items in all_results.items():
+        # primary/confirmation/exhaustion key'lerini atla
+        if sig_type in ('primary', 'confirmation', 'exhaustion'):
+            continue
         for item in items:
             sig = item['signal']
+
+            # Kural siniflandirmasi — gurultuyu kes
+            rule = _classify_rule(sig)
+            if rule is None:
+                continue
+
+            mods = _classify_modifiers(sig)
             sig_date = item['signal_date']
 
             row = {
+                'rule': rule,
+                'mods': ','.join(mods) if mods else '',
                 'ticker': item['ticker'],
                 'close': round(item['close'], 4),
                 'div_type': sig.div_type,
@@ -499,6 +658,19 @@ def _save_csv(all_results, date_str, output_dir):
                 'quality': sig.quality,
                 'signal_date': sig_date.strftime('%Y-%m-%d') if hasattr(sig_date, 'strftime') else str(sig_date),
             }
+
+            row['bucket'] = getattr(sig, 'bucket', '')
+            row['state'] = getattr(sig, 'state', '')
+            row['age'] = getattr(sig, 'age', 0)
+            row['trigger_type'] = getattr(sig, 'trigger_type', 'NONE')
+            row['structural'] = getattr(sig, 'structural', False)
+            row['confirmation_mod'] = getattr(sig, 'confirmation_mod', 0)
+            row['location_q'] = getattr(sig, 'location_q', 0)
+            row['regime'] = getattr(sig, 'regime', -1)
+            row['regime_mod'] = getattr(sig, 'regime_mod', 0)
+            row['signal_label'] = getattr(sig, 'signal_label', 'WATCH')
+            row['risk_score'] = getattr(sig, 'risk_score', 0)
+            row['rr_ratio'] = getattr(sig, 'rr_ratio', 0.0)
 
             d = sig.details
             if 'prev_rsi' in d:
@@ -535,11 +707,11 @@ def _save_csv(all_results, date_str, output_dir):
 
     if rows:
         csv_df = pd.DataFrame(rows)
-        csv_df.sort_values(['quality', 'ticker'], ascending=[False, True], inplace=True)
+        csv_df.sort_values(['rule', 'quality'], ascending=[True, False], inplace=True)
         fname = f"nox_divergence_{date_str.replace('-', '')}.csv"
         path = os.path.join(output_dir, fname)
         csv_df.to_csv(path, index=False)
-        print(f"\n  CSV: {path}")
+        print(f"\n  CSV: {path} ({len(rows)} sinyal)")
     else:
         print(f"\n  Sinyal yok, CSV olusturulmadi.")
 
@@ -548,25 +720,27 @@ def _save_csv(all_results, date_str, output_dir):
 # HTML RAPOR
 # =============================================================================
 
-# Tab tanimlamalari: key -> (label, renk)
-_DIV_TABS = {
-    'triple': ('UCLU', 'var(--nox-purple)'),
-    'rsi':    ('RSI',  'var(--nox-cyan)'),
-    'macd':   ('MACD', 'var(--nox-orange)'),
-    'obv':    ('OBV',  'var(--nox-green)'),
-    'mfi':    ('MFI',  'var(--nox-blue)'),
-    'adx':    ('ADX',  'var(--nox-yellow)'),
-    'pv':     ('FH',   'var(--nox-red)'),
-}
-_TAB_ORDER = ['triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv']
-
 
 def _flatten_results(all_results):
-    """all_results dict -> flat list of dicts for JSON embed."""
+    """all_results dict -> flat list of dicts for JSON embed. Kural filtresi uygular."""
     rows = []
+    n_noise = 0
     for sig_type, items in all_results.items():
+        # primary/confirmation/exhaustion key'lerini atla
+        if sig_type in ('primary', 'confirmation', 'exhaustion'):
+            continue
         for item in items:
             sig = item['signal']
+
+            # Kural siniflandirmasi
+            rule = _classify_rule(sig)
+            if rule is None:
+                n_noise += 1
+                continue  # gurultu, kes
+
+            # Modifier tag'ler
+            mods = _classify_modifiers(sig)
+
             d = sig.details
             sig_date = item['signal_date']
 
@@ -577,10 +751,25 @@ def _flatten_results(all_results):
                 'direction': sig.direction,
                 'quality': sig.quality,
                 'category': sig_type,
+                'rule': rule,
+                'mods': mods,
                 'signal_date': sig_date.strftime('%Y-%m-%d') if hasattr(sig_date, 'strftime') else str(sig_date),
+                # Faz 1 yeni alanlar
+                'bucket': getattr(sig, 'bucket', ''),
+                'state': getattr(sig, 'state', ''),
+                'age': getattr(sig, 'age', 0),
+                'trigger_type': getattr(sig, 'trigger_type', 'NONE'),
+                'structural': getattr(sig, 'structural', False),
+                'confirmation_mod': getattr(sig, 'confirmation_mod', 0),
+                # Faz 2
+                'location_q': getattr(sig, 'location_q', 0),
+                'regime': getattr(sig, 'regime', -1),
+                'regime_mod': getattr(sig, 'regime_mod', 0),
+                'signal_label': getattr(sig, 'signal_label', 'WATCH'),
+                'risk_score': getattr(sig, 'risk_score', 0),
+                'rr_ratio': round(getattr(sig, 'rr_ratio', 0.0), 2),
             }
 
-            # Tip-spesifik detaylar
             if 'prev_rsi' in d:
                 row['rsi_prev'] = round(float(d['prev_rsi']), 1) if d.get('prev_rsi') is not None else None
                 row['rsi_curr'] = round(float(d['curr_rsi']), 1) if d.get('curr_rsi') is not None else None
@@ -610,11 +799,14 @@ def _flatten_results(all_results):
                 row['close_slope'] = round(float(d['close_slope']), 3) if d.get('close_slope') is not None else None
 
             rows.append(row)
+
+    if n_noise > 0:
+        print(f"  Kural filtresi: {n_noise} gurultu sinyal elendi, {len(rows)} sinyal kaldi.")
     return rows
 
 
 def _generate_html(all_results, n_scanned, date_str, tf_label=''):
-    """Divergence HTML raporu olustur."""
+    """Divergence HTML raporu olustur — kural bazli."""
     now = datetime.now().strftime('%d.%m.%Y %H:%M')
     flat = _flatten_results(all_results)
     rows_json = json.dumps(_sanitize(flat), ensure_ascii=False)
@@ -622,12 +814,10 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
     tf_tag = tf_label.strip() if tf_label.strip() else ''
     title_suffix = f' · {tf_tag}' if tf_tag else ''
 
-    # Pre-compute JSON strings (f-string icinde dict comp kullanmamak icin)
     dir_labels_json = json.dumps({'BUY': 'AL', 'SELL': 'SAT'})
     type_labels_json = json.dumps(TYPE_LABELS)
-    tabs_json = json.dumps(_TAB_ORDER)
-    tab_labels_json = json.dumps({k: v[0] for k, v in _DIV_TABS.items()})
-    tab_colors_json = json.dumps({k: v[1] for k, v in _DIV_TABS.items()})
+    rule_defs_json = json.dumps(RULE_DEFS, ensure_ascii=False)
+    rule_order_json = json.dumps(RULE_ORDER)
 
     html = f"""<!DOCTYPE html>
 <html lang="tr"><head><meta charset="UTF-8">
@@ -655,6 +845,48 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
 .q-hi {{ color: var(--nox-green); }}
 .q-mid {{ color: var(--nox-yellow); }}
 .q-lo {{ color: var(--text-muted); }}
+.badge {{
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 0.65rem; font-weight: 700; letter-spacing: 0.3px;
+}}
+.rr-hi {{ color: var(--nox-green); font-weight: 700; }}
+.rr-mid {{ color: var(--nox-yellow); }}
+.rr-lo {{ color: var(--nox-red); }}
+/* Kural kartlari */
+.rule-cards {{
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
+}}
+.r-card {{
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: 10px; padding: 14px 16px; min-width: 170px; flex: 1;
+  border-top: 3px solid var(--border-subtle);
+}}
+.r-card .r-head {{
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}}
+.r-card .r-title {{
+  font-family: var(--font-display); font-size: 0.82rem; font-weight: 700;
+}}
+.r-card .r-count {{
+  font-family: var(--font-mono); font-size: 1.3rem; font-weight: 800;
+}}
+.r-card .r-stats {{
+  font-size: 0.68rem; color: var(--text-secondary);
+  font-family: var(--font-mono); line-height: 1.6;
+}}
+.r-card .r-desc {{
+  font-size: 0.65rem; color: var(--text-muted); margin-top: 6px;
+  line-height: 1.3;
+}}
+.r-wr {{ font-weight: 700; }}
+.r-avg {{ color: var(--nox-green); }}
+/* Kural badge */
+.rule-badge {{
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.5px;
+  font-family: var(--font-mono);
+}}
 </style>
 </head><body>
 <div class="nox-container">
@@ -662,7 +894,28 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
   <div class="nox-logo">NOX<span class="proj">project</span><span class="mode">divergence{title_suffix}</span></div>
   <div class="nox-meta"><b>{len(flat)}</b> sinyal / {n_scanned} taranan<br>{now}</div>
 </div>
+<!-- Nasil Okunur -->
+<details style="margin-bottom:16px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:10px;padding:12px 16px;font-size:.78rem;color:var(--text-secondary);cursor:pointer;">
+<summary style="font-weight:700;color:var(--nox-cyan);font-size:.82rem;cursor:pointer;user-select:none;">NASIL OKUNUR?</summary>
+<div style="margin-top:10px;line-height:1.7;">
+<b style="color:var(--text-primary);">Kural Bazli Filtreleme</b> — 56.389 sinyalden 2 yillik backtestle belirlenmis 4 kural ile yalnizca edge veren ~%2 sinyal gosterilir. Kesif/dogrulama ayrimiyla dogrulanmis kombinasyonlar.<br><br>
+<b style="color:var(--nox-red);">B: Kisa Setup</b> — ENTRY_SHORT + SETUP + RR&ge;1.5. Sat yonlu kurulum sinyalleri. <b>5G WR %76, Avg +1.66%</b>.<br>
+<b style="color:var(--nox-orange);">D: MACD Premium</b> — MACD_HIDDEN + RR&ge;2.0 + Yapisal. Dogrulanmis premium AL katmani. <b>5G WR %61, Avg +2.27%</b>. Dogrulama: %62.5.<br>
+<b style="color:var(--nox-green);">C: Yapisal Gizli</b> — ENTRY_LONG + yapisal swing + gizli uyumsuzluk. Ana AL motoru. <b>5G WR %59, Avg +1.50%</b>. Dogrulama: %59.2. En buyuk N.<br>
+<b style="color:var(--nox-blue);">E: Cover</b> — COVER + STALE + RR&ge;1.0. Taktik pozisyon, dusuk agirlik. <b>5G WR %55, Avg +1.93%</b>.<br><br>
+<b style="color:var(--nox-cyan);">Modifier Etiketler:</b><br>
+&bull; <span style="color:var(--nox-green);">&uarr;FT</span> = FULL_TREND rejim (guclendirici) &bull; <span style="color:var(--nox-cyan);">&uarr;RR</span> = RR&ge;2.0 &bull; <span style="color:var(--nox-cyan);">&uarr;RSI</span> = RSI_HIDDEN (en tutarli div type)<br>
+&bull; <span style="color:var(--nox-yellow);">&rlhar;K60</span> = K&ge;60 dikkat — dogrulamada kirilgan, kucuk N kombinasyonlarda supheli<br><br>
+<b style="color:var(--nox-orange);">Kalite (K) ve RR:</b><br>
+&bull; <b>K</b>: 4 bilesen (Yapi + Momentum + Katilim + Konum, 0-25 her biri) + teyit bonusu. K&ge;60 <span class="q-hi">yesil</span>, K&ge;40 <span class="q-mid">sari</span>, K&lt;40 <span class="q-lo">gri</span>.<br>
+&bull; <b>RR</b>: Risk/Odul orani. RR&ge;2 <span class="rr-hi">yesil</span>, RR&ge;1 <span class="rr-mid">sari</span>, RR&lt;1 <span class="rr-lo">kirmizi</span>.
+</div>
+</details>
+<!-- Kural Kartlari -->
+<div class="rule-cards" id="ruleCards"></div>
+<!-- Tab Bar -->
 <div class="tab-bar" id="tabs"></div>
+<!-- Filtreler -->
 <div class="nox-filters">
   <div><label>Yon</label>
   <select id="fDir" onchange="af()"><option value="">Tumu</option>
@@ -673,11 +926,13 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
 </div>
 <div class="nox-table-wrap">
 <table><thead><tr>
+<th onclick="sb('rule')">Kural</th>
 <th onclick="sb('ticker')">Hisse</th>
 <th onclick="sb('direction')">Yon</th>
 <th onclick="sb('div_type')">Tip</th>
 <th onclick="sb('close')">Fiyat</th>
-<th onclick="sb('quality')">Kalite</th>
+<th onclick="sb('quality')">K</th>
+<th onclick="sb('rr_ratio')">RR</th>
 <th>Detay</th>
 <th onclick="sb('signal_date')">Tarih</th>
 </tr></thead><tbody id="tb"></tbody></table>
@@ -688,26 +943,57 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
 const D={rows_json};
 const DL={dir_labels_json};
 const TL={type_labels_json};
-const TABS={tabs_json};
-const TAB_LABELS={tab_labels_json};
-const TAB_COLORS={tab_colors_json};
-let curTab='all',col='quality',asc=false;
+const RD={rule_defs_json};
+const RO={rule_order_json};
+const RP={{'B':1,'D':2,'C':3,'E':4}};
+const MD={json.dumps(MOD_DEFS, ensure_ascii=False)};
+let curTab='all',col='_rule',asc=true;
+
+/* Siralama: kural onceligi (A>B>C>D>E), esitse kalite desc */
+function ruleSort(a,b){{
+  const pa=RP[a.rule]||9, pb=RP[b.rule]||9;
+  if(pa!==pb) return pa-pb;
+  return (b.quality||0)-(a.quality||0);
+}}
+
+/* Kural kartlarini doldur */
+function initRuleCards(){{
+  const box=document.getElementById('ruleCards');
+  RO.forEach(r=>{{
+    const rd=RD[r];
+    if(!rd) return;
+    const cnt=D.filter(d=>d.rule===r).length;
+    const c=document.createElement('div');
+    c.className='r-card';
+    c.style.borderTopColor=rd.color;
+    const st=rd.stats;
+    c.innerHTML=`<div class="r-head"><span class="r-title" style="color:${{rd.color}}">${{r}}: ${{rd.name}}</span><span class="r-count" style="color:${{rd.color}}">${{cnt}}</span></div>`+
+      `<div class="r-stats"><span class="r-wr">1G %${{st['1g_wr']}} &middot; 3G %${{st['3g_wr']}} &middot; 5G %${{st['5g_wr']}}</span><br>`+
+      `<span class="r-avg">1G +${{st['1g_avg']}}% &middot; 3G +${{st['3g_avg']}}% &middot; 5G +${{st['5g_avg']}}%</span><br>`+
+      `<span style="color:var(--text-muted)">BT: ${{st.n_bt}} sinyal</span></div>`+
+      `<div class="r-desc">${{rd.desc}}</div>`;
+    box.appendChild(c);
+  }});
+}}
 
 function initTabs(){{
   const bar=document.getElementById('tabs');
-  // "Tumu" tab
+  /* Tumu tab */
   const allBtn=document.createElement('div');
   allBtn.className='tab-btn active';allBtn.dataset.t='all';
-  allBtn.innerHTML='<span class="dot" style="background:var(--nox-cyan)"></span>Tumu <span class="cnt">'+D.length+'</span>';
+  allBtn.innerHTML='<span class="dot" style="background:var(--text-muted)"></span>Tumu <span class="cnt">'+D.length+'</span>';
   allBtn.onclick=()=>setTab('all');
   bar.appendChild(allBtn);
-  TABS.forEach(t=>{{
-    const cnt=D.filter(r=>r.category===t).length;
-    if(!cnt)return;
+  /* Kural tab'lari */
+  RO.forEach(r=>{{
+    const rd=RD[r];
+    if(!rd) return;
+    const cnt=D.filter(d=>d.rule===r).length;
+    if(!cnt) return;
     const btn=document.createElement('div');
-    btn.className='tab-btn';btn.dataset.t=t;
-    btn.innerHTML='<span class="dot" style="background:'+TAB_COLORS[t]+'"></span>'+TAB_LABELS[t]+' <span class="cnt">'+cnt+'</span>';
-    btn.onclick=()=>setTab(t);
+    btn.className='tab-btn';btn.dataset.t=r;
+    btn.innerHTML='<span class="dot" style="background:'+rd.color+'"></span>'+r+': '+rd.name+' <span class="cnt">'+cnt+'</span>';
+    btn.onclick=()=>setTab(r);
     bar.appendChild(btn);
   }});
 }}
@@ -716,6 +1002,7 @@ function setTab(t){{
   curTab=t;
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.querySelector('.tab-btn[data-t="'+t+'"]').classList.add('active');
+  col='_rule'; asc=true;
   af();
 }}
 
@@ -724,27 +1011,32 @@ function af(){{
   const minQ=parseInt(document.getElementById('fQ').value)||0;
   const sr=document.getElementById('fS').value.toUpperCase();
   let f=D.filter(r=>{{
-    if(curTab!=='all'&&r.category!==curTab)return false;
-    if(dir&&r.direction!==dir)return false;
-    if(r.quality<minQ)return false;
-    if(sr&&!r.ticker.includes(sr))return false;
+    if(curTab!=='all' && r.rule!==curTab) return false;
+    if(dir&&r.direction!==dir) return false;
+    if(r.quality<minQ) return false;
+    if(sr&&!r.ticker.includes(sr)) return false;
     return true;
   }});
-  f.sort((a,b)=>{{
-    let va=a[col],vb=b[col];
-    if(typeof va==='string')return asc?va.localeCompare(vb):vb.localeCompare(va);
-    return asc?(va||0)-(vb||0):(vb||0)-(va||0);
-  }});
+  if(col==='_rule'){{
+    f.sort(ruleSort);
+  }} else {{
+    f.sort((a,b)=>{{
+      let va=a[col],vb=b[col];
+      if(typeof va==='string') return asc?va.localeCompare(vb):vb.localeCompare(va);
+      return asc?(va||0)-(vb||0):(vb||0)-(va||0);
+    }});
+  }}
   render(f);
 }}
 
-function sb(c){{if(col===c)asc=!asc;else{{col=c;asc=c==='ticker'||c==='signal_date'}};
-  document.querySelectorAll('th').forEach(h=>h.classList.remove('sorted'));
+function sb(c){{
+  if(c==='_rule')return;
+  if(col===c)asc=!asc;else{{col=c;asc=c==='ticker'||c==='signal_date'}};
   af();
 }}
 
 function reset(){{
-  curTab='all';
+  curTab='all'; col='_rule'; asc=true;
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.querySelector('.tab-btn[data-t="all"]').classList.add('active');
   document.getElementById('fDir').value='';
@@ -765,7 +1057,29 @@ function mkDetail(r){{
   if(r.range_atr!=null)parts.push('R/ATR: '+r.range_atr);
   if(r.limit_tag)parts.push('['+r.limit_tag+']');
   if(r.has_mfi)parts.push('MFI+');
+  if(r.structural)parts.push('S');
   return parts.length?'<span class="detail-cell">'+parts.join(', ')+'</span>':'<span style="color:var(--text-muted)">—</span>';
+}}
+
+function mkRule(rule){{
+  const rd=RD[rule];
+  if(!rd)return rule||'—';
+  return '<span class="rule-badge" style="background:color-mix(in srgb,'+rd.color+' 20%,transparent);color:'+rd.color+'">'+rule+'</span>';
+}}
+
+function mkMods(mods){{
+  if(!mods||!mods.length) return '';
+  return ' '+mods.map(m=>{{
+    const md=MD[m];
+    if(!md) return m;
+    return '<span style="font-size:.6rem;font-weight:700;color:'+md.color+';padding:0 2px" title="'+md.desc+'">'+md.label+'</span>';
+  }}).join('');
+}}
+
+function mkRR(rr){{
+  if(!rr||rr<=0)return '<span style="color:var(--text-muted)">—</span>';
+  const cls=rr>=2?'rr-hi':rr>=1?'rr-mid':'rr-lo';
+  return '<span class="'+cls+'">'+rr.toFixed(1)+'</span>';
 }}
 
 function render(data){{
@@ -776,11 +1090,13 @@ function render(data){{
     const qCls=r.quality>=60?'q-hi':r.quality>=40?'q-mid':'q-lo';
     const tipLabel=TL[r.div_type]||r.div_type;
     const dateStr=r.signal_date?r.signal_date.slice(5):'—';
-    tr.innerHTML=`<td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
+    tr.innerHTML=`<td>${{mkRule(r.rule)}}${{mkMods(r.mods)}}</td>
+<td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a></td>
 <td class="${{dirCls}}">${{DL[r.direction]||r.direction}}</td>
 <td style="font-size:.72rem">${{tipLabel}}</td>
 <td>${{r.close}}</td>
 <td class="${{qCls}}" style="font-weight:700">${{r.quality}}</td>
+<td>${{mkRR(r.rr_ratio||0)}}</td>
 <td>${{mkDetail(r)}}</td>
 <td style="color:var(--text-muted);font-size:.72rem">${{dateStr}}</td>`;
     tb.appendChild(tr);
@@ -788,6 +1104,7 @@ function render(data){{
   document.getElementById('st').innerHTML='<b>'+data.length+'</b> / '+D.length;
 }}
 
+initRuleCards();
 initTabs();
 af();
 </script></body></html>"""
@@ -810,79 +1127,63 @@ def _save_div_html(html_content, date_str, output_dir, suffix=''):
 # =============================================================================
 
 def _format_telegram(all_results, n_scanned, date_str, tf_label='', html_url=None):
-    """Telegram HTML mesaji olustur."""
+    """Telegram HTML mesaji olustur — kural bazli gruplama."""
     tf_tag = f" {tf_label.strip()}" if tf_label.strip() else ''
     lines = []
     if html_url:
         lines.append(f'🔗 <a href="{html_url}">Detayli Rapor</a>\n')
-    lines.append(f"📊 <b>NOX Uyumsuzluk{tf_tag}</b> — {date_str}\n")
+    lines.append(f"📊 <b>NOX Uyumsuzluk v3{tf_tag}</b> — {date_str}\n")
 
-    # Sayimlar
-    counts = {}
-    type_labels = {'triple': 'UCLU', 'rsi': 'RSI', 'macd': 'MACD',
-                   'obv': 'OBV', 'mfi': 'MFI', 'adx': 'ADX', 'pv': 'FH'}
-    for sig_type, items in all_results.items():
-        if items:
-            counts[sig_type] = len(items)
-    parts = [f"{c} {type_labels[k]}" for k, c in counts.items() if c > 0]
-    lines.append(f"📋 {n_scanned} hisse | {' | '.join(parts)}\n")
+    _LEGACY_KEYS = ('triple', 'rsi', 'macd', 'obv', 'mfi', 'adx', 'pv')
+    _RULE_EMOJI = {'B': '🔴', 'D': '🟠', 'C': '🟢', 'E': '🔄'}
 
-    def _fmt_items(items, emoji, title, min_q, max_n, sig_type):
-        """Bir bolum icin satir listesi."""
-        filtered = [i for i in items if i['signal'].quality >= min_q]
-        filtered.sort(key=lambda x: x['signal'].quality, reverse=True)
-        filtered = filtered[:max_n]
-        if not filtered:
-            return
-        lines.append(f"{emoji} <b>{title}</b>")
-        for item in filtered:
+    # Tum sinyalleri topla ve kural siniflandir
+    all_classified = []
+    for sig_type in _LEGACY_KEYS:
+        for item in all_results.get(sig_type, []):
             sig = item['signal']
-            d = sig.details
-            detail_parts = []
-            if sig_type == 'triple':
-                vol_r = d.get('vol_ratio', 0)
-                if vol_r > 0:
-                    detail_parts.append(f"RSI+MACD x{vol_r:.1f}")
-                if d.get('has_mfi'):
-                    detail_parts.append("MFI+")
-            elif sig_type == 'rsi':
-                tip = 'Klasik' if sig.div_type == 'RSI_CLASSIC' else 'Gizli'
-                r1 = d.get('prev_rsi', 0)
-                r2 = d.get('curr_rsi', 0)
-                detail_parts.append(f"{tip} {r1:.1f}→{r2:.1f}")
-            elif sig_type == 'macd':
-                tip = 'Klasik' if sig.div_type == 'MACD_CLASSIC' else 'Gizli'
-                detail_parts.append(tip)
-            det = ' '.join(detail_parts) if detail_parts else ''
-            det_str = f" {det}" if det else ''
-            lines.append(f"  <code>{item['ticker']:<6}</code> {item['close']:>8.2f} K:{sig.quality}{det_str}")
+            rule = _classify_rule(sig)
+            if rule is None:
+                continue
+            all_classified.append({
+                'rule': rule,
+                'ticker': item['ticker'],
+                'close': item['close'],
+                'signal': sig,
+            })
+
+    lines.append(f"📋 {n_scanned} hisse | {len(all_classified)} sinyal\n")
+
+    # Kural bazli gruplama
+    for rule_key in RULE_ORDER:
+        rd = RULE_DEFS[rule_key]
+        rule_items = [i for i in all_classified if i['rule'] == rule_key]
+        if not rule_items:
+            continue
+
+        rule_items.sort(key=lambda x: x['signal'].quality, reverse=True)
+        emoji = _RULE_EMOJI.get(rule_key, '•')
+        st = rd['stats']
+        lines.append(f"{emoji} <b>{rule_key}: {rd['name']}</b> ({len(rule_items)})")
+        lines.append(f"   <i>5G WR %{st['5g_wr']:.0f} Avg +{st['5g_avg']}%</i>")
+
+        for item in rule_items[:8]:  # max 8 per rule
+            sig = item['signal']
+            dir_str = '🟢' if sig.direction == 'BUY' else '🔴'
+            rr = getattr(sig, 'rr_ratio', 0) or 0
+            rr_str = f" RR:{rr:.1f}" if rr > 0 else ''
+            mods = _classify_modifiers(sig)
+            mod_str = f" {''.join(MOD_DEFS[m]['label'] for m in mods)}" if mods else ''
+            lines.append(f"  <code>{item['ticker']:<6}</code> {item['close']:>8.2f} K:{sig.quality}{rr_str}{mod_str} {dir_str}")
+
+        if len(rule_items) > 8:
+            lines.append(f"  <i>+{len(rule_items) - 8} daha...</i>")
         lines.append('')
 
-    # Triple SAT/AL
-    triple = all_results.get('triple', [])
-    triple_sell = [i for i in triple if i['signal'].direction == 'SELL']
-    triple_buy = [i for i in triple if i['signal'].direction == 'BUY']
-    _fmt_items(triple_sell, '🔻', 'UCLU SAT (K≥50)', 50, 10, 'triple')
-    _fmt_items(triple_buy, '🟢', 'UCLU AL (K≥50)', 50, 10, 'triple')
-
-    # RSI SAT/AL
-    rsi = all_results.get('rsi', [])
-    rsi_sell = [i for i in rsi if i['signal'].direction == 'SELL']
-    rsi_buy = [i for i in rsi if i['signal'].direction == 'BUY']
-    _fmt_items(rsi_sell, '📉', 'RSI SAT (K≥40)', 40, 10, 'rsi')
-    _fmt_items(rsi_buy, '📈', 'RSI AL (K≥40)', 40, 10, 'rsi')
-
-    # MACD SAT/AL
-    macd = all_results.get('macd', [])
-    macd_sell = [i for i in macd if i['signal'].direction == 'SELL']
-    macd_buy = [i for i in macd if i['signal'].direction == 'BUY']
-    _fmt_items(macd_sell, '📉', 'MACD SAT (K≥50)', 50, 5, 'macd')
-    _fmt_items(macd_buy, '📈', 'MACD AL (K≥50)', 50, 5, 'macd')
-
-    # Toplam ozet
-    total_buy = sum(1 for items in all_results.values() for i in items if i['signal'].direction == 'BUY')
-    total_sell = sum(1 for items in all_results.values() for i in items if i['signal'].direction == 'SELL')
-    lines.append(f"<b>Toplam:</b> {total_buy} AL + {total_sell} SAT")
+    total = len(all_classified)
+    total_buy = sum(1 for i in all_classified if i['signal'].direction == 'BUY')
+    total_sell = total - total_buy
+    lines.append(f"<b>Toplam:</b> {total} sinyal ({total_buy} AL + {total_sell} SAT)")
 
     return '\n'.join(lines)
 
@@ -982,15 +1283,25 @@ def main():
     else:
         stock_dfs = {ticker: _to_lower_cols(df) for ticker, df in all_data.items()}
 
+    # ── 3b. Haftalik veri hazirla (rejim hesabi icin, gunluk modda) ────────
+    regime_weekly = None
+    if not args.weekly and not args.monthly:
+        regime_weekly = {}
+        for ticker, df in all_data.items():
+            wdf = resample_weekly(df)
+            if len(wdf) >= 12:
+                regime_weekly[ticker] = _to_lower_cols(wdf)
+        print(f"  {len(regime_weekly)} hisse haftalik rejim verisi hazir.")
+
     # ── 4. Tarama ────────────────────────────────────────────────────────────
     print(f"\n  Divergence taramasi v2 (scan_bars={args.scan_bars}, swing_order={DIV_CFG['swing_order']})...")
     t1 = time.time()
     min_bars = 18 if args.monthly else 60
     all_results, n_scanned, date_str = _scan_all(
         stock_dfs, debug_ticker=debug_ticker, scan_bars=args.scan_bars,
-        min_bars=min_bars
+        min_bars=min_bars, weekly_data=regime_weekly,
     )
-    total_signals = sum(len(v) for v in all_results.values())
+    total_signals = sum(len(all_results.get(k, [])) for k in ('rsi', 'macd', 'obv', 'mfi', 'adx', 'triple', 'pv'))
     print(f"  {n_scanned} hisse tarandi, {total_signals} sinyal ({time.time() - t1:.1f}s)")
 
     # ── 5. Rapor ─────────────────────────────────────────────────────────────

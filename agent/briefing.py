@@ -190,7 +190,7 @@ def _compute_4_lists(latest_signals, confluence_results=None,
 
     # ── LİSTE 1: AL/SAT Tarama ──
     # Sadece karar=AL (İZLE dahil değil), ERKEN hariç
-    # Öncelik: ZAYIF (RS 20-60 + MACD>0 + Q≥50) > GUCLU (RS 30-60) > BILESEN (Q≥70 + MACD>0)
+    # ZAYIF çıkarıldı (backtest WR %33). Öncelik: CMB > GUCLU > BILESEN > DONUS
     alsat_items = []
     for s in latest_signals:
         if s.get('screener') != 'alsat':
@@ -212,11 +212,8 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         # Kalite filtreleri — sadece kriterleri karşılayanlar listeye girer
         passes = False
         tier_label = ''
-        if sig_type == 'ZAYIF' and 20 <= rs <= 60 and macd > 0 and q >= 50:
-            passes = True
-            tier_label = 'ZAYIF✓'
-            score = 300 + q  # En yüksek öncelik
-        elif sig_type in ('GUCLU', 'GÜÇLÜ') and 30 <= rs <= 60:
+        # ZAYIF çıkarıldı — backtest: 1G WR %33, 3G WR %0 (session_20260321)
+        if sig_type in ('GUCLU', 'GÜÇLÜ') and 30 <= rs <= 60:
             passes = True
             tier_label = 'GÜÇLÜ✓'
             score = 200 + q
@@ -237,7 +234,9 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         if not passes:
             continue
 
-        reasons = [tier_label, f"Q={q}", f"RS={rs:.0f}", f"MACD={'+'if macd>0 else ''}{macd:.4f}"]
+        # Decay etiketi: DONUS=swing, diğer=3G hold
+        decay = '🔄SW' if sig_type in ('DONUS', 'DÖNÜŞ') else '⏳3G'
+        reasons = [decay, tier_label, f"Q={q}", f"RS={rs:.0f}", f"MACD={'+'if macd>0 else ''}{macd:.4f}"]
         if oe != '':
             reasons.append(f"OE={oe}")
         if rr != '':
@@ -289,19 +288,22 @@ def _compute_4_lists(latest_signals, confluence_results=None,
             if cmf is not None and cmf > 0:
                 score += int(cmf * 100)  # CMF bonus
         else:
-            # Tavan: düşük hacim bonus
+            # Kilitli tavan: skor>=50 (deep analysis: WR %62+, session_20260321)
+            if skor >= 50:
+                score += 30
+            # Düşük hacim secondary bonus
             if vol < 1.0:
-                score += 30  # Kilitli tavan
+                score += 10
             elif vol < 1.5:
-                score += 15
+                score += 5
             # CMF pozitif bonus
             if cmf is not None and cmf > 0:
                 score += int(cmf * 100)
 
-        reasons = []
+        reasons = ['⚡1G']  # Tavan = fast decay (intraday çıkış şart)
         if is_kandidat:
             reasons.append(f"KND skor:{skor}")
-        elif skor >= 50 and vol < 1.0:
+        elif skor >= 50:
             reasons.append(f"🔒skor:{skor}")
         else:
             reasons.append(f"skor:{skor}")
@@ -353,7 +355,7 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         if delta is not None:
             score += max(0, int(20 - delta))
 
-        reasons = []
+        reasons = ['⚡1G']  # NW daily = fast trade (1G WR %64, 3G decay)
         if dw:
             reasons.append("⚡D+W")
         reasons.append("🔥BUGÜN")
@@ -390,6 +392,8 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         if window not in ('TAZE', '2.DALGA'):
             continue  # Sadece TAZE ve 2.DALGA — YAKIN/BEKLE/GEÇ dahil değil
         badge = s.get('badge', '')
+        if not badge:
+            continue  # no_badge RT zayıf — backtest: 1G med -0.34 (session_20260321)
         entry_score = int(s.get('quality', 0) or 0)
         if entry_score < 3:
             continue  # Giriş 3/4 veya 4/4 olmalı
@@ -418,7 +422,9 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         if window == 'TAZE' and is_today_transition:
             score += 15
 
-        reasons = []
+        # Decay: H+AL = swing, diğer = 3G hold
+        decay = '🔄SW' if badge == 'H+AL' else '⏳3G'
+        reasons = [decay]
         if badge:
             reasons.append(f"🏅{badge}")
         reasons.append(window)
@@ -504,7 +510,7 @@ def _compute_4_lists(latest_signals, confluence_results=None,
                     sig_type = sig.get('signal_type', '')
                     if sig_type in ('CMB', 'CMB+'):
                         quality += 35
-                    elif sig_type in ('ZAYIF', 'GUCLU', 'GÜÇLÜ'):
+                    elif sig_type in ('GUCLU', 'GÜÇLÜ'):
                         quality += 30  # Kalite filtrelerini geçmiş
                     elif sig_type in ('BILESEN', 'BİLEŞEN'):
                         quality += 25
@@ -515,10 +521,8 @@ def _compute_4_lists(latest_signals, confluence_results=None,
                 elif list_name == 'tavan':
                     skor = sig.get('skor', 0) or 0
                     vol = sig.get('volume_ratio', 0) or 0
-                    if skor >= 50 and vol < 1.0:
-                        quality += 30  # Kilitli tavan
-                    elif skor >= 50:
-                        quality += 20
+                    if skor >= 50:
+                        quality += 30  # Kilitli tavan (skor-based, session_20260321)
                     elif skor >= 40:
                         quality += 15
                     else:
@@ -539,7 +543,11 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         has_technical = bool({'alsat', 'tavan'} & set(in_lists))
         has_structural = bool({'nw', 'rt'} & set(in_lists))
         if has_technical and has_structural:
-            quality += 15  # Teknik + yapısal çakışma bonusu
+            # AS+RT saf overlap cezası — backtest: 1G/3G WR %48.6 (session_20260321)
+            if set(in_lists) == {'alsat', 'rt'}:
+                quality -= 25  # AS+RT penalty
+            else:
+                quality += 15  # Teknik + yapısal çakışma bonusu
         return quality, in_lists
 
     tier1 = []
@@ -552,11 +560,19 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         if quality < 40:
             continue
         list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
+        # Overlap decay etiketi
+        ls = set(in_lists)
+        if len(in_lists) >= 3:
+            ol_decay = '⚡1G'  # 3+ liste = FAST_DECAY
+        elif ls in ({'rt', 'tavan'}, {'nw', 'tavan'}, {'nw', 'rt'}, {'alsat', 'nw'}):
+            ol_decay = '⏳3G'  # Premium ikililer = HOLD_TO_3D
+        else:
+            ol_decay = '⏳3G'
         # Teknik+yapısal çakışma etiketi
         has_tech = bool({'alsat', 'tavan'} & set(in_lists))
         has_struct = bool({'nw', 'rt'} & set(in_lists))
         ty_tag = " 🔀T+Y" if has_tech and has_struct else ""
-        reasons_all = [f"⚡{list_tags} [{quality}p]{ty_tag}"]
+        reasons_all = [f"{ol_decay} ⚡{list_tags} [{quality}p]{ty_tag}"]
         for l in sorted(in_lists):
             for t, sc, reas, sig in list_data[l]:
                 if t == ticker:
@@ -576,13 +592,13 @@ def _compute_4_lists(latest_signals, confluence_results=None,
     # Güçlü AS sinyalleri (kalite filtrelerinden geçen)
     for t, sc, reas, sig in alsat_items:
         st = sig.get('signal_type', '')
-        if st in ('ZAYIF', 'GUCLU', 'GÜÇLÜ', 'CMB', 'CMB+', 'BILESEN', 'BİLEŞEN'):
+        if st in ('GUCLU', 'GÜÇLÜ', 'CMB', 'CMB+', 'BILESEN', 'BİLEŞEN'):
             strong_tickers[t] = ('alsat', reas, sig)
     # Kilitli tavan
     for t, sc, reas, sig in tavan_items:
         skor = sig.get('skor', 0) or 0
         vol = sig.get('volume_ratio', 0) or 0
-        if skor >= 50 and vol < 1.0:
+        if skor >= 50:  # Kilitli = yüksek skor (session_20260321)
             strong_tickers.setdefault(t, ('tavan', reas, sig))
     # NW D+W
     for t, sc, reas, sig in nw_items:
@@ -641,7 +657,7 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         is_technical = src_name in ('alsat', 'tavan')
         ty_tag = " 🔀T+Y" if is_technical and is_structural else ""
         reasons_all = [
-            f"⚡{src_tag}+RT [{quality}p]{ty_tag}",
+            f"⏳3G ⚡{src_tag}+RT [{quality}p]{ty_tag}",
             f"[{src_tag}] {src_short}",
             f"[RT↓] {rt_reasons}",  # ↓ = gevşek filtre
         ]
@@ -655,6 +671,9 @@ def _compute_4_lists(latest_signals, confluence_results=None,
     tier1.sort(key=lambda x: -x[1])
 
     # ── Tier 2: Her listeden en kaliteli tekil hisseler ──
+    # Score >= 100 soft gate: tekil/Tier2 için düşük kalite kuyrukları budanır
+    # Tier 1 (overlap) muaf — düşük score'lu sinyal kaliteli overlap içinde işe yarayabilir
+    _TIER2_MIN_SCORE = 100
     tier1_tickers = {t for t, _, _, _ in tier1}
     tier2 = []
     for list_name in ('nw', 'rt', 'alsat', 'tavan'):  # NW/RT önce (daha anlamlı)
@@ -663,6 +682,8 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         for ticker, score, reasons, sig in items:
             if ticker in tier1_tickers:
                 continue
+            if score < _TIER2_MIN_SCORE:
+                continue  # Düşük score tekil sinyal — Layer 2 backtest: +2.3pp 5G WR
             if ticker in {t for t, _, _, _ in tier2}:
                 continue
             tag = _LIST_SHORT[list_name]
@@ -1382,7 +1403,7 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
                 streak = s.get('streak', 0)
                 vol = s.get('volume_ratio', 0)
                 yab = s.get('yabanci_degisim', 0)
-                kilitli = "🔒 KİLİTLİ" if skor >= 50 and vol < 1.0 else ""
+                kilitli = "🔒 KİLİTLİ" if skor >= 50 else ""
                 yab_str = f" yab={yab:+.2f}%" if yab else ""
                 data_context.append(
                     f"  {s['ticker']}: skor={skor} streak={streak} vol={vol:.1f}x{yab_str} {kilitli}")
