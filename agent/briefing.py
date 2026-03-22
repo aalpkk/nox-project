@@ -12,6 +12,8 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 
+import pandas as pd
+
 # Proje kökünü path'e ekle
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -39,19 +41,476 @@ from core.reports import send_telegram, push_html_to_github
 
 _TZ_TR = timezone(timedelta(hours=3))
 
-# ── Portföy + Günlük Input ──
-_AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ═══════════════════════════════════════════
+# ML SCORING OVERLAY v2 (3-Katmanlı, Feature flag: ML_SCORING_ENABLED)
+# ═══════════════════════════════════════════
 
-def _load_portfolio():
-    """agent/portfolio.json'dan portföy bilgisi yükle."""
-    path = os.path.join(_AGENT_DIR, 'portfolio.json')
+def _fetch_yf_price_data(tickers):
+    """yfinance ile fiyat verisi çek — ML ve SBT ortak kullanım.
+
+    Returns: (price_data: dict, xu_df: DataFrame or None)
+    """
+    import yfinance as yf
+
+    yf_syms = [f"{t}.IS" for t in tickers]
+    price_data = {}
+    raw = yf.download(" ".join(yf_syms), period="1y",
+                      progress=False, auto_adjust=True,
+                      group_by='ticker', threads=True)
+    if not raw.empty:
+        for t, yf_t in zip(tickers, yf_syms):
+            try:
+                if len(yf_syms) == 1:
+                    df = raw.copy()
+                elif isinstance(raw.columns, pd.MultiIndex):
+                    level_0 = raw.columns.get_level_values(0).unique().tolist()
+                    level_1 = raw.columns.get_level_values(1).unique().tolist()
+                    price_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
+                    if any(v in price_cols for v in level_0):
+                        key = yf_t if yf_t in level_1 else t
+                        df = raw.xs(key, level=1, axis=1).copy()
+                    else:
+                        key = yf_t if yf_t in level_0 else t
+                        df = raw[key].copy()
+                else:
+                    continue
+
+                col_map = {}
+                for col in df.columns:
+                    cs = str(col).strip().lower()
+                    if cs in ('close', 'adj close'):
+                        col_map[col] = 'Close'
+                    elif cs == 'open':
+                        col_map[col] = 'Open'
+                    elif cs == 'high':
+                        col_map[col] = 'High'
+                    elif cs == 'low':
+                        col_map[col] = 'Low'
+                    elif cs == 'volume':
+                        col_map[col] = 'Volume'
+                if col_map:
+                    df = df.rename(columns=col_map)
+                df = df.dropna(how='all')
+                if len(df) >= 80 and 'Close' in df.columns:
+                    price_data[t] = df
+            except Exception:
+                continue
+
+    # XU100 benchmark
+    xu_df = None
     try:
+        xu = yf.download("XU100.IS", period="1y", progress=False, auto_adjust=True)
+        if isinstance(xu.columns, pd.MultiIndex):
+            xu.columns = xu.columns.get_level_values(0)
+        col_map = {}
+        for col in xu.columns:
+            cs = str(col).strip().lower()
+            if cs in ('close', 'adj close'):
+                col_map[col] = 'Close'
+        if col_map:
+            xu = xu.rename(columns=col_map)
+        if not xu.empty and 'Close' in xu.columns:
+            xu_df = xu
+    except Exception:
+        pass
+
+    return price_data, xu_df
+
+
+def _fetch_sbt_data():
+    """SBT (Smart Breakout Targets) verisini GH Pages'ten çek.
+
+    Returns: {ticker: {'ml_prob': float, 'ml_bucket': str, 'ml_gate': bool}} veya {}
+    """
+    import requests
+    from html.parser import HTMLParser
+
+    bist_base = os.environ.get("BIST_PAGES_BASE_URL",
+                                "https://aalpkk.github.io/bist-signals").rstrip("/")
+    url = f"{bist_base}/smart_breakout.html"
+
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        return _parse_sbt_html(resp.text)
+    except Exception:
+        return {}
+
+
+class _SBTTableParser:
+    """SBT HTML tablosundan ticker + ML prob + bucket parse eder."""
+
+    def __init__(self):
+        from html.parser import HTMLParser
+        self._parser_cls = HTMLParser
+
+    @staticmethod
+    def parse(html_text):
+        """HTML'den SBT verisi çıkar.
+
+        SBT HTML'de const D formatı veya tablo olabilir.
+        Returns: {ticker: {'ml_prob': float, 'ml_bucket': str, 'ml_gate': bool}}
+        """
         import json
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, ValueError):
+        import re
+
+        result = {}
+
+        # Önce const D JSON formatını dene
+        m = re.search(r'const\s+D\s*=\s*(\{.+?\})\s*;', html_text, re.DOTALL)
+        if m:
+            try:
+                raw = m.group(1)
+                raw = re.sub(r',\s*([\]}])', r'\1', raw)
+                d = json.loads(raw)
+                # D.rows formatı
+                for row in d.get('rows', []):
+                    ticker = row.get('ticker', '')
+                    if not ticker:
+                        continue
+                    ml_prob = row.get('ml_prob', row.get('prob', 0))
+                    ml_bucket = row.get('ml_bucket', row.get('bucket', ''))
+                    result[ticker] = {
+                        'ml_prob': float(ml_prob) if ml_prob else 0.0,
+                        'ml_bucket': str(ml_bucket),
+                        'ml_gate': str(ml_bucket) in ('A+', 'A'),
+                    }
+                return result
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Fallback: data-ticker table parse
+        from html.parser import HTMLParser
+
+        class _Parser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.rows = []
+                self._current_ticker = None
+                self._cells = []
+                self._in_td = False
+                self._td_text = ""
+                self._in_tbody = False
+
+            def handle_starttag(self, tag, attrs):
+                attrs_d = dict(attrs)
+                if tag == 'tbody':
+                    self._in_tbody = True
+                elif tag == 'tr' and self._in_tbody:
+                    t = attrs_d.get('data-ticker')
+                    if t:
+                        self._current_ticker = t
+                        self._cells = []
+                elif tag == 'td' and self._current_ticker is not None:
+                    self._in_td = True
+                    self._td_text = ""
+
+            def handle_endtag(self, tag):
+                if tag == 'tbody':
+                    self._in_tbody = False
+                elif tag == 'td' and self._in_td:
+                    self._in_td = False
+                    self._cells.append(self._td_text.strip())
+                elif tag == 'tr' and self._current_ticker is not None:
+                    if self._cells:
+                        self.rows.append((self._current_ticker, self._cells))
+                    self._current_ticker = None
+
+            def handle_data(self, data):
+                if self._in_td:
+                    self._td_text += data
+
+        parser = _Parser()
+        parser.feed(html_text)
+        for ticker, cells in parser.rows:
+            # Hücre yapısı değişken — bucket ve prob bulmaya çalış
+            ml_prob = 0.0
+            ml_bucket = ''
+            for cell in cells:
+                cell_s = cell.strip()
+                if cell_s in ('A+', 'A', 'B', 'C', 'X'):
+                    ml_bucket = cell_s
+                try:
+                    v = float(cell_s.replace('%', ''))
+                    if 0 < v <= 1:
+                        ml_prob = v
+                    elif 1 < v <= 100:
+                        ml_prob = v / 100
+                except ValueError:
+                    pass
+            if ml_bucket or ml_prob > 0:
+                result[ticker] = {
+                    'ml_prob': ml_prob,
+                    'ml_bucket': ml_bucket,
+                    'ml_gate': ml_bucket in ('A+', 'A'),
+                }
+
+        return result
+
+
+def _parse_sbt_html(html_text):
+    """SBT HTML'den veri çıkar. Wrapper for _SBTTableParser."""
+    return _SBTTableParser.parse(html_text)
+
+
+def _calc_gate_penalty(ticker, sig, sbt_data):
+    """SBT gate penalty hesapla.
+
+    Args:
+        ticker: str
+        sig: dict — sinyal bilgisi
+        sbt_data: dict — _fetch_sbt_data() sonucu
+
+    Returns: int — 0=OK, 1=soft gate, 99=hard gate (eleme)
+    """
+    sbt = sbt_data.get(ticker)
+    if not sbt:
+        return 0  # SBT verisi yok — ceza yok
+
+    bucket = sbt.get('ml_bucket', '')
+
+    # Hard gate: SBT X bucket + EMA50 altında (proxy: screener quality düşük)
+    if bucket == 'X':
+        # EMA50 altı proxy: quality düşükse veya OE yüksekse
+        oe = sig.get('oe', 0) if isinstance(sig, dict) else 0
+        quality = sig.get('quality', 0) if isinstance(sig, dict) else 0
+        oe_val = int(oe) if oe != '' and oe is not None else 0
+        q_val = int(quality) if quality else 0
+        if oe_val >= 3 or q_val < 40:
+            return 99  # Hard gate — eleme
+        return 1  # Soft gate — uyarı
+
+    if bucket in ('C', 'B'):
+        return 0  # OK — ceza yok
+
+    return 0  # A, A+ — OK
+
+
+def _ml_overlay_v2(lists_dict, latest_signals):
+    """3-Katmanlı ML overlay: dual skor, composite scoring, SBT gate, rerank.
+
+    Katman A: Rule engine (mevcut _compute_4_lists) — aday üretir
+    Katman B: Shortlist ML — dual skor (1g+3g), reranker
+    Katman C: Scanner-specific ML — SBT bucket/gate
+
+    Feature flag: ML_SCORING_ENABLED env var kontrol edilir.
+    Hata durumunda sessiz fail — mevcut sistemi bozmaz.
+
+    Returns: ml_scores dict veya None
+    """
+    if not os.getenv('ML_SCORING_ENABLED', '').lower() in ('1', 'true', 'yes'):
         return None
+
+    try:
+        from ml.scorer import (MLScorer, ml_badge_dual, calc_ml_rerank_bonus,
+                                calc_source_quality_bonus, calc_overlap_bonus)
+
+        print("\n🤖 ML skorlama v2 yapılıyor...")
+        scorer = MLScorer()
+
+        # ── Step 1: Ticker toplama ──
+        all_tickers = set()
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt'):
+            for item in lists_dict.get(key, []):
+                all_tickers.add(item[0])
+
+        if not all_tickers:
+            return None
+
+        tickers = sorted(all_tickers)
+        print(f"  [ML] {len(tickers)} ticker için fiyat verisi çekiliyor...")
+
+        # ── Step 2-3: Fiyat verisi + XU100 ──
+        price_data, xu_df = _fetch_yf_price_data(tickers)
+
+        # ── Step 4: Dual ML skorla ──
+        if not scorer.loaded:
+            print("  [ML] Model yüklenemedi — atlanıyor")
+            ml_scores = {}
+        else:
+            ml_scores = scorer.score_tickers_dual(tickers, price_data, xu_df)
+            print(f"  [ML] {len(ml_scores)}/{len(tickers)} ticker skorlandı (dual)")
+
+        # ── Step 5: SBT verisi (opportunistic, hata={}) ──
+        print("  [ML] SBT verisi çekiliyor...")
+        sbt_data = _fetch_sbt_data()
+        if sbt_data:
+            print(f"  [ML] SBT: {len(sbt_data)} hisse")
+        else:
+            print("  [ML] SBT verisi yok — atlanıyor")
+
+        # ── Step 6: Pre-ML sıralama snapshot ──
+        _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT'}
+        pre_ml_ranks = {}  # {key: {ticker: rank_index}}
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt'):
+            items = lists_dict.get(key, [])
+            pre_ml_ranks[key] = {item[0]: i for i, item in enumerate(items)}
+
+        # Ticker → kaç listede mevcut (Tier1 dahil değil — tier1 zaten overlap)
+        ticker_source_count = {}
+        for key in ('alsat', 'tavan', 'nw', 'rt'):
+            for item in lists_dict.get(key, []):
+                ticker_source_count.setdefault(item[0], set()).add(key)
+        for t, sources in ticker_source_count.items():
+            ticker_source_count[t] = len(sources)
+
+        # ── Step 7-8: Composite score + ML enjeksiyon ──
+        ml_filtered = []   # Hard gate / weak filter tarafından elenen
+        rank_changes = []  # Rerank sonrası sıra değişiklikleri
+
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt'):
+            items = lists_dict.get(key, [])
+            for i, (ticker, score, reasons, sig_or_meta) in enumerate(items):
+                ml_data = ml_scores.get(ticker)
+
+                # ML skorları hesapla (dual)
+                ml_short = None  # 1g
+                ml_swing = None  # 3g
+
+                if ml_data:
+                    ml_short = ml_data.get('ml_score_short')
+                    ml_swing = ml_data.get('ml_score_swing')
+
+                    # ── Step 7: Model D — TVN conditional blend (her iki horizon) ──
+                    is_tvn = key == 'tavan' or (isinstance(sig_or_meta, dict)
+                             and sig_or_meta.get('screener') == 'tavan')
+                    if is_tvn:
+                        if ml_data.get('ml_b_1g') is not None and ml_data.get('ml_a_1g') is not None:
+                            ml_short = 0.65 * ml_data['ml_b_1g'] + 0.35 * ml_data['ml_a_1g']
+                        if ml_data.get('ml_b_3g') is not None and ml_data.get('ml_a_3g') is not None:
+                            ml_swing = 0.65 * ml_data['ml_b_3g'] + 0.35 * ml_data['ml_a_3g']
+
+                    # Sig'e dual ML skorları enjekte et
+                    if isinstance(sig_or_meta, dict):
+                        sig_or_meta['ml_score'] = round(ml_short, 3) if ml_short is not None else None
+                        sig_or_meta['ml_score_short'] = round(ml_short, 3) if ml_short is not None else None
+                        sig_or_meta['ml_score_swing'] = round(ml_swing, 3) if ml_swing is not None else None
+
+                # SBT verisi enjekte et
+                sbt_info = sbt_data.get(ticker, {})
+                sbt_bucket = sbt_info.get('ml_bucket', '')
+                if isinstance(sig_or_meta, dict):
+                    if sbt_bucket:
+                        sig_or_meta['sbt_bucket'] = sbt_bucket
+                    sig_or_meta['_rule_score'] = score  # Orijinal rule score sakla
+
+                # ── Step 8: Composite score hesapla ──
+                # Tier1 için overlap_bonus=0 (zaten overlap quality baked-in)
+                is_tier1 = key == 'tier1'
+                src_count = ticker_source_count.get(ticker, 1)
+                overlap_b = 0 if is_tier1 else calc_overlap_bonus(src_count)
+                ml_rerank = calc_ml_rerank_bonus(ml_short)
+                sq_bonus = calc_source_quality_bonus(sbt_bucket)
+                gate_pen = _calc_gate_penalty(ticker, sig_or_meta if isinstance(sig_or_meta, dict) else {}, sbt_data)
+
+                # Gate penalty — hard gate (99) filtre olarak işaretlenir
+                if isinstance(sig_or_meta, dict):
+                    sig_or_meta['gate_penalty'] = gate_pen
+
+                if gate_pen >= 99:
+                    # Hard gate — eleme
+                    final_score = -9999
+                else:
+                    final_score = score + overlap_b + ml_rerank + sq_bonus - gate_pen
+
+                # Tuple'ı güncelle (score alanı composite olur)
+                items[i] = (ticker, final_score, reasons, sig_or_meta)
+
+                # Dual badge reason'a ekle
+                badge = ml_badge_dual(ml_short, ml_swing)
+                if badge and isinstance(reasons, list):
+                    reasons.append(badge)
+
+                # SBT bucket tag ekle
+                if sbt_bucket and isinstance(reasons, list):
+                    reasons.append(f"SBT:{sbt_bucket}")
+
+        # ── Step 9: Re-sort + rank delta ──
+        for key in ('alsat', 'tavan', 'nw', 'rt'):
+            items = lists_dict.get(key, [])
+            items.sort(key=lambda x: -x[1])
+            # Rank delta hesapla
+            for new_rank, (ticker, _, _, _) in enumerate(items):
+                old_rank = pre_ml_ranks.get(key, {}).get(ticker, new_rank)
+                delta = old_rank - new_rank  # Pozitif = yükseldi
+                if abs(delta) >= 2:
+                    tag = _LIST_SHORT.get(key, key)
+                    rank_changes.append({
+                        'ticker': ticker,
+                        'list': key,
+                        'list_tag': tag,
+                        'old_rank': old_rank + 1,
+                        'new_rank': new_rank + 1,
+                        'delta': delta,
+                    })
+
+        # Tier1/Tier2 de re-sort
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b'):
+            items = lists_dict.get(key, [])
+            items.sort(key=lambda x: -x[1])
+
+        # ── Step 10: Decision tree filtresi ──
+        for key in ('alsat', 'tavan', 'nw', 'rt', 'tier2', 'tier2a', 'tier2b'):
+            items = lists_dict.get(key, [])
+            kept = []
+            for ticker, final_score, reasons, sig_or_meta in items:
+                gate_pen = 0
+                ml_s = None
+                src_cnt = ticker_source_count.get(ticker, 1)
+                if isinstance(sig_or_meta, dict):
+                    gate_pen = sig_or_meta.get('gate_penalty', 0)
+                    ml_s = sig_or_meta.get('ml_score_short')
+
+                # Hard gate eleme
+                if gate_pen >= 99:
+                    ml_filtered.append({
+                        'ticker': ticker,
+                        'reason': 'SBT X + zayıf',
+                        'rule_score': sig_or_meta.get('_rule_score', final_score) if isinstance(sig_or_meta, dict) else final_score,
+                        'list': key,
+                    })
+                    continue
+
+                # Single source + ml<0.50 + zayıf kaynak → eleme
+                if src_cnt <= 1 and ml_s is not None and ml_s < 0.50:
+                    sbt_b = sig_or_meta.get('sbt_bucket', '') if isinstance(sig_or_meta, dict) else ''
+                    if sbt_b in ('C', 'X', ''):
+                        ml_filtered.append({
+                            'ticker': ticker,
+                            'reason': f'tek kaynak + ML<0.50 ({int(ml_s*100)})',
+                            'rule_score': sig_or_meta.get('_rule_score', final_score) if isinstance(sig_or_meta, dict) else final_score,
+                            'list': key,
+                        })
+                        continue
+
+                kept.append((ticker, final_score, reasons, sig_or_meta))
+            lists_dict[key] = kept
+
+        # Tier2 = tier2a + tier2b (güncellenmiş)
+        lists_dict['tier2'] = lists_dict.get('tier2a', []) + lists_dict.get('tier2b', [])
+
+        # Store extra data for message building
+        lists_dict['_ml_filtered'] = ml_filtered
+        lists_dict['_ml_rank_changes'] = rank_changes
+        lists_dict['_sbt_data'] = sbt_data
+
+        n_filtered = len(ml_filtered)
+        n_rank_changes = len(rank_changes)
+        print(f"  [ML] Composite: {n_filtered} elendi, {n_rank_changes} rerank değişimi")
+
+        return ml_scores
+
+    except Exception as e:
+        import traceback
+        print(f"  [ML] Hata: {e} — atlanıyor")
+        traceback.print_exc()
+        return None
+
+
+# ── Günlük Input ──
+_AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _load_daily_input():
@@ -145,8 +604,7 @@ def _get_sm_info(ticker, ice_results, sms_scores):
     return sm_val, sm_icon_str, mult_tag
 
 
-def _compute_4_lists(latest_signals, confluence_results=None,
-                     sms_scores=None, ice_results=None):
+def _compute_4_lists(latest_signals, confluence_results=None):
     """4 kaynak bazlı öncelikli hisse listesi oluştur.
 
     Returns: dict with keys: 'alsat', 'tavan', 'nw', 'rt', 'tier1', 'tier2'
@@ -234,6 +692,15 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         if not passes:
             continue
 
+        # OE cezası — düşük OE daha kaliteli (LILAK OE=0 > REEDR OE=5)
+        oe_val = int(oe) if oe != '' else 0
+        if oe_val >= 5:
+            score -= 30  # Aşırı uzamış — pullback bekle
+        elif oe_val >= 4:
+            score -= 15  # Geç kalma riski
+        elif oe_val >= 3:
+            score -= 5
+
         # Decay etiketi: DONUS=swing, diğer=3G hold
         decay = '🔄SW' if sig_type in ('DONUS', 'DÖNÜŞ') else '⏳3G'
         reasons = [decay, tier_label, f"Q={q}", f"RS={rs:.0f}", f"MACD={'+'if macd>0 else ''}{macd:.4f}"]
@@ -241,14 +708,6 @@ def _compute_4_lists(latest_signals, confluence_results=None,
             reasons.append(f"OE={oe}")
         if rr != '':
             reasons.append(f"R:R={rr}")
-
-        # ICE/SMS
-        sm_val, sm_ic, sm_mult = _get_sm_info(s['ticker'], ice_results, sms_scores)
-        if sm_val is not None:
-            if sm_val >= 45:
-                score += 5
-            elif sm_val < 15:
-                reasons.append("⚠️SM")
 
         alsat_items.append((s['ticker'], score, reasons, s))
 
@@ -300,6 +759,14 @@ def _compute_4_lists(latest_signals, confluence_results=None,
             if cmf is not None and cmf > 0:
                 score += int(cmf * 100)
 
+        # Vol cezası — 1G odaklı, yüksek hacim = el değiştirme riski
+        if vol > 20:
+            score -= 200  # Premium dışı — kovalanmaz
+        elif vol > 10:
+            score -= 100  # Sert ceza — sert el değiştirme
+        elif vol > 5:
+            score -= 30   # Orta ceza
+
         reasons = ['⚡1G']  # Tavan = fast decay (intraday çıkış şart)
         if is_kandidat:
             reasons.append(f"KND skor:{skor}")
@@ -308,20 +775,14 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         else:
             reasons.append(f"skor:{skor}")
         reasons.append(f"vol:{vol:.1f}x")
+        if vol > 10:
+            reasons.append("⚠️KOVALANMAZ")
         if seri > 1:
             reasons.append(f"seri:{seri}")
         if rs != 0:
             reasons.append(f"RS{rs:+.0f}%")
         if cmf is not None:
             reasons.append(f"CMF{cmf:+.2f}")
-
-        # ICE/SMS
-        sm_val, sm_ic, sm_mult = _get_sm_info(ticker, ice_results, sms_scores)
-        if sm_val is not None:
-            if sm_val >= 45:
-                score += 15
-            elif sm_val < 15:
-                reasons.append("⚠️SM")
 
         tavan_items.append((ticker, score, reasons, s))
 
@@ -367,14 +828,6 @@ def _compute_4_lists(latest_signals, confluence_results=None,
             reasons.append(f"RSI={rsi:.0f}")
         if rs is not None:
             reasons.append(f"RS={rs:.1f}")
-
-        # ICE/SMS
-        sm_val, sm_ic, sm_mult = _get_sm_info(s['ticker'], ice_results, sms_scores)
-        if sm_val is not None:
-            if sm_val >= 45:
-                score += 5
-            elif sm_val < 15:
-                reasons.append("⚠️SM")
 
         nw_items.append((s['ticker'], score, reasons, s))
 
@@ -442,14 +895,6 @@ def _compute_4_lists(latest_signals, confluence_results=None,
             reasons.append(f"OE={oe}")
         if adx:
             reasons.append(f"ADX={adx:.0f}")
-
-        # ICE/SMS
-        sm_val, sm_ic, sm_mult = _get_sm_info(s['ticker'], ice_results, sms_scores)
-        if sm_val is not None:
-            if sm_val >= 45:
-                score += 10
-            elif sm_val < 15:
-                reasons.append("⚠️SM")
 
         rt_items.append((s['ticker'], score, reasons, s))
 
@@ -527,6 +972,11 @@ def _compute_4_lists(latest_signals, confluence_results=None,
                         quality += 15
                     else:
                         quality += 8
+                    # Vol cezası overlap kalitesine de yansısın
+                    if vol > 20:
+                        quality -= 20  # Aşırı hacim — kovalanmaz
+                    elif vol > 10:
+                        quality -= 10  # Sert el değiştirme
                     # CMF cross-ref (tavan sinyalinde RT CMF varsa)
                     rt_s = rt_map.get(ticker)
                     if rt_s:
@@ -543,36 +993,94 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         has_technical = bool({'alsat', 'tavan'} & set(in_lists))
         has_structural = bool({'nw', 'rt'} & set(in_lists))
         if has_technical and has_structural:
-            # AS+RT saf overlap cezası — backtest: 1G/3G WR %48.6 (session_20260321)
-            if set(in_lists) == {'alsat', 'rt'}:
-                quality -= 25  # AS+RT penalty
-            else:
-                quality += 15  # Teknik + yapısal çakışma bonusu
+            quality += 15  # Teknik + yapısal çakışma bonusu
         return quality, in_lists
+
+    # Premium overlap ikililer — backtest kanıtlı
+    _PREMIUM_OVERLAPS = [
+        {'rt', 'tavan'}, {'nw', 'tavan'}, {'nw', 'rt'}, {'alsat', 'nw'},
+    ]
 
     tier1 = []
     for ticker, lists in ticker_list_count.items():
         if len(lists) < 2:
             continue
         quality, in_lists = _overlap_quality(ticker)
+        ls = set(in_lists)
+        # Saf AS+RT 2-li çakışma → Tier 1'e ekleme (WR %37-48, session_20260321)
+        if ls == {'alsat', 'rt'}:
+            continue
+
+        # OE>=4 → Tier 1 yasağı — AMA kilitli tavan (skor≥50) için OE yarı ağırlık
+        # Tavan serisinde OE tek başına güvenilir uzama göstergesi değil;
+        # kilitli veya yakın tavanlarda ağırlığı düşürülmeli
+        has_high_oe = False
+        is_kilitli_tavan = False
+        tavan_vol = 0
+        for l in in_lists:
+            for t, sc, reas, sig in list_data[l]:
+                if t == ticker:
+                    if l == 'tavan':
+                        skor_t = sig.get('skor', 0) or 0
+                        if skor_t >= 50:
+                            is_kilitli_tavan = True
+                        tavan_vol = sig.get('volume_ratio', 0) or 0
+                    else:
+                        oe_raw = sig.get('oe', 0)
+                        if oe_raw != '' and oe_raw is not None and int(oe_raw or 0) >= 4:
+                            has_high_oe = True
+                    break
+        if has_high_oe:
+            if is_kilitli_tavan and tavan_vol <= 3:
+                pass  # Kilitli tavan + düşük vol → OE eleme yapma (sadece uyarı)
+            elif is_kilitli_tavan:
+                # Kilitli ama yüksek vol → OE=5+ hâlâ engeller
+                # Sadece en aşırı OE (5+) kontrol et
+                oe_max = 0
+                for l in in_lists:
+                    for t, sc, reas, sig in list_data[l]:
+                        if t == ticker and l != 'tavan':
+                            oe_raw = sig.get('oe', 0)
+                            if oe_raw != '' and oe_raw is not None:
+                                oe_max = max(oe_max, int(oe_raw or 0))
+                            break
+                if oe_max >= 5:
+                    continue  # Kilitli tavan bile olsa OE=5+ → yasak
+            else:
+                continue  # Normal sinyal — OE>=4 Tier 1 yasağı
+
+        # Horizon mismatch tespiti: TVN=⚡1G, AS/RT=⏳3G/🔄SW
+        # Farklı horizon'lu overlap → tactical (premium değil)
+        _1G_LISTS = {'tavan', 'nw'}      # ⚡1G horizon
+        _SWING_LISTS = {'alsat', 'rt'}   # ⏳3G / 🔄SW horizon
+        has_1g = bool(ls & _1G_LISTS)
+        has_swing = bool(ls & _SWING_LISTS)
+        horizon_mismatch = has_1g and has_swing and len(in_lists) == 2
+        # AS+TVN saf 2-li her zaman tactical (horizon mismatch + zayıf overlap)
+        is_tactical = horizon_mismatch and 'tavan' in ls
+        if is_tactical:
+            quality -= 20  # Tactical ceza — premium altında sırala
+
         # Kalite eşiği: sadece anlamlı çakışmalar
-        # AS+TVN DÖNÜŞ düşük kalite = gürültü, minimum 40p gerekli
         if quality < 40:
             continue
+
         list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
-        # Overlap decay etiketi
-        ls = set(in_lists)
+        # Overlap decay etiketi — horizon mismatch varsa 1G'ye düşür
         if len(in_lists) >= 3:
             ol_decay = '⚡1G'  # 3+ liste = FAST_DECAY
-        elif ls in ({'rt', 'tavan'}, {'nw', 'tavan'}, {'nw', 'rt'}, {'alsat', 'nw'}):
+        elif horizon_mismatch:
+            ol_decay = '⚡1G'  # Horizon mismatch = kısa horizon kazanır
+        elif ls in _PREMIUM_OVERLAPS:
             ol_decay = '⏳3G'  # Premium ikililer = HOLD_TO_3D
         else:
-            ol_decay = '⏳3G'
+            ol_decay = '⚡1G'  # Bilinmeyen = kısa horizon
         # Teknik+yapısal çakışma etiketi
-        has_tech = bool({'alsat', 'tavan'} & set(in_lists))
-        has_struct = bool({'nw', 'rt'} & set(in_lists))
+        has_tech = bool({'alsat', 'tavan'} & ls)
+        has_struct = bool({'nw', 'rt'} & ls)
         ty_tag = " 🔀T+Y" if has_tech and has_struct else ""
-        reasons_all = [f"{ol_decay} ⚡{list_tags} [{quality}p]{ty_tag}"]
+        tactical_tag = " 🔶TAKTİK" if is_tactical else ""
+        reasons_all = [f"{ol_decay} ⚡{list_tags} [{quality}p]{ty_tag}{tactical_tag}"]
         for l in sorted(in_lists):
             for t, sc, reas, sig in list_data[l]:
                 if t == ticker:
@@ -582,6 +1090,7 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         tier1.append((ticker, quality, reasons_all, {
             'overlap_count': len(in_lists),
             'in_lists': in_lists,
+            'tactical': is_tactical,
         }))
 
     # ── Gevşek RT çakışma: güçlü sinyal + RT badge (F serbest) ──
@@ -628,8 +1137,14 @@ def _compute_4_lists(latest_signals, confluence_results=None,
         entry_score = int(s.get('quality', 0) or 0)
         cmf = s.get('cmf', 0) or 0
 
-        # Kalite skoru
+        # Saf AS+RT gevşek çakışma → Tier 1'e ekleme (WR %37-48)
+        # Sadece 3+ liste overlap'ta AS+RT gevşek izin verilir
         src_name, src_reas, src_sig = strong_tickers[ticker]
+        if src_name == 'alsat' and ticker not in {t for t, _, _, _ in nw_items} \
+                and ticker not in {t for t, _, _, _ in tavan_items}:
+            continue
+
+        # Kalite skoru
         quality, _ = _overlap_quality(ticker)  # Base quality from lists
         # RT badge kalitesi ekle (gevşek giriş olduğu için biraz düşür)
         rt_quality = 20  # Base for relaxed badge
@@ -671,32 +1186,46 @@ def _compute_4_lists(latest_signals, confluence_results=None,
     tier1.sort(key=lambda x: -x[1])
 
     # ── Tier 2: Her listeden en kaliteli tekil hisseler ──
-    # Score >= 100 soft gate: tekil/Tier2 için düşük kalite kuyrukları budanır
-    # Tier 1 (overlap) muaf — düşük score'lu sinyal kaliteli overlap içinde işe yarayabilir
+    # Score >= 100 soft gate, max 3 per list
+    # Horizon'a göre 2 alt gruba ayrılır: tier2a (⚡1G tactical), tier2b (⏳3G/🔄SW swing-lite)
     _TIER2_MIN_SCORE = 100
+    _TIER2_PER_LIST = 3
     tier1_tickers = {t for t, _, _, _ in tier1}
-    tier2 = []
-    for list_name in ('nw', 'rt', 'alsat', 'tavan'):  # NW/RT önce (daha anlamlı)
+    tier2_all = []
+    for list_name in ('nw', 'rt', 'alsat', 'tavan'):
         items = list_data[list_name]
         count = 0
         for ticker, score, reasons, sig in items:
             if ticker in tier1_tickers:
                 continue
             if score < _TIER2_MIN_SCORE:
-                continue  # Düşük score tekil sinyal — Layer 2 backtest: +2.3pp 5G WR
-            if ticker in {t for t, _, _, _ in tier2}:
+                continue
+            if ticker in {t for t, _, _, _ in tier2_all}:
                 continue
             tag = _LIST_SHORT[list_name]
-            tier2.append((ticker, score, [f"[{tag}]"] + reasons, sig))
+            tier2_all.append((ticker, score, [f"[{tag}]"] + reasons, sig))
             count += 1
-            if count >= 5:
+            if count >= _TIER2_PER_LIST:
                 break
-    # Tier 2'yi liste etiketine göre grupla ama sıra koru
-    # (NW → RT → AS → TVN sırasıyla zaten eklenmiş)
+
+    # Horizon split: decay etiketi ilk reasons'tan çek
+    tier2a = []  # ⚡1G — tactical (tavan, NW daily)
+    tier2b = []  # ⏳3G / 🔄SW — swing-lite (RT, AS)
+    for item in tier2_all:
+        _, _, reas, _ = item
+        # İlk non-tag reason'da decay etiketini bul
+        decay_1g = any('⚡1G' in r for r in reas)
+        if decay_1g:
+            tier2a.append(item)
+        else:
+            tier2b.append(item)
 
     result = dict(list_data)
     result['tier1'] = tier1
-    result['tier2'] = tier2
+    result['tier2a'] = tier2a
+    result['tier2b'] = tier2b
+    # Backward compat: birleşik tier2 (toplam)
+    result['tier2'] = tier2a + tier2b
     return result
 
 
@@ -826,30 +1355,55 @@ def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results=None)
     return None
 
 
-def _build_shortlist_message(lists_dict, portfolio=None,
+def _build_shortlist_message(lists_dict,
                              sms_scores=None, takas_data=None, mkk_data=None,
                              ice_results=None):
     """4 kaynak bazlı shortlist'i Telegram mesajı olarak formatla.
+    3-Katmanlı ML: dual badge, rerank bölümü, SBT taktik, filtre bölümü.
     Her hissenin altında kompakt SM (takas+MKK) satırı gösterir."""
     now = datetime.now(_TZ_TR)
-    held = set()
-    watched = set()
-    if portfolio:
-        held = {h['ticker'] for h in portfolio.get('holdings', [])}
-        watched = set(portfolio.get('watchlist', []))
-
-    def _tag(ticker):
-        if ticker in held:
-            return " 📌PF"
-        elif ticker in watched:
-            return " 👁️İL"
-        return ""
 
     has_sm = bool(takas_data or mkk_data or ice_results)
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT'}
 
     lines = [
         f"<b>⬡ NOX Ön Analiz — {now.strftime('%d.%m.%Y %H:%M')}</b>",
     ]
+
+    def _sig_line(ticker, reasons, sig):
+        """Sinyal satırını formatla — SBT + dual ML + gate bilgisi."""
+        # Kaynak tag'leri topla
+        source_tags = []
+        sbt_bucket = ''
+        gate_tag = ''
+        ml_badge = ''
+        other_reasons = []
+
+        for r in reasons:
+            if r.startswith('SBT:'):
+                sbt_bucket = r.split(':')[1]
+            elif r.startswith('🤖'):
+                ml_badge = r
+            elif 'soft gate' in r.lower():
+                gate_tag = 'soft gate'
+            else:
+                other_reasons.append(r)
+
+        # Kaynak bilgisi
+        parts = [f"<b>{ticker}</b>"]
+        reason_compact = " ".join(other_reasons[:4])
+        if reason_compact:
+            parts.append(f"— {reason_compact}")
+        if sbt_bucket:
+            parts.append(f"SBT({sbt_bucket})")
+        if ml_badge:
+            parts.append(f"| {ml_badge}")
+        if gate_tag:
+            parts.append(f"| {gate_tag}")
+
+        return " ".join(parts)
+
+    # ── A. ML Destekli Ana Shortlist ──
 
     # ── 1. AL/SAT Tarama ──
     alsat_list = lists_dict.get('alsat', [])
@@ -858,8 +1412,7 @@ def _build_shortlist_message(lists_dict, portfolio=None,
         lines.append(f"📋 <b>1. AL/SAT Tarama</b> (Q skoru sıralı, {len(alsat_list)} sinyal)")
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(alsat_list[:8], 1):
-            reasons_str = " ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
@@ -872,8 +1425,7 @@ def _build_shortlist_message(lists_dict, portfolio=None,
         lines.append(f"🔺 <b>2. Tavan Tarayıcı</b> (skor/vol sıralı, {len(tavan_list)} hisse)")
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(tavan_list[:8], 1):
-            reasons_str = " ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
@@ -886,8 +1438,7 @@ def _build_shortlist_message(lists_dict, portfolio=None,
         lines.append(f"📊 <b>3. NW Pivot AL</b> (günlük gate açık, {len(nw_list)} sinyal)")
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(nw_list[:10], 1):
-            reasons_str = " ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
@@ -900,8 +1451,7 @@ def _build_shortlist_message(lists_dict, portfolio=None,
         lines.append(f"⚡ <b>4. Regime Transition</b> (F≥3 OE≤2, {len(rt_list)} sinyal)")
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(rt_list[:10], 1):
-            reasons_str = " ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
@@ -915,25 +1465,81 @@ def _build_shortlist_message(lists_dict, portfolio=None,
         lines.append("")
         for i, (ticker, score, reasons, _) in enumerate(tier1[:10], 1):
             reasons_str = " | ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+            lines.append(f"{i}. <b>{ticker}</b> {reasons_str}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
                     lines.append(sm_line)
 
-    # ── Tier 2: En Kaliteli Tekil ──
-    tier2 = lists_dict.get('tier2', [])
-    if tier2:
+    # ── Tier 2A: Tactical (⚡1G) ──
+    tier2a = lists_dict.get('tier2a', [])
+    if tier2a:
         lines.append("")
-        lines.append(f"⭐ <b>Tier 2 — Tekil Kalite</b> ({len(tier2)} hisse)")
+        lines.append(f"⚡ <b>Tier 2A — Tactical ⚡1G</b> ({len(tier2a)} hisse)")
         lines.append("")
-        for i, (ticker, score, reasons, _) in enumerate(tier2[:10], 1):
-            reasons_str = " ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b>{_tag(ticker)} {reasons_str}")
+        for i, (ticker, score, reasons, _) in enumerate(tier2a[:6], 1):
+            lines.append(f"{i}. {_sig_line(ticker, reasons, _)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
                 if sm_line:
                     lines.append(sm_line)
+
+    # ── Tier 2B: Swing-Lite (⏳3G/🔄SW) ──
+    tier2b = lists_dict.get('tier2b', [])
+    if tier2b:
+        lines.append("")
+        lines.append(f"⭐ <b>Tier 2B — Swing-Lite ⏳3G/🔄SW</b> ({len(tier2b)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons, _) in enumerate(tier2b[:6], 1):
+            lines.append(f"{i}. {_sig_line(ticker, reasons, _)}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
+
+    # ── B. ML Rerank Değişimi ──
+    rank_changes = lists_dict.get('_ml_rank_changes', [])
+    if rank_changes:
+        up_changes = [r for r in rank_changes if r['delta'] > 0]
+        down_changes = [r for r in rank_changes if r['delta'] < 0]
+        up_changes.sort(key=lambda x: -x['delta'])
+        down_changes.sort(key=lambda x: x['delta'])
+
+        lines.append("")
+        lines.append(f"🧠 <b>ML Rerank Değişimi</b>")
+        if up_changes:
+            lines.append("  ↑ Yükselenler:")
+            for r in up_changes[:5]:
+                lines.append(f"    <b>{r['ticker']}</b> [{r['list_tag']}] {r['old_rank']}→{r['new_rank']} (+{r['delta']})")
+        if down_changes:
+            lines.append("  ↓ Düşenler:")
+            for r in down_changes[:5]:
+                lines.append(f"    <b>{r['ticker']}</b> [{r['list_tag']}] {r['old_rank']}→{r['new_rank']} ({r['delta']})")
+
+    # ── C. Taktik Breakout ML (SBT A+/A items) ──
+    sbt_data = lists_dict.get('_sbt_data', {})
+    if sbt_data:
+        sbt_strong = [(t, info) for t, info in sbt_data.items()
+                       if info.get('ml_bucket') in ('A+', 'A')]
+        sbt_strong.sort(key=lambda x: -x[1].get('ml_prob', 0))
+        if sbt_strong:
+            lines.append("")
+            lines.append(f"🚀 <b>Taktik Breakout ML</b> (SBT A+/A, {len(sbt_strong)} hisse)")
+            lines.append("")
+            for t, info in sbt_strong[:8]:
+                prob = info.get('ml_prob', 0)
+                bucket = info.get('ml_bucket', '')
+                prob_pct = int(prob * 100) if prob else 0
+                lines.append(f"  <b>{t}</b> SBT:{bucket} ML%{prob_pct}")
+
+    # ── D. Filtreyle Elenenler ──
+    ml_filtered = lists_dict.get('_ml_filtered', [])
+    if ml_filtered:
+        lines.append("")
+        lines.append(f"⚠️ <b>Filtreyle Elenenler</b> ({len(ml_filtered)} hisse — rule güçlü ama ML zayıf)")
+        for f in ml_filtered[:6]:
+            tag = _LIST_SHORT.get(f['list'], f['list'])
+            lines.append(f"  <b>{f['ticker']}</b> [{tag}] rule:{f['rule_score']}p — {f['reason']}")
 
     return "\n".join(lines)
 
@@ -998,10 +1604,12 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     # 2b. SMS hesapla (takas verisi varsa)
     sms_scores = None
     takas_data_map = None
+    takas_extracted_at = None
     try:
         takas_json_sms = fetch_takas_data()
         if takas_json_sms and takas_json_sms.get('data'):
             takas_data_map = takas_json_sms['data']
+            takas_extracted_at = takas_json_sms.get('extracted_at')
             sms_scores = calc_batch_sms(None, takas_data_map, mkk_data_map)
             guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
             dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
@@ -1048,9 +1656,10 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     # ── SHORTLIST MODE: sadece öncelikli hisse listesi oluştur ──
     if shortlist_only:
         print("\n📋 4 kaynak bazlı öncelikli liste oluşturuluyor...")
-        lists_dict = _compute_4_lists(
-            latest_signals, confluence_results, sms_scores, ice_results)
-        portfolio = _load_portfolio()
+        lists_dict = _compute_4_lists(latest_signals, confluence_results)
+
+        # ML overlay v2 (feature flag kontrollü, 3-katmanlı)
+        _ml_overlay_v2(lists_dict, latest_signals)
 
         _LIST_LABELS = [
             ('alsat', '📋 AL/SAT Tarama'),
@@ -1071,21 +1680,27 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:6])}")
             print()
 
-        # Tier 1 + Tier 2
+        # Tier 1 + Tier 2A/2B
         tier1 = lists_dict.get('tier1', [])
-        tier2 = lists_dict.get('tier2', [])
+        tier2a = lists_dict.get('tier2a', [])
+        tier2b = lists_dict.get('tier2b', [])
         if tier1:
             print(f"  ── 🔥 Tier 1: Çakışmalar ({len(tier1)}) ──")
             for i, (ticker, score, reasons, _) in enumerate(tier1[:10], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' | '.join(reasons[:4])}")
             print()
-        if tier2:
-            print(f"  ── ⭐ Tier 2: Tekil Kalite ({len(tier2)}) ──")
-            for i, (ticker, score, reasons, _) in enumerate(tier2[:10], 1):
+        if tier2a:
+            print(f"  ── ⚡ Tier 2A: Tactical ⚡1G ({len(tier2a)}) ──")
+            for i, (ticker, score, reasons, _) in enumerate(tier2a[:6], 1):
+                print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:5])}")
+            print()
+        if tier2b:
+            print(f"  ── ⭐ Tier 2B: Swing-Lite ({len(tier2b)}) ──")
+            for i, (ticker, score, reasons, _) in enumerate(tier2b[:6], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:5])}")
             print()
         if notify:
-            msg = _build_shortlist_message(lists_dict, portfolio,
+            msg = _build_shortlist_message(lists_dict,
                                             sms_scores, takas_data_map, mkk_data_map,
                                             ice_results)
             send_telegram(msg)
@@ -1115,13 +1730,25 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         latest_signals, macro_result, min_score=1, mkk_data=mkk_data_map,
         sms_scores=sms_scores, ice_results=ice_results)
 
-    # 4. Claude ile brifing üret
+    # 4. Shortlist ÖNCE hesapla (AI'a shortlist verisini göndermek için)
+    print("\n📋 4 liste + haberler hesaplanıyor...")
+    lists_dict = _compute_4_lists(latest_signals, confluence_results)
+
+    # ML overlay v2 (feature flag kontrollü, 3-katmanlı)
+    _ml_overlay_v2(lists_dict, latest_signals)
+
+    news_items = fetch_market_news()
+    if news_items:
+        print(f"  📰 {len(news_items)} haber çekildi")
+
+    # 4b. Claude ile brifing üret (shortlist verisini kullanarak)
     briefing_text = ""
     if use_ai:
         print("\n🤖 Claude ile brifing üretiliyor...")
         try:
             briefing_text = _generate_ai_briefing(
-                signal_summary, macro_result, confluence_results, latest_signals)
+                signal_summary, macro_result, confluence_results, latest_signals,
+                lists_dict=lists_dict)
             print(f"  ✅ Brifing üretildi ({len(briefing_text)} karakter)")
         except Exception as e:
             print(f"  ⚠️ Claude API hatası: {e}")
@@ -1131,19 +1758,19 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         briefing_text = _generate_fallback_briefing(
             signal_summary, macro_result, confluence_results)
 
-    # 4b. Shortlist listeleri + haberler (HTML rapor için)
-    print("\n📋 4 liste + haberler hesaplanıyor...")
-    lists_dict = _compute_4_lists(
-        latest_signals, confluence_results, sms_scores, ice_results)
-    news_items = fetch_market_news()
-    if news_items:
-        print(f"  📰 {len(news_items)} haber çekildi")
-
-    # 5. HTML rapor oluştur
+    # 5. HTML rapor oluştur — shortlist + çelişki verisini hazırla
     print("\n📊 HTML rapor oluşturuluyor...")
+    _shortlist_tickers = set()
+    if lists_dict:
+        for _ln in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt'):
+            for _item in lists_dict.get(_ln, []):
+                _shortlist_tickers.add(_item[0])
+    _sat_tickers = {s['ticker'] for s in latest_signals
+                    if s.get('direction') == 'SAT' or s.get('karar') == 'SAT'}
     html = generate_briefing_html(
         briefing_text, macro_result, confluence_results, signal_summary,
-        lists_dict=lists_dict, news_items=news_items)
+        lists_dict=lists_dict, news_items=news_items,
+        shortlist_tickers=_shortlist_tickers, sat_tickers=_sat_tickers)
     date_str = now.strftime('%Y%m%d')
     html_path = os.path.join(ROOT, 'output', f'nox_briefing_{date_str}.html')
     os.makedirs(os.path.dirname(html_path), exist_ok=True)
@@ -1178,26 +1805,14 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
 
 def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
-                           latest_signals=None):
-    """Claude API ile brifing üret. Section 10 formatında."""
+                           latest_signals=None, lists_dict=None):
+    """Claude API ile brifing üret. Shortlist bazlı veri bağlamı."""
     from agent.claude_client import single_prompt
+
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT'}
 
     data_context = []
     data_context.append(f"Tarih: {datetime.now(_TZ_TR).strftime('%d.%m.%Y')}")
-
-    # ── Portföy bilgisi ──
-    portfolio = _load_portfolio()
-    if portfolio:
-        holdings = portfolio.get('holdings', [])
-        watchlist = portfolio.get('watchlist', [])
-        tickers_held = [h['ticker'] for h in holdings]
-        data_context.append(f"\n## 💼 PORTFÖY ({len(holdings)} hisse, güncelleme: {portfolio.get('updated', '?')})")
-        for h in holdings:
-            note = f" — {h['note']}" if h.get('note') else ""
-            data_context.append(f"  {h['ticker']}{note}")
-        if watchlist:
-            data_context.append(f"  İzleme listesi: {', '.join(watchlist)}")
-        data_context.append("  ⚠️ Portföydeki hisseler için: SAT sinyali varsa UYAR, AL sinyali varsa 'ZATEN PORTFÖYDE' not ekle.")
 
     # ── Günlük takas/kademe input ──
     daily = _load_daily_input()
@@ -1246,267 +1861,6 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
             data_context.append(
                 f"  {s['name']}: {s['price']:,.2f} (1G:{chg_1d} 5G:{chg_5d} trend:{trend})")
 
-    # ── Sinyal özeti (screener bazında) ──
-    data_context.append(f"\n## Scanner Sinyalleri: {signal_summary.get('total', 0)} toplam")
-    for scr, stats in signal_summary.get('screeners', {}).items():
-        name = SCREENER_NAMES.get(scr, scr)
-        data_context.append(f"  {name}: {stats['total']} ({stats.get('AL', 0)} AL, {stats.get('SAT', 0)} SAT)")
-
-    # ── Öne çıkan sinyaller ──
-    if latest_signals:
-        nw_al_tickers = {s['ticker'] for s in latest_signals
-                         if s.get('screener') == 'nox_v3_weekly'
-                         and s.get('direction') == 'AL'
-                         and s.get('signal_type') == 'PIVOT_AL'}
-        rt_al_map = {}  # ticker → RT sinyal
-        for s in latest_signals:
-            if s.get('screener') == 'regime_transition' and s.get('direction') == 'AL':
-                rt_al_map[s['ticker']] = s
-
-        # ── BADGE: önce CSV'den (native), sonra çapraz hesaplama (fallback) ──
-        badge_taze = []   # TAZE window
-        badge_bekle = []  # BEKLE/2.DALGA/GEÇ window
-        badge_seen = set()
-
-        def _format_badge(ticker, badge_type, rt_sig, nw_sig=None):
-            """Badge satırı formatla — sadece bilinen alanlar."""
-            parts = [f"  {ticker}: {badge_type}"]
-            window = rt_sig.get('entry_window', '') if rt_sig else ''
-            if window:
-                parts.append(f"[{window}]")
-            # NW bilgileri (varsa)
-            if nw_sig:
-                wl = nw_sig.get('wl_status')
-                if wl:
-                    parts.append(f"WL={wl}")
-                delta = nw_sig.get('delta_pct')
-                if delta is not None:
-                    parts.append(f"δ={delta:.1f}%")
-            # RT bilgileri
-            cmf = rt_sig.get('cmf') if rt_sig else None
-            if cmf is not None:
-                parts.append(f"CMF={cmf:+.3f}")
-            adx = rt_sig.get('adx') if rt_sig else None
-            if adx is not None:
-                parts.append(f"ADX={adx:.0f}")
-            oe = rt_sig.get('oe') if rt_sig else None
-            if oe:
-                parts.append(f"OE={oe}")
-            return ' '.join(parts)
-
-        # 1. CSV'den gelen native badge
-        for s in latest_signals:
-            if s.get('screener') == 'regime_transition' and s.get('badge'):
-                ticker = s['ticker']
-                badge_seen.add(ticker)
-                nw_sig = next((ns for ns in latest_signals
-                               if ns.get('screener') == 'nox_v3_weekly'
-                               and ns['ticker'] == ticker
-                               and ns.get('signal_type') == 'PIVOT_AL'), None)
-                entry = _format_badge(ticker, s['badge'], s, nw_sig)
-                window = s.get('entry_window', '')
-                if window in ('TAZE', ''):
-                    badge_taze.append(entry)
-                else:
-                    badge_bekle.append(entry)
-
-        # 2. Çapraz badge fallback (NW AL ∩ RT AL)
-        for ticker in nw_al_tickers & set(rt_al_map.keys()):
-            if ticker in badge_seen:
-                continue
-            rt = rt_al_map[ticker]
-            window = rt.get('entry_window', '')
-            badge_type = 'H+AL' if window == 'TAZE' else ('H+PB' if window == '2.DALGA' else 'H+RT')
-            nw_sig = next((ns for ns in latest_signals
-                           if ns.get('screener') == 'nox_v3_weekly'
-                           and ns['ticker'] == ticker
-                           and ns.get('signal_type') == 'PIVOT_AL'), None)
-            badge_seen.add(ticker)
-            entry = _format_badge(ticker, badge_type, rt, nw_sig)
-            if window in ('TAZE', ''):
-                badge_taze.append(entry)
-            else:
-                badge_bekle.append(entry)
-
-        if badge_taze or badge_bekle:
-            data_context.append(f"\n## ⭐ BADGE Sinyalleri ({len(badge_taze)} TAZE + {len(badge_bekle)} diğer)")
-            data_context.append("  H+AL = haftalık pivot AL + günlük geçiş, H+PB = pivot AL + pullback")
-            if badge_taze:
-                data_context.append("  -- TAZE (giriş penceresi açık):")
-                data_context.extend(badge_taze)
-            if badge_bekle:
-                data_context.append("  -- BEKLE/2.DALGA/GEÇ (pencere henüz uygun değil):")
-                data_context.extend(badge_bekle)
-
-        # ── NW HAZIR + tetikli = ACİL SİNYAL ──
-        wl_wr = {'HAZIR': '%77.8', 'İZLE': '%68.9', 'BEKLE': '%59.7'}
-        nw_al_signals = [s for s in latest_signals
-                         if s.get('screener') == 'nox_v3_weekly'
-                         and s.get('direction') == 'AL'
-                         and s.get('signal_type') == 'PIVOT_AL']
-        # WL önceliğine göre sırala (HAZIR > İZLE > BEKLE)
-        wl_order = {'HAZIR': 0, 'İZLE': 1, 'BEKLE': 2}
-        nw_al_signals.sort(key=lambda s: (wl_order.get(s.get('wl_status', 'BEKLE'), 3),
-                                           s.get('delta_pct') or 999))
-
-        acil = [s for s in nw_al_signals
-                if s.get('wl_status') == 'HAZIR' and s.get('trigger_type')]
-        if acil:
-            data_context.append("\n## 🚨 ACİL SİNYAL — NW HAZIR + Tetikli (WR %77.8):")
-            for s in acil:
-                delta = s.get('delta_pct')
-                delta_str = f" δ={delta:.1f}%" if delta is not None else ""
-                data_context.append(
-                    f"  {s['ticker']}: HAZIR tetik={s.get('trigger_type')}{delta_str}")
-
-        # ── NW Tüm AL sinyalleri (WL grubuna göre) ──
-        if nw_al_signals:
-            data_context.append(f"\n## NW Haftalık Pivot AL ({len(nw_al_signals)} tetikli sinyal):")
-            data_context.append("  WR referans: HAZIR=%77.8, İZLE=%68.9, BEKLE=%59.7")
-            for wl_grp in ['HAZIR', 'İZLE', 'BEKLE']:
-                grp = [s for s in nw_al_signals if s.get('wl_status') == wl_grp]
-                if not grp:
-                    continue
-                data_context.append(f"  [{wl_grp}] (WR {wl_wr.get(wl_grp, '?')}, {len(grp)} sinyal):")
-                for s in grp[:15]:
-                    delta = s.get('delta_pct')
-                    delta_str = f"δ={delta:.1f}%" if delta is not None else ""
-                    trigger = s.get('trigger_type', '-')
-                    rs = s.get('rs_score')
-                    rs_str = f" RS={rs:.1f}" if rs is not None else ""
-                    data_context.append(
-                        f"    {s['ticker']}: tetik={trigger} {delta_str}{rs_str}")
-
-        # ── AL/SAT DÖNÜŞ sinyalleri ──
-        donus_signals = [s for s in latest_signals
-                         if s.get('screener') == 'alsat'
-                         and s.get('signal_type') == 'DÖNÜŞ'
-                         and s.get('karar') == 'AL']
-        if donus_signals:
-            data_context.append("\n## AL/SAT DÖNÜŞ Sinyalleri (En Yüksek WR):")
-            for s in donus_signals[:15]:
-                q = s.get('quality', '?')
-                oe = s.get('oe', '?')
-                data_context.append(
-                    f"  {s['ticker']}: DÖNÜŞ Q={q} OE={oe}")
-
-        # ── Tavan sinyalleri (detaylı) ──
-        tavan_signals = [s for s in latest_signals
-                         if s.get('screener') == 'tavan'
-                         and s.get('direction') == 'AL']
-        if tavan_signals:
-            # Skora göre sırala
-            tavan_signals.sort(key=lambda s: -(s.get('skor', 0) or 0))
-            data_context.append("\n## Tavan Sinyalleri (skor≥50 + vol<1.0x = KİLİTLİ TAVAN — WR %84.6):")
-            for s in tavan_signals[:15]:
-                skor = s.get('skor', 0)
-                streak = s.get('streak', 0)
-                vol = s.get('volume_ratio', 0)
-                yab = s.get('yabanci_degisim', 0)
-                kilitli = "🔒 KİLİTLİ" if skor >= 50 else ""
-                yab_str = f" yab={yab:+.2f}%" if yab else ""
-                data_context.append(
-                    f"  {s['ticker']}: skor={skor} streak={streak} vol={vol:.1f}x{yab_str} {kilitli}")
-
-        # ── RT AL sinyalleri (badge, fırsat, CMF, ADX dahil) ──
-        rt_al_signals = [s for s in latest_signals
-                         if s.get('screener') == 'regime_transition'
-                         and s.get('direction') == 'AL']
-        # Badge öne, sonra fırsat skoru yüksek, TAZE/2.DALGA öne
-        rt_al_signals.sort(key=lambda s: (
-            0 if s.get('badge') or s['ticker'] in badge_seen else 1,
-            -(s.get('quality', 0) or 0),
-            0 if s.get('entry_window') in ('TAZE', '2.DALGA') else 1,
-        ))
-        if rt_al_signals:
-            data_context.append("\n## Regime Transition AL Sinyalleri:")
-            data_context.append("  Fırsat: 0-4 (4=en iyi). TAZE/2.DALGA + Fırsat≥3 = öncelikli.")
-            for s in rt_al_signals[:25]:
-                window = s.get('entry_window', '?')
-                firsat = s.get('quality', '')
-                firsat_str = f" F{firsat}" if firsat else ""
-                cmf = s.get('cmf')
-                cmf_str = f" CMF={cmf:.3f}" if cmf is not None else ""
-                adx = s.get('adx')
-                adx_str = f" ADX={adx:.0f}" if adx is not None else ""
-                oe = s.get('oe', '')
-                oe_str = f" OE={oe}" if oe else ""
-                badge = s.get('badge', '')
-                badge_str = f" 🏅{badge}" if badge else (" ★NW_AL" if s['ticker'] in nw_al_tickers else "")
-                data_context.append(
-                    f"  {s['ticker']}: RT [{window}]{firsat_str}{badge_str}{cmf_str}{adx_str}{oe_str}")
-
-        # ── Rejim v3 AL sinyalleri ──
-        rejim_al_signals = [s for s in latest_signals
-                            if s.get('screener') == 'rejim_v3'
-                            and s.get('direction') == 'AL']
-        if rejim_al_signals:
-            data_context.append("\n## Rejim v3 AL Sinyalleri:")
-            for s in rejim_al_signals[:15]:
-                data_context.append(f"  {s['ticker']}: Rejim AL")
-
-        # ── SAT sinyalleri toplu ──
-        sat_signals = [s for s in latest_signals
-                       if s.get('direction') == 'SAT' or s.get('karar') == 'SAT']
-        if sat_signals:
-            data_context.append(f"\n## SAT Sinyalleri ({len(sat_signals)} toplam):")
-            for s in sat_signals[:20]:
-                scr = SCREENER_NAMES.get(s.get('screener', ''), s.get('screener', '?'))
-                data_context.append(f"  {s['ticker']}: {scr} SAT")
-
-    # ── MKK + Takas verisi (VDS auto-fetch) ──
-    mkk_json = fetch_mkk_data()
-    takas_json = fetch_takas_data()
-    if mkk_json and mkk_json.get('data'):
-        mkk_data = mkk_json['data']
-        data_context.append(f"\n## MKK Yatırımcı Dağılımı ({len(mkk_data)} hisse, tarih: {mkk_json.get('extracted_at', '?')}, {mkk_json.get('history_days', 0)} gün history)")
-        data_context.append("  Gerçek MKK verisi — B+K=%100, bireysel düşüşü = kurumsal birikim")
-        # Shortlist'teki hisseler için MKK göster
-        shortlist_tickers = set()
-        for s in latest_signals or []:
-            if (s.get('screener') == 'nox_v3_weekly'
-                    and s.get('signal_type') == 'PIVOT_AL'):
-                shortlist_tickers.add(s['ticker'])
-            if s.get('screener') == 'regime_transition' and s.get('badge'):
-                shortlist_tickers.add(s['ticker'])
-        for ticker in sorted(shortlist_tickers):
-            mkk = mkk_data.get(ticker)
-            if mkk:
-                line = f"  {ticker}: bireysel=%{mkk.get('bireysel_pct', '?')} kurumsal=%{mkk.get('kurumsal_pct', '?')}"
-                fark_1g = mkk.get('bireysel_fark_1g')
-                if fark_1g is not None:
-                    line += f" (1g: {fark_1g:+.2f}%)"
-                data_context.append(line)
-
-    if takas_json and takas_json.get('data'):
-        takas_data = takas_json['data']
-        data_context.append(f"\n## Takas Verisi ({len(takas_data)} hisse, VDS/{takas_json.get('extracted_at', '?')})")
-        # Shortlist'teki hisseler için öne çıkan takas verisi
-        for ticker in sorted(shortlist_tickers if 'shortlist_tickers' in dir() else []):
-            td = takas_data.get(ticker)
-            if td:
-                kurumlar = td.get('kurumlar', [])
-                top3 = sorted(kurumlar, key=lambda k: abs(k.get('Günlük Fark') or k.get('lot_fark') or 0), reverse=True)[:3]
-                if top3:
-                    parts = []
-                    for k in top3:
-                        name = k.get('Aracı Kurum') or k.get('kurum') or '?'
-                        lot = k.get('Günlük Fark') or k.get('lot_fark') or 0
-                        parts.append(f"{name}({lot:+,})")
-                    data_context.append(f"  {ticker}: {', '.join(parts)}")
-
-        # ── SMS skorları (takas verisi varsa) ──
-        sms_results = calc_batch_sms(None, takas_data, mkk_data if 'mkk_data' in dir() else None)
-        if sms_results:
-            sorted_sms = sorted(sms_results.values(), key=lambda x: -x.score)
-            guclu = [s for s in sorted_sms if s.score >= 45]
-            dagitim = [s for s in sorted_sms if s.score < 15]
-            data_context.append(f"\n## Smart Money Score ({len(sms_results)} hisse, {len(guclu)}🟢 güçlü, {len(dagitim)}🔴 dağıtım)")
-            data_context.append("  SMS: Birikim+Yoğunlaşma+KarşıTaraf+Süreklilik+MKK (max 85p)")
-            data_context.append("  ≥45🟢GÜÇLÜ | 30-44🟡ORTA | 15-29⚪ZAYIF | <15🔴DAĞITIM")
-            for sms in sorted_sms[:25]:
-                data_context.append(f"  {format_sms_line(sms)}")
-
     # ── Kategori rejimleri ──
     if macro_result and macro_result.get('category_regimes'):
         cat_reg = macro_result['category_regimes']
@@ -1521,28 +1875,194 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
                 data_context.append(
                     f"    {inst['name']}: EMA21{ema_icon} RSI={inst['rsi']} Range={inst['range_pct']}%")
 
-    # ── Çakışma top hisseler ──
-    if confluence_results:
-        data_context.append(f"\n## Çakışma Analizi — Top 25 ({len(confluence_results)} hisse ≥1 skor)")
-        for r in confluence_results[:25]:
-            details_str = "; ".join(r['details'][:5])
-            src = r.get('source_count', 0)
+    # ── Sinyal Pipeline Özeti (shortlist bazlı) ──
+    total_signals = signal_summary.get('total', 0)
+    if lists_dict:
+        n_as = len(lists_dict.get('alsat', []))
+        n_tvn = len(lists_dict.get('tavan', []))
+        n_nw = len(lists_dict.get('nw', []))
+        n_rt = len(lists_dict.get('rt', []))
+        n_tier1 = len(lists_dict.get('tier1', []))
+        n_tier2 = len(lists_dict.get('tier2', []))
+        shortlist_total = n_as + n_tvn + n_nw + n_rt
+        data_context.append(f"\n## 📊 Sinyal Pipeline ({total_signals} tarandı → {shortlist_total} shortlist geçti)")
+        data_context.append(f"  AL/SAT: {n_as} sinyal (filtre: karar=AL, tip≠ERKEN/ZAYIF, kalite gate)")
+        data_context.append(f"  Tavan: {n_tvn} sinyal (filtre: skor formülü, dedup)")
+        data_context.append(f"  NW Pivot: {n_nw} sinyal (filtre: BUGÜN + gate=AÇIK, daily)")
+        data_context.append(f"  RT: {n_rt} sinyal (filtre: TAZE/2.DALGA + badge + F≥3 + OE≤2)")
+        n_tier2a = len(lists_dict.get('tier2a', []))
+        n_tier2b = len(lists_dict.get('tier2b', []))
+        data_context.append(f"  Tier 1 Çakışma: {n_tier1} hisse (2+ liste, quality≥40)")
+        data_context.append(f"  Tier 2A Tactical ⚡1G: {n_tier2a} hisse (tavan/NW, intraday çıkış)")
+        data_context.append(f"  Tier 2B Swing-Lite: {n_tier2b} hisse (RT/AS, 3G-5G tutma)")
+    else:
+        data_context.append(f"\n## Scanner Sinyalleri: {total_signals} toplam")
+        for scr, stats in signal_summary.get('screeners', {}).items():
+            name = SCREENER_NAMES.get(scr, scr)
+            data_context.append(f"  {name}: {stats['total']} ({stats.get('AL', 0)} AL, {stats.get('SAT', 0)} SAT)")
+
+    # ── Tier 1: Çapraz Çakışmalar (detaylı) ──
+    if lists_dict and lists_dict.get('tier1'):
+        tier1 = lists_dict['tier1']
+        data_context.append(f"\n## ⭐ ÖNCELİKLİ: Tier 1 Çakışmalar ({len(tier1)} hisse)")
+        data_context.append("  Kalite filtrelerinden geçmiş 2+ liste çakışma. Quality skoru sıralı.")
+        for ticker, quality, reasons, meta in tier1:
+            in_lists = meta.get('in_lists', []) if isinstance(meta, dict) else []
+            list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
+            relaxed = " [RT↓]" if (isinstance(meta, dict) and meta.get('relaxed')) else ""
+            # Her çakışmanın temel metrikleri
+            metrics = []
+            for l in sorted(in_lists):
+                for list_name in ('alsat', 'tavan', 'nw', 'rt'):
+                    if list_name != l:
+                        continue
+                    for t, sc, reas, sig in lists_dict.get(list_name, []):
+                        if t != ticker:
+                            continue
+                        if list_name == 'rt':
+                            badge = sig.get('badge', '')
+                            if badge:
+                                metrics.append(f"[{badge}]")
+                            cmf = sig.get('cmf')
+                            if cmf is not None:
+                                metrics.append(f"CMF{cmf:+.2f}")
+                        elif list_name == 'nw':
+                            if sig.get('dw_overlap'):
+                                metrics.append("D+W")
+                            delta = sig.get('delta_pct')
+                            if delta is not None:
+                                metrics.append(f"δ={delta:.1f}%")
+                        elif list_name == 'alsat':
+                            st = sig.get('signal_type', '')
+                            metrics.append(st)
+                            q = sig.get('quality', 0)
+                            if q:
+                                metrics.append(f"Q={q}")
+                        elif list_name == 'tavan':
+                            skor = sig.get('skor', 0) or 0
+                            metrics.append(f"tavan_skor={skor}")
+                        break
+            metrics_str = " ".join(metrics)
             data_context.append(
-                f"  {r['ticker']}: skor={r['score']} [{src} kaynak] ({r['recommendation']}) — {details_str}")
+                f"  {ticker}: {list_tags}{relaxed} quality={quality} {metrics_str}")
 
-    # ── Çoklu kaynak çakışması ──
-    multi_source = [r for r in (confluence_results or []) if r.get('source_count', 0) >= 3]
-    if multi_source:
-        data_context.append(f"\n## 3+ Kaynak Çakışması ({len(multi_source)} hisse):")
-        for r in multi_source[:15]:
-            data_context.append(f"  {r['ticker']}: {r['source_count']} kaynak, skor={r['score']}")
+    # ── Tier 2: Tekil Kalite Sinyaller (horizon bazlı) ──
+    def _format_tier2_items(items, label):
+        if not items:
+            return
+        data_context.append(f"\n## {label} ({len(items)} hisse)")
+        by_list = {}
+        for ticker, score, reasons, sig in items:
+            tag = reasons[0] if reasons else '[?]'
+            by_list.setdefault(tag, []).append((ticker, score, reasons, sig))
+        for tag, group in by_list.items():
+            tickers_str = []
+            for ticker, score, reasons, sig in group:
+                detail_parts = [ticker]
+                if isinstance(sig, dict):
+                    if sig.get('dw_overlap'):
+                        detail_parts.append("D+W")
+                    delta = sig.get('delta_pct')
+                    if delta is not None:
+                        detail_parts.append(f"δ={delta:.1f}%")
+                    if sig.get('gate'):
+                        detail_parts.append("gate=AÇIK")
+                    st = sig.get('signal_type', '')
+                    if st:
+                        detail_parts.append(st)
+                    q = sig.get('quality', 0) or 0
+                    if q:
+                        detail_parts.append(f"Q={q}")
+                    badge = sig.get('badge', '')
+                    if badge:
+                        detail_parts.append(badge)
+                    cmf = sig.get('cmf')
+                    if cmf is not None:
+                        detail_parts.append(f"CMF{cmf:+.2f}")
+                    skor = sig.get('skor')
+                    if skor is not None:
+                        detail_parts.append(f"skor={skor}")
+                tickers_str.append(" ".join(detail_parts))
+            data_context.append(f"  {tag} ({len(group)} hisse): {', '.join(tickers_str)}")
 
-    # ── Top ticker cross-reference ──
-    top = signal_summary.get('top_tickers', [])
-    if top:
-        data_context.append(f"\n## Çoklu Screener'da Çıkan Hisseler:")
-        for t in top[:15]:
-            data_context.append(f"  {t['ticker']}: {t['count']} screener")
+    if lists_dict:
+        _format_tier2_items(lists_dict.get('tier2a', []),
+                           "⚡ Tier 2A — Tactical ⚡1G (intraday/1G çıkış)")
+        _format_tier2_items(lists_dict.get('tier2b', []),
+                           "⭐ Tier 2B — Swing-Lite ⏳3G/🔄SW (3-5G tutma)")
+
+    # ── Çelişki Tespiti (AL + SAT aynı hissede) ──
+    if latest_signals and lists_dict:
+        sat_tickers = {s['ticker'] for s in latest_signals
+                       if s.get('direction') == 'SAT' or s.get('karar') == 'SAT'}
+        shortlist_tickers = set()
+        for list_name in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt'):
+            for item in lists_dict.get(list_name, []):
+                shortlist_tickers.add(item[0])
+        conflicts = shortlist_tickers & sat_tickers
+        if conflicts:
+            data_context.append(f"\n## ⚠️ ÇELİŞKİLER (shortlist'te AL ama SAT sinyali de var — {len(conflicts)} hisse)")
+            for ticker in sorted(conflicts):
+                # SAT sinyal kaynağını bul
+                sat_sources = []
+                for s in latest_signals:
+                    if s['ticker'] == ticker and (s.get('direction') == 'SAT' or s.get('karar') == 'SAT'):
+                        scr = SCREENER_NAMES.get(s.get('screener', ''), s.get('screener', '?'))
+                        sat_sources.append(scr)
+                # AL sinyal kaynağını bul
+                al_sources = []
+                for list_name in ('alsat', 'tavan', 'nw', 'rt'):
+                    for t, sc, reas, sig in lists_dict.get(list_name, []):
+                        if t == ticker:
+                            al_sources.append(_LIST_SHORT.get(list_name, list_name))
+                data_context.append(
+                    f"  {ticker}: AL kaynak={'+'.join(al_sources)} AMA SAT={', '.join(sat_sources)} → BEKLE")
+
+    # ── SAT sinyalleri (kısa — risk farkındalığı) ──
+    if latest_signals:
+        sat_signals = [s for s in latest_signals
+                       if s.get('direction') == 'SAT' or s.get('karar') == 'SAT']
+        if sat_signals:
+            data_context.append(f"\n## SAT Sinyalleri ({len(sat_signals)} toplam — risk farkındalığı):")
+            for s in sat_signals[:10]:
+                scr = SCREENER_NAMES.get(s.get('screener', ''), s.get('screener', '?'))
+                data_context.append(f"  {s['ticker']}: {scr} SAT")
+
+    # ── MKK + Takas verisi (VDS auto-fetch) — shortlist hisseleri için ──
+    shortlist_tickers = set()
+    if lists_dict:
+        for list_name in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt'):
+            for item in lists_dict.get(list_name, []):
+                shortlist_tickers.add(item[0])
+
+    # ── MKK/Takas kompakt özeti (sadece bilgi, skor etkisi yok) ──
+    mkk_json = fetch_mkk_data()
+    takas_json = fetch_takas_data()
+    has_sm_data = False
+    if mkk_json and mkk_json.get('data'):
+        mkk_data = mkk_json['data']
+        # Sadece shortlist hisselerinin MKK bilgisi (kompakt)
+        mkk_lines = []
+        for ticker in sorted(shortlist_tickers):
+            mkk = mkk_data.get(ticker)
+            if mkk:
+                k_pct = mkk.get('kurumsal_pct', 0)
+                fark_1g = mkk.get('bireysel_fark_1g')
+                fark_str = f" {fark_1g:+.1f}%" if fark_1g is not None else ""
+                mkk_lines.append(f"  {ticker}: K%{k_pct:.0f}{fark_str}")
+        if mkk_lines:
+            has_sm_data = True
+            data_context.append(f"\n## MKK Bilgi (tarih: {mkk_json.get('extracted_at', '?')[:10]}, sadece bilgi — skor etkisi yok)")
+            data_context.extend(mkk_lines)
+
+    if takas_json and takas_json.get('data'):
+        has_sm_data = True
+        takas_data = takas_json['data']
+        takas_date = takas_json.get('extracted_at', '?')[:10]
+        data_context.append(f"\n## Takas Bilgi ({takas_date}, sadece bilgi — skor etkisi yok, etiket degistirme)")
+
+    if not has_sm_data:
+        data_context.append("\n## SM/Takas/MKK verisi YOK — bu verilere referans yapma")
 
     prompt = BRIEFING_PROMPT + "\n\n## Veri\n" + "\n".join(data_context)
     return single_prompt(prompt, max_tokens=8192)
@@ -1605,8 +2125,8 @@ def _build_telegram_message(briefing_text, macro_result, confluence_results,
         lines.append("")
         lines.append("<b>⬡ Top 5 Çakışma:</b>")
         rec_emoji = {
-            "GÜÇLÜ_AL": "🟢🟢", "AL": "🟢", "İZLE": "🟡",
-            "NÖTR": "⚪", "KAÇIN": "🔴",
+            "TRADEABLE": "🟢🟢", "TAKTİK": "🔵", "İZLE": "🟡",
+            "BEKLE": "🟠", "ELE": "🔴",
         }
         for r in confluence_results[:5]:
             emoji = rec_emoji.get(r['recommendation'], '')

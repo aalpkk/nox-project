@@ -28,6 +28,7 @@ _HTML_SOURCES = {
     'rt_weekly': f'{_NOX_BASE}/regime_transition_weekly.html',
     'tavan': f'{_BIST_BASE}/tavan.html',
     'alsat': f'{_BIST_BASE}/',  # index.html
+    'sbt': f'{_BIST_BASE}/smart_breakout.html',  # SBT — Katman C, ML overlay'de consume edilir
 }
 
 _TIMEOUT = 20
@@ -517,6 +518,23 @@ def fetch_alsat_signals(base_url=None):
     n_izle = sum(1 for s in signals if s['karar'] == 'İZLE')
     print(f"  AL/SAT: {n_al} AL + {n_izle} İZLE ({report_date})")
     return signals
+
+
+# ============================================================================
+# SBT (Smart Breakout Targets) Sinyaller — Stub
+# ============================================================================
+
+def fetch_sbt_signals(base_url=None):
+    """SBT HTML'den sinyal çek — STUB.
+
+    SBT verisi fetch_all_html_signals()'a dahil DEĞİLDİR.
+    _ml_overlay_v2() (briefing.py) tarafından ayrı consume edilir.
+    Full SBT → html_signals entegrasyonu ayrı task.
+
+    Returns: []
+    """
+    # TODO: SBT HTML parse → scanner_reader formatında signal dicts
+    return []
 
 
 # ============================================================================

@@ -61,12 +61,28 @@ def _prepare_lists_json(lists_dict, max_per_list=5):
         items = lists_dict.get(key, [])
         entries = []
         for ticker, score, reasons, sig in items[:max_per_list]:
-            entries.append({
+            entry = {
                 'ticker': ticker,
                 'score': score,
                 'reasons': reasons,
                 'signal_type': sig.get('signal_type', '') if isinstance(sig, dict) else '',
-            })
+            }
+            if isinstance(sig, dict):
+                # Dual ML skorları
+                if sig.get('ml_score') is not None:
+                    entry['ml_score'] = sig['ml_score']
+                if sig.get('ml_score_short') is not None:
+                    entry['ml_score_short'] = sig['ml_score_short']
+                if sig.get('ml_score_swing') is not None:
+                    entry['ml_score_swing'] = sig['ml_score_swing']
+                # SBT bucket + gate
+                if sig.get('sbt_bucket'):
+                    entry['sbt_bucket'] = sig['sbt_bucket']
+                if sig.get('gate_penalty'):
+                    entry['gate_penalty'] = sig['gate_penalty']
+                if sig.get('_rule_score') is not None:
+                    entry['rule_score'] = sig['_rule_score']
+            entries.append(entry)
         result[key] = {
             'label': _LIST_LABELS.get(key, key),
             'icon': _LIST_ICONS.get(key, ''),
@@ -83,14 +99,26 @@ def _prepare_overlap_json(lists_dict, max_per_group=5):
     groups = {}  # overlap_count -> items
     for ticker, quality, reasons, meta in tier1:
         oc = meta.get('overlap_count', 2) if isinstance(meta, dict) else 2
-        groups.setdefault(oc, []).append({
+        entry = {
             'ticker': ticker,
             'quality': quality,
             'reasons': reasons,
             'overlap_count': oc,
             'in_lists': meta.get('in_lists', []) if isinstance(meta, dict) else [],
             'relaxed': meta.get('relaxed', False) if isinstance(meta, dict) else False,
-        })
+        }
+        if isinstance(meta, dict):
+            if meta.get('ml_score') is not None:
+                entry['ml_score'] = meta['ml_score']
+            if meta.get('ml_score_short') is not None:
+                entry['ml_score_short'] = meta['ml_score_short']
+            if meta.get('ml_score_swing') is not None:
+                entry['ml_score_swing'] = meta['ml_score_swing']
+            if meta.get('sbt_bucket'):
+                entry['sbt_bucket'] = meta['sbt_bucket']
+            if meta.get('gate_penalty'):
+                entry['gate_penalty'] = meta['gate_penalty']
+        groups.setdefault(oc, []).append(entry)
     # Her grubun ilk max_per_group'unu al, buyuk overlap_count once
     result = []
     for oc in sorted(groups.keys(), reverse=True):
@@ -115,7 +143,8 @@ def _prepare_macro_detail(macro_data):
 
 
 def generate_briefing_html(briefing_text, macro_data, confluence_results,
-                           signal_summary, lists_dict=None, news_items=None):
+                           signal_summary, lists_dict=None, news_items=None,
+                           shortlist_tickers=None, sat_tickers=None):
     """
     Brifing HTML raporu olustur.
 
@@ -126,6 +155,8 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         signal_summary: summarize_signals() sonucu
         lists_dict: _compute_4_lists() sonucu (optional)
         news_items: fetch_market_news() sonucu (optional)
+        shortlist_tickers: set of tickers in shortlist (optional)
+        sat_tickers: set of tickers with SAT signals (optional)
     """
     now = datetime.now(_TZ_TR).strftime('%d.%m.%Y %H:%M')
     regime = macro_data.get("regime", "N/A") if macro_data else "N/A"
@@ -159,6 +190,20 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         ensure_ascii=False)
     news_json = json.dumps(
         _sanitize(news_items or []),
+        ensure_ascii=False)
+    shortlist_set_json = json.dumps(
+        list(shortlist_tickers) if shortlist_tickers else [],
+        ensure_ascii=False)
+    sat_set_json = json.dumps(
+        list(sat_tickers) if sat_tickers else [],
+        ensure_ascii=False)
+
+    # ML rerank + filtered data
+    rerank_json = json.dumps(
+        _sanitize(lists_dict.get('_ml_rank_changes', [])) if lists_dict else [],
+        ensure_ascii=False)
+    filtered_json = json.dumps(
+        _sanitize(lists_dict.get('_ml_filtered', [])) if lists_dict else [],
         ensure_ascii=False)
 
     # Brifing metnini HTML'e cevir + ticker linkleri
@@ -282,6 +327,86 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     color: var(--nox-cyan);
     white-space: nowrap;
 }}
+.ml-badge {{
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+    white-space: nowrap;
+}}
+.ml-badge.ml-strong {{ background: rgba(74,222,128,0.15); color: #4ade80; }}
+.ml-badge.ml-mid {{ background: rgba(250,204,21,0.15); color: #facc15; }}
+.ml-badge.ml-weak {{ background: rgba(161,161,170,0.12); color: #a1a1aa; }}
+
+/* DUAL ML BADGE */
+.ml-dual {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    white-space: nowrap;
+}}
+.ml-dual .ml-s, .ml-dual .ml-w {{
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+}}
+.ml-dual .ml-s {{ border-right: 1px solid var(--border-subtle); }}
+
+/* SBT BADGE */
+.sbt-badge {{
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    white-space: nowrap;
+}}
+.sbt-badge.sbt-ap {{ background: rgba(74,222,128,0.2); color: #4ade80; }}
+.sbt-badge.sbt-a {{ background: rgba(96,165,250,0.2); color: #60a5fa; }}
+.sbt-badge.sbt-b {{ background: rgba(161,161,170,0.12); color: #a1a1aa; }}
+.sbt-badge.sbt-x {{ background: rgba(248,113,113,0.15); color: #f87171; }}
+
+/* GATE TAG */
+.gate-tag {{
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 0.08rem 0.25rem;
+    border-radius: 3px;
+    background: rgba(248,113,113,0.12);
+    color: #f87171;
+    white-space: nowrap;
+}}
+
+/* RERANK SECTION */
+.rerank-item {{
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0;
+    font-size: 0.85rem;
+    border-bottom: 1px solid var(--border-subtle);
+}}
+.rerank-item:last-child {{ border-bottom: none; }}
+.rerank-delta {{
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+}}
+.rerank-delta.up {{ color: #4ade80; }}
+.rerank-delta.down {{ color: #f87171; }}
+
+/* FILTERED SECTION */
+.filtered-item {{
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0;
+    font-size: 0.82rem;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+}}
+.filtered-item:last-child {{ border-bottom: none; }}
+.filtered-item .reason {{ font-style: italic; }}
 
 /* OVERLAP SECTION */
 .overlap-section {{
@@ -518,6 +643,24 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 .tv-link:hover {{
     opacity: 0.7;
 }}
+.shortlist-badge {{
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 500;
+}}
+.shortlist-badge.in-list {{
+    background: rgba(74,222,128,0.15);
+    color: #4ade80;
+}}
+.shortlist-badge.conflict {{
+    background: rgba(248,113,113,0.15);
+    color: #f87171;
+}}
+.shortlist-badge.not-in {{
+    color: var(--text-muted);
+}}
 </style>
 </head>
 <body>
@@ -539,6 +682,14 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     <!-- OVERLAP -->
     <h2 class="section-title">🔥 Çapraz Çakışmalar</h2>
     <div id="overlapContainer"></div>
+
+    <!-- ML RERANK -->
+    <h2 class="section-title">🧠 ML Rerank Değişimi</h2>
+    <div id="rerankContainer"></div>
+
+    <!-- ML FILTERED -->
+    <h2 class="section-title">⚠️ Filtreyle Elenenler</h2>
+    <div id="filteredContainer"></div>
 
     <!-- MACRO -->
     <h2 class="section-title">🌍 Makro Durum</h2>
@@ -563,7 +714,10 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
             <tr>
                 <th>Hisse</th>
                 <th>Skor</th>
-                <th>Tavsiye</th>
+                <th>Yapısal</th>
+                <th>Taktik</th>
+                <th>Sonuç</th>
+                <th>Durum</th>
                 <th>Detaylar</th>
             </tr>
         </thead>
@@ -579,6 +733,10 @@ const MACRO_DETAIL = {macro_detail_json};
 const MACRO = {macro_json};
 const CONFLUENCE = {confluence_json};
 const NEWS = {news_json};
+const SHORTLIST_SET = new Set({shortlist_set_json});
+const SAT_SET = new Set({sat_set_json});
+const RERANK_DATA = {rerank_json};
+const FILTERED_DATA = {filtered_json};
 
 // ── Sinyal Listeleri (2x2 grid) ──
 (function() {{
@@ -597,11 +755,41 @@ const NEWS = {news_json};
             html += '<div style="color:var(--text-muted);font-size:0.8rem">Sinyal yok</div>';
         }}
         list.items.forEach((item, i) => {{
-            const reasons = item.reasons.slice(0, 4).join(' ');
+            // Filter out ML/SBT badges from reasons (rendered separately)
+            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:')).slice(0, 4).join(' ');
+            // Dual ML badge
+            let mlBadge = '';
+            if (item.ml_score_short != null || item.ml_score_swing != null) {{
+                const mkBadge = (val, prefix) => {{
+                    if (val == null) return '';
+                    const pct = Math.round(val * 100);
+                    const cls = val >= 0.60 ? 'ml-strong' : val >= 0.40 ? 'ml-mid' : 'ml-weak';
+                    return `<span class="ml-${{prefix}} ${{cls}}">${{prefix.toUpperCase()}}${{pct}}</span>`;
+                }};
+                mlBadge = `<span class="ml-dual">${{mkBadge(item.ml_score_short,'s')}}${{mkBadge(item.ml_score_swing,'w')}}</span>`;
+            }} else if (item.ml_score != null) {{
+                const mlPct = Math.round(item.ml_score * 100);
+                const mlCls = item.ml_score >= 0.60 ? 'ml-strong' : item.ml_score >= 0.40 ? 'ml-mid' : 'ml-weak';
+                mlBadge = `<span class="ml-badge ${{mlCls}}">ML${{mlPct}}</span>`;
+            }}
+            // SBT badge
+            let sbtBadge = '';
+            if (item.sbt_bucket) {{
+                const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
+                sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
+            }}
+            // Gate tag
+            let gateTag = '';
+            if (item.gate_penalty >= 99) {{
+                gateTag = '<span class="gate-tag">HARD</span>';
+            }} else if (item.gate_penalty >= 1) {{
+                gateTag = '<span class="gate-tag">soft</span>';
+            }}
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
+                ${{sbtBadge}}${{mlBadge}}${{gateTag}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -633,17 +821,103 @@ const NEWS = {news_json};
                 return short;
             }}).join('+');
             const relaxed = item.relaxed ? ' [RT↓]' : '';
-            const reason0 = item.reasons && item.reasons.length > 0 ? item.reasons[0] : '';
+            const reason0 = item.reasons && item.reasons.length > 0
+                ? item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:'))[0] || ''
+                : '';
+            // Dual ML badge
+            let mlBadge = '';
+            if (item.ml_score_short != null || item.ml_score_swing != null) {{
+                const mkB = (val, pfx) => {{
+                    if (val == null) return '';
+                    const p = Math.round(val * 100);
+                    const c = val >= 0.60 ? 'ml-strong' : val >= 0.40 ? 'ml-mid' : 'ml-weak';
+                    return `<span class="ml-${{pfx}} ${{c}}">${{pfx.toUpperCase()}}${{p}}</span>`;
+                }};
+                mlBadge = `<span class="ml-dual">${{mkB(item.ml_score_short,'s')}}${{mkB(item.ml_score_swing,'w')}}</span>`;
+            }} else if (item.ml_score != null) {{
+                const mlPct = Math.round(item.ml_score * 100);
+                const mlCls = item.ml_score >= 0.60 ? 'ml-strong' : item.ml_score >= 0.40 ? 'ml-mid' : 'ml-weak';
+                mlBadge = `<span class="ml-badge ${{mlCls}}">ML${{mlPct}}</span>`;
+            }}
+            // SBT badge
+            let sbtBadge = '';
+            if (item.sbt_bucket) {{
+                const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
+                sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
+            }}
             html += `<div class="overlap-item">
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="lists-tag">${{listsTag}}${{relaxed}}</span>
                 <span class="reasons-text">${{reason0}}</span>
+                ${{sbtBadge}}${{mlBadge}}
                 <span class="quality">${{item.quality}}p</span>
             </div>`;
         }});
         sec.innerHTML = html;
         container.appendChild(sec);
     }});
+}})();
+
+// ── ML Rerank Değişimi ──
+(function() {{
+    const container = document.getElementById('rerankContainer');
+    if (!RERANK_DATA || RERANK_DATA.length === 0) {{
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">ML rerank verisi yok</div>';
+        return;
+    }}
+    const sec = document.createElement('div');
+    sec.className = 'overlap-section';
+    const ups = RERANK_DATA.filter(r => r.delta > 0).sort((a,b) => b.delta - a.delta);
+    const downs = RERANK_DATA.filter(r => r.delta < 0).sort((a,b) => a.delta - b.delta);
+    let html = '';
+    if (ups.length > 0) {{
+        html += '<div style="font-size:0.8rem;color:var(--nox-green);margin-bottom:0.3rem">↑ Yükselenler</div>';
+        ups.slice(0, 8).forEach(r => {{
+            html += `<div class="rerank-item">
+                <a href="${{TV_BASE}}${{r.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{r.ticker}}</a>
+                <span class="lists-tag">${{r.list_tag}}</span>
+                <span style="font-size:0.8rem;color:var(--text-muted)">${{r.old_rank}}→${{r.new_rank}}</span>
+                <span class="rerank-delta up">+${{r.delta}}</span>
+            </div>`;
+        }});
+    }}
+    if (downs.length > 0) {{
+        html += '<div style="font-size:0.8rem;color:var(--nox-red);margin:0.5rem 0 0.3rem">↓ Düşenler</div>';
+        downs.slice(0, 8).forEach(r => {{
+            html += `<div class="rerank-item">
+                <a href="${{TV_BASE}}${{r.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{r.ticker}}</a>
+                <span class="lists-tag">${{r.list_tag}}</span>
+                <span style="font-size:0.8rem;color:var(--text-muted)">${{r.old_rank}}→${{r.new_rank}}</span>
+                <span class="rerank-delta down">${{r.delta}}</span>
+            </div>`;
+        }});
+    }}
+    sec.innerHTML = html;
+    container.appendChild(sec);
+}})();
+
+// ── Filtreyle Elenenler ──
+(function() {{
+    const container = document.getElementById('filteredContainer');
+    if (!FILTERED_DATA || FILTERED_DATA.length === 0) {{
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Elenen sinyal yok</div>';
+        return;
+    }}
+    const listShort = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
+    const sec = document.createElement('div');
+    sec.className = 'overlap-section';
+    let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Rule güçlü ama ML zayıf — ${{FILTERED_DATA.length}} hisse elendi</div>`;
+    FILTERED_DATA.slice(0, 10).forEach(item => {{
+        const tag = listShort[item.list] || item.list;
+        html += `<div class="filtered-item">
+            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
+            <span class="lists-tag">${{tag}}</span>
+            <span style="font-family:var(--font-mono);font-size:0.75rem">rule:${{item.rule_score}}p</span>
+            <span class="reason">${{item.reason}}</span>
+        </div>`;
+    }});
+    sec.innerHTML = html;
+    container.appendChild(sec);
 }})();
 
 // ── Makro Detay ──
@@ -744,18 +1018,36 @@ const NEWS = {news_json};
 (function() {{
     const tbody = document.querySelector('#confluenceTable tbody');
     const recColors = {{
-        'GÜÇLÜ_AL': '#4ade80', 'AL': '#4ade80', 'İZLE': '#fbbf24',
-        'NÖTR': '#a1a1aa', 'KAÇIN': '#f87171', 'VERİ_YOK': '#71717a'
+        'TRADEABLE': '#4ade80',
+        'TAKTİK': '#60a5fa',
+        'İZLE': '#fbbf24',
+        'BEKLE': '#fb923c',
+        'ELE': '#f87171',
+        'VERİ_YOK': '#71717a',
     }};
     CONFLUENCE.forEach(item => {{
         const tr = document.createElement('tr');
         const scoreColor = item.score >= 5 ? '#4ade80' : item.score >= 3 ? '#fbbf24' : item.score <= 0 ? '#f87171' : '#a1a1aa';
-        const recColor = recColors[item.recommendation] || '#a1a1aa';
+        const hasConflict = item.has_conflict || (SAT_SET.has(item.ticker) && item.recommendation !== 'BEKLE');
+        const displayRec = hasConflict ? 'BEKLE' : item.recommendation;
+        const recColor = recColors[displayRec] || '#a1a1aa';
         const details = (item.details || []).slice(0, 3).join('<br>');
+        const structScore = item.structural_score || 0;
+        const tactScore = item.tactical_score || 0;
+        // Durum badge
+        let durumHtml = '<span class="shortlist-badge not-in">—</span>';
+        if (hasConflict) {{
+            durumHtml = '<span class="shortlist-badge conflict">ÇELİŞKİ</span>';
+        }} else if (SHORTLIST_SET.has(item.ticker)) {{
+            durumHtml = '<span class="shortlist-badge in-list">SHORTLIST</span>';
+        }}
         tr.innerHTML = `
             <td><a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link"><b>${{item.ticker}}</b></a></td>
             <td><span class="score-badge" style="background:${{scoreColor}}20;color:${{scoreColor}}">${{item.score}}</span></td>
-            <td><span class="rec-badge" style="background:${{recColor}}20;color:${{recColor}}">${{item.recommendation}}</span></td>
+            <td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{structScore}}</td>
+            <td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{tactScore}}</td>
+            <td><span class="rec-badge" style="background:${{recColor}}20;color:${{recColor}}">${{displayRec}}</span></td>
+            <td>${{durumHtml}}</td>
             <td style="font-size:0.8rem;color:var(--text-secondary)">${{details}}</td>
         `;
         tbody.appendChild(tr);
