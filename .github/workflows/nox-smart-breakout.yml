@@ -1,0 +1,25 @@
+name: Smart Breakout Targets
+on:
+  schedule:
+    - cron: '40 15 * * 1-5'  # Pzt-Cuma 15:40 UTC = 18:40 TR
+  workflow_dispatch:
+
+jobs:
+  breakout-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python run_smart_breakout.py --notify
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-breakout-${{ github.run_number }}
+          path: output/smart_breakout.html

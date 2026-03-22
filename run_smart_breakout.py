@@ -8,12 +8,17 @@ import os
 import sys
 import warnings
 import argparse
+import base64
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests as req
 import yfinance as yf
+from dotenv import load_dotenv
+
+load_dotenv()
 
 warnings.filterwarnings("ignore")
 
@@ -309,7 +314,7 @@ def scan_single(df: pd.DataFrame, use_vol: bool, use_htf: bool):
 
 
 # ── Toplu tarama ──────────────────────────────────────────────
-def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5):
+def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5, notify=False):
     symbols = load_symbols()
     print(f"📡 {len(symbols)} sembol taranıyor (son {lookback_days} gün)...")
     print(f"   Vol filtre: {'ON' if use_vol else 'OFF'} | HTF filtre: {'ON' if use_htf else 'OFF'}")
@@ -366,6 +371,9 @@ def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5):
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"\n📄 HTML rapor: {out_path}")
+
+    if notify:
+        _notify_telegram(results, html, out_path)
 
     return results
 
@@ -633,6 +641,170 @@ function sortTable(th) {{
 </html>"""
 
 
+# ── Telegram + GitHub Pages ───────────────────────────────────
+def _send_telegram(msg):
+    token = os.environ.get("TG_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat = os.environ.get("TG_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat:
+        print("⚠️ Telegram token/chat yok, konsola yazdırılıyor:")
+        print(msg)
+        return
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    for i in range(0, len(msg), 4000):
+        chunk = msg[i : i + 4000]
+        try:
+            req.post(
+                url,
+                json={
+                    "chat_id": chat,
+                    "text": chunk,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+
+def _send_telegram_document(filepath, caption=""):
+    token = os.environ.get("TG_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat = os.environ.get("TG_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat or not os.path.exists(filepath):
+        return
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    try:
+        with open(filepath, "rb") as f:
+            req.post(
+                url,
+                data={"chat_id": chat, "caption": caption},
+                files={"document": f},
+                timeout=30,
+            )
+        print("📤 HTML rapor Telegram'a gönderildi")
+    except Exception as e:
+        print(f"⚠️ Telegram document hata: {e}")
+
+
+def _push_html_to_github(html_content, filename):
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+    repo = os.environ.get("GH_PAGES_REPO", "")
+    if not token or not repo:
+        return None
+    api_url = f"https://api.github.com/repos/{repo}/contents/{filename}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    content_b64 = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
+    sha = None
+    try:
+        resp = req.get(api_url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            sha = resp.json().get("sha")
+    except Exception:
+        pass
+    now_tr = datetime.now(timezone(timedelta(hours=3)))
+    payload = {
+        "message": f"Smart Breakout — {now_tr.strftime('%d.%m.%Y')}",
+        "content": content_b64,
+        "branch": "main",
+    }
+    if sha:
+        payload["sha"] = sha
+    try:
+        resp = req.put(api_url, headers=headers, json=payload, timeout=15)
+        if resp.status_code in (200, 201):
+            owner, name = repo.split("/")
+            page_url = f"https://{owner}.github.io/{name}/{filename}"
+            print(f"✅ HTML yayınlandı: {page_url}")
+            return page_url
+    except Exception:
+        pass
+    return None
+
+
+def _build_telegram_message(results, html_url=None):
+    now_tr = datetime.now(timezone(timedelta(hours=3)))
+    date_str = now_tr.strftime("%d.%m.%Y %H:%M")
+    bo = results["BREAKOUT"]
+    bx = results["BOX"]
+    sq = results["SQUEEZE"]
+
+    lines = [
+        f"<b>📊 Smart Breakout — {date_str}</b>",
+        f"🚀 {len(bo)} kırılma | 📦 {len(bx)} kutu | 🟡 {len(sq)} sıkışma",
+        "",
+    ]
+
+    if bo:
+        lines.append("<b>🚀 Kırılmalar</b>")
+        for r in sorted(bo, key=lambda x: x["strength"], reverse=True):
+            s = r["strength"]
+            s_icon = "🟢" if s >= 4 else "🟡" if s >= 2 else "⚫"
+            tp_marks = ""
+            if r["tp1_hit"]:
+                tp_marks += "①"
+            if r["tp2_hit"]:
+                tp_marks += "②"
+            if r["tp3_hit"]:
+                tp_marks += "③"
+            status = r["trade_status"]
+            if tp_marks:
+                status += " " + tp_marks
+            lines.append(
+                f"{s_icon}<b>{r['ticker']}</b> {r['dir']} {r['entry']:.2f} "
+                f"[{s}/4] {r['bars_ago']}G"
+            )
+            lines.append(
+                f"  SL:{r['sl']:.2f} TP1:{r['tp1']:.2f} TP2:{r['tp2']:.2f} TP3:{r['tp3']:.2f} | {status}"
+            )
+        lines.append("")
+
+    if bx:
+        lines.append(f"<b>📦 Kutu ({len(bx)})</b>")
+        for r in sorted(bx, key=lambda x: x.get("proximity", 0), reverse=True)[:10]:
+            dist_top = (r["box_top"] - r["close"]) / r["close"] * 100
+            dist_bot = (r["close"] - r["box_bot"]) / r["close"] * 100
+            closer = f"↑{dist_top:.1f}%" if dist_top < dist_bot else f"↓{dist_bot:.1f}%"
+            lines.append(
+                f"<b>{r['ticker']}</b> {r['close']:.2f} "
+                f"[{r['box_bot']:.2f}-{r['box_top']:.2f}] {closer}"
+            )
+        if len(bx) > 10:
+            lines.append(f"  ... +{len(bx) - 10} daha")
+        lines.append("")
+
+    if sq:
+        top_sq = sorted(sq, key=lambda x: x["squeeze_bars"], reverse=True)[:15]
+        tickers = " ".join(f"{r['ticker']}({r['squeeze_bars']})" for r in top_sq)
+        lines.append(f"<b>🟡 Sıkışma ({len(sq)})</b>")
+        lines.append(tickers)
+        if len(sq) > 15:
+            lines.append(f"  ... +{len(sq) - 15} daha")
+
+    if html_url:
+        lines.append(f"\n🔗 <a href=\"{html_url}\">Detaylı Rapor</a>")
+
+    return "\n".join(lines)
+
+
+def _notify_telegram(results, html_content, html_path):
+    print("\n📤 Telegram'a gönderiliyor...")
+
+    # GitHub Pages'e push
+    html_url = _push_html_to_github(html_content, "smart_breakout.html")
+
+    # Telegram mesajı
+    msg = _build_telegram_message(results, html_url)
+    _send_telegram(msg)
+
+    # HTML dosyayı document olarak gönder
+    _send_telegram_document(html_path, "📊 Smart Breakout Targets — Detaylı Rapor")
+
+    print("✅ Telegram bildirim tamamlandı")
+
+
 # ── CLI ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Smart Breakout Targets — BIST Tarayıcı")
@@ -640,6 +812,7 @@ if __name__ == "__main__":
     parser.add_argument("--htf", action="store_true", help="HTF EMA filtresini aç")
     parser.add_argument("--days", type=int, default=180, help="Geriye bakış günü (varsayılan 180)")
     parser.add_argument("--max-age", type=int, default=5, help="Max kırılma yaşı (gün, varsayılan 5)")
+    parser.add_argument("--notify", action="store_true", help="Telegram'a gönder + GitHub Pages push")
     args = parser.parse_args()
 
     run_scanner(
@@ -647,4 +820,5 @@ if __name__ == "__main__":
         use_htf=args.htf,
         lookback_days=args.days,
         max_bo_age=args.max_age,
+        notify=args.notify,
     )
