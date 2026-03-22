@@ -1434,6 +1434,12 @@ def _format_telegram(all_results, n_scanned, date_str, tf_label='', html_url=Non
 # =============================================================================
 
 def main():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = argparse.ArgumentParser(description="NOX Divergence Screener v2")
     parser.add_argument('tickers', nargs='*', help='Spesifik ticker(lar)')
     parser.add_argument('--period', default='2y', help='Veri periyodu (default: 2y)')
