@@ -827,6 +827,28 @@ def _flatten_results(all_results):
             row['bars_ago'] = bars_ago
             row['viability'] = viability
 
+            # ── Entry score (giris oncelik puani) ──
+            _RULE_BASE = {'B': 76, 'D': 61, 'C': 59, 'E': 55}
+            es = _RULE_BASE.get(rule, 50)
+            if viability == 'TAZE':
+                es += 10
+            elif viability == 'GIRILEBILIR':
+                es += 5
+            elif viability == 'KIRILMIS':
+                es -= 20
+            rr_val = getattr(sig, 'rr_ratio', 0) or 0
+            es += min(rr_val * 3, 15)
+            if 'FT' in mods:
+                es += 5
+            if 'RSI' in mods:
+                es += 3
+            if 'K60' in mods:
+                es -= 5
+            # Aggressive C filter: MFI/OBV_HIDDEN penalty
+            if rule == 'C' and sig.div_type in ('MFI_HIDDEN', 'OBV_HIDDEN'):
+                es -= 15
+            row['entry_score'] = round(es, 1)
+
             rows.append(row)
 
     if n_noise > 0:
@@ -1125,6 +1147,8 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
 </details>
 <!-- Kural Kartlari -->
 <div class="rule-cards" id="ruleCards"></div>
+<!-- En Iyi Giris -->
+<div id="topPicks" style="margin-bottom:16px;background:var(--bg-card);border:1px solid var(--nox-cyan);border-radius:10px;padding:14px 16px;border-left:4px solid var(--nox-cyan);"></div>
 <!-- Tab Bar -->
 <div class="tab-bar" id="tabs"></div>
 <!-- Filtreler -->
@@ -1345,7 +1369,54 @@ function render(data){{
   document.getElementById('st').innerHTML='<b>'+data.length+'</b> / '+D.length;
 }}
 
+function initTopPicks(){{
+  const box=document.getElementById('topPicks');
+  /* Sadece girilebilir sinyaller */
+  const viable=D.filter(d=>d.viability==='TAZE'||d.viability==='GIRILEBILIR');
+  if(!viable.length){{
+    box.innerHTML='<span style="color:var(--text-muted);font-size:.8rem;">Girilebilir sinyal yok.</span>';
+    return;
+  }}
+  /* AL ve SAT ayir, entry_score ile sirala */
+  const buys=viable.filter(d=>d.direction==='BUY').sort((a,b)=>(b.entry_score||0)-(a.entry_score||0));
+  const sells=viable.filter(d=>d.direction==='SELL').sort((a,b)=>(b.entry_score||0)-(a.entry_score||0));
+  /* Duplicate ticker — ayni hisseden en iyi sinyali al */
+  function dedup(arr){{
+    const seen={{}};const out=[];
+    arr.forEach(r=>{{ if(!seen[r.ticker]){{ seen[r.ticker]=1; out.push(r); }} }});
+    return out;
+  }}
+  const topBuys=dedup(buys).slice(0,5);
+  const topSells=dedup(sells).slice(0,5);
+  function mkRow(r,i){{
+    const rd=RD[r.rule];
+    const c=rd?rd.color:'var(--text-primary)';
+    const dir=r.direction==='BUY'?'<span class="dir-buy">AL</span>':'<span class="dir-sell">SAT</span>';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;${{i===0?'font-size:.88rem;':'font-size:.78rem;color:var(--text-secondary);'}}">
+      <span style="font-family:var(--font-mono);font-weight:800;color:var(--nox-cyan);width:18px;text-align:right;">${{i+1}}.</span>
+      <span style="color:${{c}};font-weight:700;font-size:.7rem;font-family:var(--font-mono);">${{r.rule}}</span>
+      <a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank" style="font-weight:700;">${{r.ticker}}</a>
+      ${{dir}}
+      <span style="font-family:var(--font-mono);font-size:.72rem;">${{r.close}} K:${{r.quality}} RR:${{(r.rr_ratio||0).toFixed(1)}}</span>
+      <span style="font-size:.7rem;">${{mkViability(r)}}</span>
+      <span style="font-family:var(--font-mono);font-size:.65rem;color:var(--text-muted);margin-left:auto;">[${{(r.entry_score||0).toFixed(0)}}p]</span>
+    </div>`;
+  }}
+  let html='<div style="font-weight:700;font-size:.85rem;color:var(--nox-cyan);margin-bottom:8px;">\u2b50 EN IYI GIRIS SINYALLERI</div>';
+  if(topBuys.length){{
+    html+='<div style="font-size:.72rem;color:var(--nox-green);font-weight:700;margin:6px 0 2px;">AL</div>';
+    topBuys.forEach((r,i)=>html+=mkRow(r,i));
+  }}
+  if(topSells.length){{
+    html+='<div style="font-size:.72rem;color:var(--nox-red);font-weight:700;margin:8px 0 2px;">SAT</div>';
+    topSells.forEach((r,i)=>html+=mkRow(r,i));
+  }}
+  html+='<div style="font-size:.62rem;color:var(--text-muted);margin-top:8px;line-height:1.4;">Puan = Kural BT WR + Durum bonusu + RR bonusu + Modifier. C+MFI_HIDDEN cezali. Yalnizca TAZE/GIRILEBILIR sinyaller.</div>';
+  box.innerHTML=html;
+}}
+
 initRuleCards();
+initTopPicks();
 initTabs();
 af();
 </script></body></html>"""
