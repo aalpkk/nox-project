@@ -8,6 +8,9 @@ import json
 import base64
 import datetime
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 import numpy as np
 import pandas as pd
 from collections import Counter
