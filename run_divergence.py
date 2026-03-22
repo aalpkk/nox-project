@@ -251,6 +251,8 @@ def _scan_all(stock_dfs, debug_ticker=None, scan_bars=10, min_bars=60, weekly_da
                         'close': float(df['close'].iloc[-1]),
                         'signal': sig,
                         'signal_date': sig_date,
+                        'signal_close': float(df['close'].iloc[sig.bar_idx]) if sig.bar_idx < len(df) else float(df['close'].iloc[-1]),
+                        'bars_ago': len(df) - 1 - sig.bar_idx,
                     })
 
         except Exception as e:
@@ -798,6 +800,33 @@ def _flatten_results(all_results):
             if 'close_slope' in d:
                 row['close_slope'] = round(float(d['close_slope']), 3) if d.get('close_slope') is not None else None
 
+            # ── Viability (freshness) hesapla ──
+            signal_close = item.get('signal_close', item['close'])
+            current_close = item['close']
+            bars_ago = item.get('bars_ago', 0)
+
+            if signal_close and signal_close > 0:
+                if row['direction'] == 'BUY':
+                    move_pct = (current_close - signal_close) / signal_close * 100
+                else:
+                    move_pct = (signal_close - current_close) / signal_close * 100
+            else:
+                move_pct = 0.0
+
+            if bars_ago == 0:
+                viability = 'TAZE'
+            elif move_pct < -5:
+                viability = 'KIRILMIS'
+            elif move_pct >= 3:
+                viability = 'GEC'
+            else:
+                viability = 'GIRILEBILIR'
+
+            row['signal_close'] = round(signal_close, 2)
+            row['move_pct'] = round(move_pct, 2)
+            row['bars_ago'] = bars_ago
+            row['viability'] = viability
+
             rows.append(row)
 
     if n_noise > 0:
@@ -887,6 +916,11 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
   font-size: 0.7rem; font-weight: 800; letter-spacing: 0.5px;
   font-family: var(--font-mono);
 }}
+/* Viability badges */
+.v-taze {{ color: var(--nox-cyan); font-weight: 700; }}
+.v-ok   {{ color: var(--nox-green); font-weight: 700; }}
+.v-gec  {{ color: var(--nox-yellow); font-weight: 700; }}
+.v-brok {{ color: var(--nox-red); font-weight: 700; }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -1113,6 +1147,7 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
 <th onclick="sb('rr_ratio')">RR</th>
 <th>Detay</th>
 <th onclick="sb('signal_date')">Tarih</th>
+<th onclick="sb('viability')">Durum</th>
 </tr></thead><tbody id="tb"></tbody></table>
 </div>
 <div class="nox-status" id="st"><b>{len(flat)}</b> / {len(flat)}</div>
@@ -1131,6 +1166,8 @@ let curTab='all',col='_rule',asc=true;
 function ruleSort(a,b){{
   const pa=RP[a.rule]||9, pb=RP[b.rule]||9;
   if(pa!==pb) return pa-pb;
+  const va=VP[a.viability]||9, vb=VP[b.viability]||9;
+  if(va!==vb) return va-vb;
   return (b.quality||0)-(a.quality||0);
 }}
 
@@ -1162,6 +1199,13 @@ function initTabs(){{
   allBtn.innerHTML='<span class="dot" style="background:var(--text-muted)"></span>Tumu <span class="cnt">'+D.length+'</span>';
   allBtn.onclick=()=>setTab('all');
   bar.appendChild(allBtn);
+  /* Girilebilir tab */
+  const viaCnt=D.filter(d=>d.viability==='TAZE'||d.viability==='GIRILEBILIR').length;
+  const viaBtn=document.createElement('div');
+  viaBtn.className='tab-btn';viaBtn.dataset.t='viable';
+  viaBtn.innerHTML='<span class="dot" style="background:var(--nox-green)"></span>\u2713 Girilebilir <span class="cnt">'+viaCnt+'</span>';
+  viaBtn.onclick=()=>setTab('viable');
+  bar.appendChild(viaBtn);
   /* Kural tab'lari */
   RO.forEach(r=>{{
     const rd=RD[r];
@@ -1189,7 +1233,8 @@ function af(){{
   const minQ=parseInt(document.getElementById('fQ').value)||0;
   const sr=document.getElementById('fS').value.toUpperCase();
   let f=D.filter(r=>{{
-    if(curTab!=='all' && r.rule!==curTab) return false;
+    if(curTab==='viable'){{ if(r.viability!=='TAZE'&&r.viability!=='GIRILEBILIR') return false; }}
+    else if(curTab!=='all' && r.rule!==curTab) return false;
     if(dir&&r.direction!==dir) return false;
     if(r.quality<minQ) return false;
     if(sr&&!r.ticker.includes(sr)) return false;
@@ -1197,6 +1242,11 @@ function af(){{
   }});
   if(col==='_rule'){{
     f.sort(ruleSort);
+  }} else if(col==='viability'){{
+    f.sort((a,b)=>{{
+      const va=VP[a.viability]||9, vb=VP[b.viability]||9;
+      return asc?va-vb:vb-va;
+    }});
   }} else {{
     f.sort((a,b)=>{{
       let va=a[col],vb=b[col];
@@ -1260,6 +1310,18 @@ function mkRR(rr){{
   return '<span class="'+cls+'">'+rr.toFixed(1)+'</span>';
 }}
 
+const VP={{'TAZE':1,'GIRILEBILIR':2,'GEC':3,'KIRILMIS':4}};
+function mkViability(r){{
+  const ba=r.bars_ago||0;
+  const mp=r.move_pct||0;
+  const v=r.viability||'TAZE';
+  if(v==='TAZE') return '<span class="v-taze">\u25cf TAZE</span>';
+  if(v==='GIRILEBILIR') return `<span class="v-ok">\u2713 ${{mp>0?'+':''}}${{mp.toFixed(1)}}% ${{ba}}G</span>`;
+  if(v==='GEC') return `<span class="v-gec">\u26a0 ${{mp>0?'+':''}}${{mp.toFixed(1)}}% ${{ba}}G</span>`;
+  if(v==='KIRILMIS') return `<span class="v-brok">\u2717 ${{mp>0?'+':''}}${{mp.toFixed(1)}}% ${{ba}}G</span>`;
+  return '\u2014';
+}}
+
 function render(data){{
   const tb=document.getElementById('tb');tb.innerHTML='';
   data.forEach(r=>{{
@@ -1276,7 +1338,8 @@ function render(data){{
 <td class="${{qCls}}" style="font-weight:700">${{r.quality}}</td>
 <td>${{mkRR(r.rr_ratio||0)}}</td>
 <td>${{mkDetail(r)}}</td>
-<td style="color:var(--text-muted);font-size:.72rem">${{dateStr}}</td>`;
+<td style="color:var(--text-muted);font-size:.72rem">${{dateStr}}</td>
+<td style="font-size:.72rem;white-space:nowrap">${{mkViability(r)}}</td>`;
     tb.appendChild(tr);
   }});
   document.getElementById('st').innerHTML='<b>'+data.length+'</b> / '+D.length;
@@ -1380,8 +1443,8 @@ def main():
                         help='Tip filtresi (TRIPLE, RSI, MACD, OBV, MFI, ADX, PV)')
     parser.add_argument('--csv', action='store_true', help='CSV kaydet')
     parser.add_argument('--output', default='output', help='CSV cikti dizini')
-    parser.add_argument('--scan-bars', type=int, default=10,
-                        help='Son kac bar taranacak (default: 10)')
+    parser.add_argument('--scan-bars', type=int, default=5,
+                        help='Son kac bar taranacak (default: 5)')
     parser.add_argument('--weekly', action='store_true',
                         help='Haftalik veri ile tara (daily resample)')
     parser.add_argument('--monthly', action='store_true',
