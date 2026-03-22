@@ -22,21 +22,23 @@ load_dotenv()
 
 warnings.filterwarnings("ignore")
 
-# ── Parametreler ──────────────────────────────────────────────
+# ── Parametreler (optimized — 2Y backtest 2548 trade) ─────────
 BB_LENGTH = 20
 BB_MULT = 2.0
-BB_WIDTH_THRESH = 1.60
+BB_WIDTH_THRESH = 0.80          # was 1.60 — sıkı squeeze
 ATR_LENGTH = 10
 ATR_SMA_LENGTH = 20
-ATR_SQUEEZE_RATIO = 2.00
-MIN_SQUEEZE_BARS = 3
+ATR_SQUEEZE_RATIO = 1.00        # was 2.00 — sıkı ATR filtre
+MIN_SQUEEZE_BARS = 5            # was 3
+MAX_SQUEEZE_BARS = 40           # yeni — kutu genişliğini sınırla
 IMPULSE_ATR_MULT = 0.35
 VOL_SMA_LENGTH = 20
 VOL_MULT = 1.5
 MAX_RANGE_ATR_MULT = 6.0
 HTF_EMA_LENGTH = 50
-ATR_SL_MULT = 0.5
+ATR_SL_MULT = 0.3              # was 0.5 — daha sıkı SL
 TP_RATIOS = [1.0, 2.0, 3.0]
+LONG_ONLY = True                # SHORT sinyaller kaldırıldı (TP1 %1.3)
 
 # ── Sembol listesi ────────────────────────────────────────────
 SYMBOLS_FILE = Path(__file__).parent / "tools" / "bist_symbols.txt"
@@ -108,23 +110,32 @@ def scan_single(df: pd.DataFrame, use_vol: bool, use_htf: bool):
     sq_start = 0
     for i in range(n):
         if pd.isna(df["squeeze"].iloc[i]):
+            if in_sq:
+                in_sq = False
             continue
         if df["squeeze"].iloc[i]:
             if not in_sq:
                 sq_start = i
                 in_sq = True
+            elif (i - sq_start + 1) > MAX_SQUEEZE_BARS:
+                sq_len = MAX_SQUEEZE_BARS
+                if sq_len >= MIN_SQUEEZE_BARS:
+                    squeezes.append(
+                        {"start": sq_start, "end": sq_start + MAX_SQUEEZE_BARS - 1, "length": sq_len}
+                    )
+                sq_start = i
         else:
             if in_sq:
                 sq_len = i - sq_start
                 if sq_len >= MIN_SQUEEZE_BARS:
                     squeezes.append(
-                        {"start": sq_start, "end": i - 1, "length": sq_len}
+                        {"start": sq_start, "end": i - 1, "length": min(sq_len, MAX_SQUEEZE_BARS)}
                     )
                 in_sq = False
 
     # Hâlâ squeeze içindeyse
     if in_sq:
-        sq_len = n - sq_start
+        sq_len = min(n - sq_start, MAX_SQUEEZE_BARS)
         if sq_len >= MIN_SQUEEZE_BARS:
             return {
                 "status": "SQUEEZE",
@@ -184,8 +195,8 @@ def scan_single(df: pd.DataFrame, use_vol: bool, use_htf: bool):
                 breakout = {"dir": "LONG", "bar": i, "atr": atr_i}
                 break
 
-        # SHORT kırılma
-        if c_i < box_bot and c_i < o_i and impulse_ok and vol_ok:
+        # SHORT kırılma (LONG_ONLY modda devre dışı)
+        if not LONG_ONLY and c_i < box_bot and c_i < o_i and impulse_ok and vol_ok:
             htf_ok = (not use_htf) or (c_i < htf_ema_i)
             if htf_ok:
                 breakout = {"dir": "SHORT", "bar": i, "atr": atr_i}

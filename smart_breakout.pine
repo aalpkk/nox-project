@@ -5,11 +5,12 @@ indicator("Smart Breakout Targets", overlay=true, max_boxes_count=50, max_lines_
 grpSq   = "🔍 Squeeze Ayarları"
 bbLen   = input.int(20,    "BB Periyot",            group=grpSq)
 bbMult  = input.float(2.0, "BB Çarpan",             group=grpSq)
-bbThr   = input.float(1.60,"BB Width Eşik",         group=grpSq, step=0.05)
+bbThr   = input.float(0.80,"BB Width Eşik",         group=grpSq, step=0.05)
 atrLen  = input.int(10,    "ATR Periyot",            group=grpSq)
 atrSma  = input.int(20,    "ATR SMA Periyot",        group=grpSq)
-atrThr  = input.float(2.00,"ATR Squeeze Oran",       group=grpSq, step=0.05)
-minSq   = input.int(3,     "Min Squeeze Bar",        group=grpSq)
+atrThr  = input.float(1.00,"ATR Squeeze Oran",       group=grpSq, step=0.05)
+minSq   = input.int(5,     "Min Squeeze Bar",        group=grpSq)
+maxSq   = input.int(40,    "Max Squeeze Bar",        group=grpSq)
 
 grpBo   = "🚀 Kırılma Ayarları"
 impMul  = input.float(0.35,"Impulse ATR Çarpan",     group=grpBo, step=0.05)
@@ -20,7 +21,7 @@ useHtf  = input.bool(false,"HTF EMA Filtresi",       group=grpBo)
 htfLen  = input.int(50,    "HTF EMA Periyot",        group=grpBo)
 
 grpTp   = "🎯 TP/SL Ayarları"
-slMul   = input.float(0.5, "SL ATR Çarpan",          group=grpTp, step=0.1)
+slMul   = input.float(0.3, "SL ATR Çarpan",          group=grpTp, step=0.1)
 tp1r    = input.float(1.0, "TP1 R:R",                group=grpTp, step=0.5)
 tp2r    = input.float(2.0, "TP2 R:R",                group=grpTp, step=0.5)
 tp3r    = input.float(3.0, "TP3 R:R",                group=grpTp, step=0.5)
@@ -60,10 +61,12 @@ sqBB    = bbW < bbWSma * bbThr
 sqATR   = atrVal < atrSmaV * atrThr
 squeeze = sqBB and sqATR
 
-// Squeeze sayacı
+// Squeeze sayacı (max cap)
 var int sqCount = 0
 if squeeze
     sqCount += 1
+    if sqCount > maxSq
+        sqCount := 0  // max aşıldı → reset
 else
     sqCount := 0
 
