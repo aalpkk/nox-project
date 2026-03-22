@@ -1,0 +1,369 @@
+//@version=5
+indicator("Smart Breakout Targets", overlay=true, max_boxes_count=50, max_lines_count=200, max_labels_count=100)
+
+// ── GİRİŞ PARAMETRELERİ ────────────────────────────────────
+grpSq   = "🔍 Squeeze Ayarları"
+bbLen   = input.int(20,    "BB Periyot",            group=grpSq)
+bbMult  = input.float(2.0, "BB Çarpan",             group=grpSq)
+bbThr   = input.float(1.60,"BB Width Eşik",         group=grpSq, step=0.05)
+atrLen  = input.int(10,    "ATR Periyot",            group=grpSq)
+atrSma  = input.int(20,    "ATR SMA Periyot",        group=grpSq)
+atrThr  = input.float(2.00,"ATR Squeeze Oran",       group=grpSq, step=0.05)
+minSq   = input.int(3,     "Min Squeeze Bar",        group=grpSq)
+
+grpBo   = "🚀 Kırılma Ayarları"
+impMul  = input.float(0.35,"Impulse ATR Çarpan",     group=grpBo, step=0.05)
+volLen  = input.int(20,    "Hacim SMA Periyot",      group=grpBo)
+volMul  = input.float(1.5, "Hacim Çarpan",           group=grpBo, step=0.1)
+useVol  = input.bool(true, "Hacim Filtresi",         group=grpBo)
+useHtf  = input.bool(false,"HTF EMA Filtresi",       group=grpBo)
+htfLen  = input.int(50,    "HTF EMA Periyot",        group=grpBo)
+
+grpTp   = "🎯 TP/SL Ayarları"
+slMul   = input.float(0.5, "SL ATR Çarpan",          group=grpTp, step=0.1)
+tp1r    = input.float(1.0, "TP1 R:R",                group=grpTp, step=0.5)
+tp2r    = input.float(2.0, "TP2 R:R",                group=grpTp, step=0.5)
+tp3r    = input.float(3.0, "TP3 R:R",                group=grpTp, step=0.5)
+useTrl  = input.bool(true, "Trail Stop Kullan",       group=grpTp)
+maxRng  = input.float(6.0, "Max Kutu Aralık (ATR×)", group=grpTp, step=0.5)
+
+grpVis  = "🎨 Görsel"
+showBox = input.bool(true, "Kutuları Göster",         group=grpVis)
+showLvl = input.bool(true, "TP/SL Çizgilerini Göster",group=grpVis)
+showLbl = input.bool(true, "Etiketleri Göster",       group=grpVis)
+showBg  = input.bool(true, "Squeeze Arka Plan",       group=grpVis)
+
+// ── HESAPLAMALAR ────────────────────────────────────────────
+// Bollinger Band Width
+basis   = ta.sma(close, bbLen)
+dev     = bbMult * ta.stdev(close, bbLen)
+bbUp    = basis + dev
+bbLo    = basis - dev
+bbW     = (bbUp - bbLo) / basis
+bbWSma  = ta.sma(bbW, bbLen)
+
+// ATR
+atrVal  = ta.atr(atrLen)
+atrSmaV = ta.sma(atrVal, atrSma)
+
+// Hacim
+volSma  = ta.sma(volume, volLen)
+
+// HTF EMA
+htfEma  = ta.ema(close, htfLen)
+
+// Body
+bodyVal = math.abs(close - open)
+
+// ── SQUEEZE TESPİTİ ────────────────────────────────────────
+sqBB    = bbW < bbWSma * bbThr
+sqATR   = atrVal < atrSmaV * atrThr
+squeeze = sqBB and sqATR
+
+// Squeeze sayacı
+var int sqCount = 0
+if squeeze
+    sqCount += 1
+else
+    sqCount := 0
+
+validSq = sqCount >= minSq
+
+// Arka plan
+bgcolor(showBg and squeeze ? color.new(color.yellow, 90) : na)
+
+// ── KUTU OLUŞUMU ────────────────────────────────────────────
+var float boxHi    = na
+var float boxLo    = na
+var float boxMid   = na
+var bool  boxReady = false
+var box   curBox   = na
+var int   sqStartBar = na
+
+// Squeeze başlangıcını takip et
+if squeeze and not squeeze[1]
+    sqStartBar := bar_index
+    boxHi := high
+    boxLo := low
+
+// Squeeze sırasında güncelle
+if squeeze
+    boxHi := math.max(nz(boxHi, high), high)
+    boxLo := math.min(nz(boxLo, low),  low)
+
+// Squeeze bittiğinde kutu çiz
+sqEnd = not squeeze and squeeze[1] and sqCount[1] >= minSq
+if sqEnd
+    rawRange = boxHi - boxLo
+    // Aralık sınırlama
+    if rawRange > maxRng * atrVal
+        center = (boxHi + boxLo) / 2.0
+        boxHi := center + 3.0 * atrVal
+        boxLo := center - 3.0 * atrVal
+    boxMid   := (boxHi + boxLo) / 2.0
+    boxReady := true
+
+    if showBox and not na(sqStartBar)
+        // Önceki kutuyu sil (çakışma önleme)
+        if not na(curBox)
+            box.delete(curBox)
+        curBox := box.new(sqStartBar, boxHi, bar_index, boxLo,
+             border_color=color.gray, border_width=1, border_style=line.style_dashed,
+             bgcolor=color.new(color.blue, 92))
+        // Üst direnç zonu
+        box.new(sqStartBar, boxHi, bar_index, boxMid,
+             border_color=na, bgcolor=color.new(color.red, 93))
+        // Alt destek zonu
+        box.new(sqStartBar, boxMid, bar_index, boxLo,
+             border_color=na, bgcolor=color.new(color.green, 93))
+        // Merkez çizgisi
+        line.new(sqStartBar, boxMid, bar_index, boxMid,
+             color=color.gray, style=line.style_dashed, width=1)
+
+// ── KIRILMA TESPİTİ ────────────────────────────────────────
+impulseOk = bodyVal > atrVal * impMul
+volOk     = (not useVol) or (volSma > 0 and volume > volSma * volMul)
+bullCandle = close > open
+bearCandle = close < open
+
+longBO  = boxReady and close > boxHi and bullCandle and impulseOk and volOk
+shortBO = boxReady and close < boxLo and bearCandle and impulseOk and volOk
+
+// HTF filtre
+if useHtf
+    longBO  := longBO  and close > htfEma
+    shortBO := shortBO and close < htfEma
+
+// ── SEVİYE HESAPLAMA ────────────────────────────────────────
+var float entryP  = na
+var float slP     = na
+var float tp1P    = na
+var float tp2P    = na
+var float tp3P    = na
+var float riskP   = na
+var int   tradeDir = 0  // 1=long, -1=short, 0=yok
+var float trailP  = na
+var bool  tp1Hit  = false
+var bool  tp2Hit  = false
+var bool  tp3Hit  = false
+var int   sqBarsAtBO = 0
+
+// Sinyal gücü
+var int strength = 0
+
+// Önceki çizgileri temizle
+var line slLine  = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var line trlLine = na
+var label boLabel = na
+
+f_clearLines() =>
+    if not na(slLine)
+        line.delete(slLine)
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    if not na(tp3Line)
+        line.delete(tp3Line)
+    if not na(trlLine)
+        line.delete(trlLine)
+    if not na(boLabel)
+        label.delete(boLabel)
+
+// ── LONG KIRILMA ────────────────────────────────────────────
+if longBO
+    f_clearLines()
+    entryP   := close
+    slP      := boxLo - atrVal * slMul
+    riskP    := math.abs(entryP - slP)
+    tp1P     := entryP + riskP * tp1r
+    tp2P     := entryP + riskP * tp2r
+    tp3P     := entryP + riskP * tp3r
+    tradeDir := 1
+    trailP   := slP
+    tp1Hit   := false
+    tp2Hit   := false
+    tp3Hit   := false
+    boxReady := false
+
+    // Squeeze bar sayısı
+    sqBarsAtBO := sqCount[1] >= minSq ? sqCount[1] : 0
+
+    // Sinyal gücü
+    strength := 0
+    if impulseOk
+        strength += 1
+    if useVol and volSma > 0 and volume > volSma * volMul
+        strength += 1
+    if useHtf and close > htfEma
+        strength += 1
+    if sqBarsAtBO >= 6
+        strength += 1
+
+    if showLvl
+        slLine  := line.new(bar_index, slP,  bar_index + 30, slP,  color=color.red,    width=2, style=line.style_solid)
+        tp1Line := line.new(bar_index, tp1P, bar_index + 30, tp1P, color=color.green,   width=1, style=line.style_dashed)
+        tp2Line := line.new(bar_index, tp2P, bar_index + 30, tp2P, color=color.green,   width=1, style=line.style_dashed)
+        tp3Line := line.new(bar_index, tp3P, bar_index + 30, tp3P, color=color.lime,    width=2, style=line.style_solid)
+    if showLbl
+        sLbl = strength >= 4 ? "STRONG" : strength >= 2 ? "MEDIUM" : "NORMAL"
+        boLabel := label.new(bar_index, low, "LONG " + sLbl + " (" + str.tostring(strength) + "/4)\nE:" + str.tostring(entryP, "#.##") + " SL:" + str.tostring(slP, "#.##") + "\nTP1:" + str.tostring(tp1P, "#.##") + " TP2:" + str.tostring(tp2P, "#.##") + " TP3:" + str.tostring(tp3P, "#.##"),
+             style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+
+// ── SHORT KIRILMA ───────────────────────────────────────────
+if shortBO
+    f_clearLines()
+    entryP   := close
+    slP      := boxHi + atrVal * slMul
+    riskP    := math.abs(slP - entryP)
+    tp1P     := entryP - riskP * tp1r
+    tp2P     := entryP - riskP * tp2r
+    tp3P     := entryP - riskP * tp3r
+    tradeDir := -1
+    trailP   := slP
+    tp1Hit   := false
+    tp2Hit   := false
+    tp3Hit   := false
+    boxReady := false
+
+    sqBarsAtBO := sqCount[1] >= minSq ? sqCount[1] : 0
+
+    strength := 0
+    if impulseOk
+        strength += 1
+    if useVol and volSma > 0 and volume > volSma * volMul
+        strength += 1
+    if useHtf and close < htfEma
+        strength += 1
+    if sqBarsAtBO >= 6
+        strength += 1
+
+    if showLvl
+        slLine  := line.new(bar_index, slP,  bar_index + 30, slP,  color=color.red,    width=2, style=line.style_solid)
+        tp1Line := line.new(bar_index, tp1P, bar_index + 30, tp1P, color=color.green,   width=1, style=line.style_dashed)
+        tp2Line := line.new(bar_index, tp2P, bar_index + 30, tp2P, color=color.green,   width=1, style=line.style_dashed)
+        tp3Line := line.new(bar_index, tp3P, bar_index + 30, tp3P, color=color.lime,    width=2, style=line.style_solid)
+    if showLbl
+        sLbl = strength >= 4 ? "STRONG" : strength >= 2 ? "MEDIUM" : "NORMAL"
+        boLabel := label.new(bar_index, high, "SHORT " + sLbl + " (" + str.tostring(strength) + "/4)\nE:" + str.tostring(entryP, "#.##") + " SL:" + str.tostring(slP, "#.##") + "\nTP1:" + str.tostring(tp1P, "#.##") + " TP2:" + str.tostring(tp2P, "#.##") + " TP3:" + str.tostring(tp3P, "#.##"),
+             style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+// ── TRADE YÖNETİMİ ─────────────────────────────────────────
+if tradeDir == 1
+    // LONG trail
+    if useTrl
+        if not tp1Hit and high >= tp1P
+            tp1Hit := true
+            trailP := entryP
+        if not tp2Hit and high >= tp2P
+            tp2Hit := true
+            trailP := tp1P
+        if not tp3Hit and high >= tp3P
+            tp3Hit := true
+            trailP := tp2P
+        // Trail stop vuruldu
+        if low <= trailP
+            tradeDir := 0
+    else
+        // Trail yok — TP3 veya SL
+        if high >= tp3P
+            tradeDir := 0
+        if low <= slP
+            tradeDir := 0
+    // SL (trail öncesi)
+    if tradeDir == 1 and not tp1Hit and low <= slP
+        tradeDir := 0
+
+if tradeDir == -1
+    // SHORT trail
+    if useTrl
+        if not tp1Hit and low <= tp1P
+            tp1Hit := true
+            trailP := entryP
+        if not tp2Hit and low <= tp2P
+            tp2Hit := true
+            trailP := tp1P
+        if not tp3Hit and low <= tp3P
+            tp3Hit := true
+            trailP := tp2P
+        if high >= trailP
+            tradeDir := 0
+    else
+        if low <= tp3P
+            tradeDir := 0
+        if high >= slP
+            tradeDir := 0
+    if tradeDir == -1 and not tp1Hit and high >= slP
+        tradeDir := 0
+
+// Trail çizgisini güncelle
+if useTrl and tradeDir != 0 and showLvl
+    if not na(trlLine)
+        line.delete(trlLine)
+    trlColor = trailP == slP ? color.red : trailP == entryP ? color.orange : color.green
+    trlLine := line.new(bar_index - 1, trailP, bar_index, trailP, color=trlColor, width=2, style=line.style_dotted, extend=extend.right)
+
+// ── TP HIT İŞARETLERİ ──────────────────────────────────────
+if tradeDir == 1
+    if tp1Hit and not tp1Hit[1]
+        label.new(bar_index, high, "TP1 ✓", style=label.style_label_down, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+    if tp2Hit and not tp2Hit[1]
+        label.new(bar_index, high, "TP2 ✓", style=label.style_label_down, color=color.new(color.green, 30), textcolor=color.white, size=size.tiny)
+    if tp3Hit and not tp3Hit[1]
+        label.new(bar_index, high, "TP3 ✓", style=label.style_label_down, color=color.new(color.lime, 20), textcolor=color.white, size=size.tiny)
+
+if tradeDir == -1
+    if tp1Hit and not tp1Hit[1]
+        label.new(bar_index, low, "TP1 ✓", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+    if tp2Hit and not tp2Hit[1]
+        label.new(bar_index, low, "TP2 ✓", style=label.style_label_up, color=color.new(color.green, 30), textcolor=color.white, size=size.tiny)
+    if tp3Hit and not tp3Hit[1]
+        label.new(bar_index, low, "TP3 ✓", style=label.style_label_up, color=color.new(color.lime, 20), textcolor=color.white, size=size.tiny)
+
+// ── BAR RENK ────────────────────────────────────────────────
+barcolor(squeeze ? color.yellow : longBO ? color.lime : shortBO ? color.fuchsia : na)
+
+// ── PLOT — Squeeze göstergesi ───────────────────────────────
+plotshape(longBO,  title="Long Kırılma",  style=shape.triangleup,   location=location.belowbar, color=color.lime,    size=size.normal)
+plotshape(shortBO, title="Short Kırılma", style=shape.triangledown, location=location.abovebar, color=color.fuchsia, size=size.normal)
+
+// ── BİLGİ TABLOSU ──────────────────────────────────────────
+var table infoTbl = table.new(position.top_right, 2, 7, bgcolor=color.new(#161b22, 10), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(infoTbl, 0, 0, "Durum",        text_color=color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 1, "Squeeze",       text_color=color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 2, "Kutu",          text_color=color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 3, "Yön",           text_color=color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 4, "Giriş",         text_color=color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 5, "Trail",         text_color=color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 6, "Güç",           text_color=color.gray, text_size=size.small)
+
+    statusTxt = squeeze ? "🟡 SIKIŞMA" : boxReady ? "📦 KUTU" : tradeDir != 0 ? "🚀 TRADE" : "—"
+    statusClr = squeeze ? color.yellow : boxReady ? color.blue : tradeDir != 0 ? color.green : color.gray
+    table.cell(infoTbl, 1, 0, statusTxt, text_color=statusClr, text_size=size.small)
+
+    table.cell(infoTbl, 1, 1, squeeze ? str.tostring(sqCount) + " bar" : "—", text_color=squeeze ? color.yellow : color.gray, text_size=size.small)
+
+    boxTxt = not na(boxHi) and (boxReady or tradeDir != 0) ? str.tostring(boxHi, "#.##") + " / " + str.tostring(boxLo, "#.##") : "—"
+    table.cell(infoTbl, 1, 2, boxTxt, text_color=color.white, text_size=size.small)
+
+    dirTxt = tradeDir == 1 ? "LONG" : tradeDir == -1 ? "SHORT" : "—"
+    dirClr = tradeDir == 1 ? color.green : tradeDir == -1 ? color.red : color.gray
+    table.cell(infoTbl, 1, 3, dirTxt, text_color=dirClr, text_size=size.small)
+
+    table.cell(infoTbl, 1, 4, tradeDir != 0 ? str.tostring(entryP, "#.##") : "—", text_color=color.white, text_size=size.small)
+
+    trlTxt = tradeDir != 0 and useTrl ? str.tostring(trailP, "#.##") : "—"
+    table.cell(infoTbl, 1, 5, trlTxt, text_color=color.orange, text_size=size.small)
+
+    sLabel = strength >= 4 ? "4/4 🟢" : strength >= 2 ? str.tostring(strength) + "/4 🟡" : str.tostring(strength) + "/4 ⚫"
+    table.cell(infoTbl, 1, 6, tradeDir != 0 ? sLabel : "—", text_color=color.white, text_size=size.small)
+
+// ── ALERTLER ────────────────────────────────────────────────
+alertcondition(longBO,  title="Long Kırılma",  message="LONG kırılma: {{ticker}} @ {{close}}")
+alertcondition(shortBO, title="Short Kırılma", message="SHORT kırılma: {{ticker}} @ {{close}}")
+alertcondition(squeeze and sqCount == minSq, title="Squeeze Başladı", message="Squeeze aktif: {{ticker}}")
