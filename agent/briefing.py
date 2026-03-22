@@ -325,13 +325,12 @@ def _ml_overlay_v2(lists_dict, latest_signals):
         # ── Step 2-3: Fiyat verisi + XU100 ──
         price_data, xu_df = _fetch_yf_price_data(tickers)
 
-        # ── Step 4: Dual ML skorla ──
-        if not scorer.loaded:
-            print("  [ML] Model yüklenemedi — atlanıyor")
-            ml_scores = {}
-        else:
-            ml_scores = scorer.score_tickers_dual(tickers, price_data, xu_df)
+        # ── Step 4: Dual ML skorla (score_tickers_dual lazy-load tetikler) ──
+        ml_scores = scorer.score_tickers_dual(tickers, price_data, xu_df)
+        if ml_scores:
             print(f"  [ML] {len(ml_scores)}/{len(tickers)} ticker skorlandı (dual)")
+        else:
+            print("  [ML] ML skorlama başarısız veya model yok — composite SBT-only")
 
         # ── Step 5: SBT verisi (opportunistic, hata={}) ──
         print("  [ML] SBT verisi çekiliyor...")
