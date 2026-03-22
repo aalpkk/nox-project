@@ -911,6 +911,184 @@ def _generate_html(all_results, n_scanned, date_str, tf_label=''):
 &bull; <b>RR</b>: Risk/Odul orani. RR&ge;2 <span class="rr-hi">yesil</span>, RR&ge;1 <span class="rr-mid">sari</span>, RR&lt;1 <span class="rr-lo">kirmizi</span>.
 </div>
 </details>
+<!-- Backtest Sonuclari -->
+<details style="margin-bottom:16px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:10px;padding:12px 16px;font-size:.78rem;color:var(--text-secondary);cursor:pointer;">
+<summary style="font-weight:700;color:var(--nox-orange);font-size:.82rem;cursor:pointer;user-select:none;">BACKTEST SONUCLARI (2y, 100K TL)</summary>
+<div style="margin-top:10px;line-height:1.8;">
+
+<b style="color:var(--text-primary);font-size:.85rem;">Portfolio Backtest &mdash; 2 Yil, 100K TL, 1138 Sinyal</b><br>
+<span style="color:var(--text-muted);font-size:.7rem;">Komisyon: %0.2 &bull; Max 10 es zamanli &bull; Pozisyon: %10 sermaye</span><br><br>
+
+<b style="color:var(--nox-cyan);">Strateji Karsilastirma</b>
+<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.72rem;margin:8px 0 14px;">
+<thead><tr style="border-bottom:1px solid var(--border-subtle);color:var(--text-muted);">
+<th style="text-align:left;padding:4px 8px;">Strateji</th>
+<th style="text-align:right;padding:4px 6px;">N</th>
+<th style="text-align:right;padding:4px 6px;">WR</th>
+<th style="text-align:right;padding:4px 6px;">PF</th>
+<th style="text-align:right;padding:4px 6px;">Sharpe</th>
+<th style="text-align:right;padding:4px 6px;">Equity</th>
+<th style="text-align:right;padding:4px 6px;">DD</th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid var(--border-subtle);">
+<td style="padding:4px 8px;color:var(--text-muted);">FIXED</td>
+<td style="text-align:right;padding:4px 6px;">579</td>
+<td style="text-align:right;padding:4px 6px;">54.6%</td>
+<td style="text-align:right;padding:4px 6px;">1.44</td>
+<td style="text-align:right;padding:4px 6px;">0.79</td>
+<td style="text-align:right;padding:4px 6px;">164K</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-red);">-20.1%</td>
+</tr>
+<tr style="border-bottom:1px solid var(--border-subtle);background:rgba(34,211,238,0.06);">
+<td style="padding:4px 8px;color:var(--nox-cyan);font-weight:700;">TRAILING</td>
+<td style="text-align:right;padding:4px 6px;">601</td>
+<td style="text-align:right;padding:4px 6px;">54.9%</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">1.73</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">1.34</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">202K</td>
+<td style="text-align:right;padding:4px 6px;">-16.8%</td>
+</tr>
+<tr>
+<td style="padding:4px 8px;color:var(--text-muted);">PARTIAL</td>
+<td style="text-align:right;padding:4px 6px;">654</td>
+<td style="text-align:right;padding:4px 6px;">52.0%</td>
+<td style="text-align:right;padding:4px 6px;">1.34</td>
+<td style="text-align:right;padding:4px 6px;">0.72</td>
+<td style="text-align:right;padding:4px 6px;">170K</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-red);">-18.4%</td>
+</tr>
+</tbody></table>
+
+<b style="color:var(--nox-cyan);">Kural Bazli Kirilim (TRAILING)</b>
+<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.72rem;margin:8px 0 14px;">
+<thead><tr style="border-bottom:1px solid var(--border-subtle);color:var(--text-muted);">
+<th style="text-align:left;padding:4px 8px;">Kural</th>
+<th style="text-align:right;padding:4px 6px;">N</th>
+<th style="text-align:right;padding:4px 6px;">WR</th>
+<th style="text-align:right;padding:4px 6px;">PF</th>
+<th style="text-align:right;padding:4px 6px;">PnL TL</th>
+<th style="text-align:right;padding:4px 6px;">Trail</th>
+<th style="text-align:right;padding:4px 6px;">Hold</th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid var(--border-subtle);">
+<td style="padding:4px 8px;color:var(--nox-red);font-weight:700;">B Kisa Setup</td>
+<td style="text-align:right;padding:4px 6px;">57</td>
+<td style="text-align:right;padding:4px 6px;">61.4%</td>
+<td style="text-align:right;padding:4px 6px;">1.50</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">+7,639</td>
+<td style="text-align:right;padding:4px 6px;">4%/4G</td>
+<td style="text-align:right;padding:4px 6px;">5G</td>
+</tr>
+<tr style="border-bottom:1px solid var(--border-subtle);">
+<td style="padding:4px 8px;color:var(--nox-green);font-weight:700;">C Yapisal</td>
+<td style="text-align:right;padding:4px 6px;">175</td>
+<td style="text-align:right;padding:4px 6px;">48.0%</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-yellow);">0.94</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-red);">-6,552</td>
+<td style="text-align:right;padding:4px 6px;">4%/3G</td>
+<td style="text-align:right;padding:4px 6px;">10G</td>
+</tr>
+<tr style="border-bottom:1px solid var(--border-subtle);background:rgba(74,222,128,0.06);">
+<td style="padding:4px 8px;color:var(--nox-orange);font-weight:700;">D AL (MACD)</td>
+<td style="text-align:right;padding:4px 6px;">229</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">58.1%</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">2.27</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">+79,685</td>
+<td style="text-align:right;padding:4px 6px;">4%/3G</td>
+<td style="text-align:right;padding:4px 6px;">10G</td>
+</tr>
+<tr style="border-bottom:1px solid var(--border-subtle);">
+<td style="padding:4px 8px;color:var(--nox-orange);font-weight:700;">D SAT (MACD)</td>
+<td style="text-align:right;padding:4px 6px;">147</td>
+<td style="text-align:right;padding:4px 6px;">54.4%</td>
+<td style="text-align:right;padding:4px 6px;">1.34</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">+11,346</td>
+<td style="text-align:right;padding:4px 6px;">2.5%/2G</td>
+<td style="text-align:right;padding:4px 6px;">5G</td>
+</tr>
+<tr>
+<td style="padding:4px 8px;color:var(--nox-blue);font-weight:700;">E Cover</td>
+<td style="text-align:right;padding:4px 6px;">67</td>
+<td style="text-align:right;padding:4px 6px;">46.3%</td>
+<td style="text-align:right;padding:4px 6px;">1.63</td>
+<td style="text-align:right;padding:4px 6px;color:var(--nox-green);">+14,517</td>
+<td style="text-align:right;padding:4px 6px;">3%/2G</td>
+<td style="text-align:right;padding:4px 6px;">5G</td>
+</tr>
+</tbody></table>
+
+<details style="margin-top:8px;padding:8px 12px;border-radius:6px;background:rgba(34,211,238,0.04);border:1px solid rgba(34,211,238,0.12);">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-cyan);font-size:.76rem;">C DARALTMA OPTIMIZASYONU</summary>
+<div style="margin-top:8px;line-height:1.7;">
+<span style="color:var(--text-muted);">C kurali 511 sinyalin %58&apos;i MFI_HIDDEN (WR %55.6 &mdash; zayif). 3 seviyeli filtre testi:</span>
+<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.7rem;margin:6px 0;">
+<thead><tr style="border-bottom:1px solid var(--border-subtle);color:var(--text-muted);">
+<th style="text-align:left;padding:3px 6px;">Filtre</th><th style="text-align:right;padding:3px 6px;">N</th>
+<th style="text-align:right;padding:3px 6px;">WR</th><th style="text-align:right;padding:3px 6px;">PF</th>
+<th style="text-align:right;padding:3px 6px;">Sharpe</th><th style="text-align:right;padding:3px 6px;">Equity</th>
+<th style="text-align:right;padding:3px 6px;">C WR</th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;">Yok</td><td style="text-align:right;padding:3px 6px;">579</td><td style="text-align:right;padding:3px 6px;">54.6%</td><td style="text-align:right;padding:3px 6px;">1.44</td><td style="text-align:right;padding:3px 6px;">0.79</td><td style="text-align:right;padding:3px 6px;">163K</td><td style="text-align:right;padding:3px 6px;">48.0%</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;">Moderate</td><td style="text-align:right;padding:3px 6px;">547</td><td style="text-align:right;padding:3px 6px;">56.5%</td><td style="text-align:right;padding:3px 6px;">1.54</td><td style="text-align:right;padding:3px 6px;">0.92</td><td style="text-align:right;padding:3px 6px;">175K</td><td style="text-align:right;padding:3px 6px;">51.6%</td></tr>
+<tr style="background:rgba(74,222,128,0.08);"><td style="padding:3px 6px;font-weight:700;color:var(--nox-green);">Aggressive</td><td style="text-align:right;padding:3px 6px;">514</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">58.9%</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">1.69</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">1.08</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">180K</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">59.0%</td></tr>
+</tbody></table>
+<span style="color:var(--nox-green);">&bull;</span> Aggressive: MFI_HIDDEN + OBV_HIDDEN cikarilir &rarr; WR +4.3pp, PF +0.25, Sharpe +0.29
+</div>
+</details>
+
+<details style="margin-top:8px;padding:8px 12px;border-radius:6px;background:rgba(251,146,60,0.04);border:1px solid rgba(251,146,60,0.12);">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-orange);font-size:.76rem;">TRAIL PARAMETRE OPTIMIZASYONU</summary>
+<div style="margin-top:8px;line-height:1.7;">
+<span style="color:var(--text-muted);">Kural bazli trailing stop sweep (aggressive C filtre ile):</span>
+<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.7rem;margin:6px 0;">
+<thead><tr style="border-bottom:1px solid var(--border-subtle);color:var(--text-muted);">
+<th style="text-align:left;padding:3px 6px;">Kural</th>
+<th style="text-align:right;padding:3px 6px;">Trail</th><th style="text-align:right;padding:3px 6px;">Start</th>
+<th style="text-align:right;padding:3px 6px;">WR</th><th style="text-align:right;padding:3px 6px;">PF</th>
+<th style="text-align:right;padding:3px 6px;">Sharpe</th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;color:var(--nox-red);">B</td><td style="text-align:right;padding:3px 6px;">4.0%</td><td style="text-align:right;padding:3px 6px;">4G</td><td style="text-align:right;padding:3px 6px;">55.2%</td><td style="text-align:right;padding:3px 6px;">1.75</td><td style="text-align:right;padding:3px 6px;">1.36</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;color:var(--nox-green);">C</td><td style="text-align:right;padding:3px 6px;">4.0%</td><td style="text-align:right;padding:3px 6px;">3G</td><td style="text-align:right;padding:3px 6px;">55.0%</td><td style="text-align:right;padding:3px 6px;">1.76</td><td style="text-align:right;padding:3px 6px;">1.37</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);background:rgba(74,222,128,0.06);"><td style="padding:3px 6px;color:var(--nox-orange);font-weight:700;">D_BUY</td><td style="text-align:right;padding:3px 6px;">4.0%</td><td style="text-align:right;padding:3px 6px;">3G</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">55.6%</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">1.80</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">1.38</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;color:var(--nox-orange);">D_SELL</td><td style="text-align:right;padding:3px 6px;">2.5%</td><td style="text-align:right;padding:3px 6px;">2G</td><td style="text-align:right;padding:3px 6px;">54.9%</td><td style="text-align:right;padding:3px 6px;">1.73</td><td style="text-align:right;padding:3px 6px;">1.34</td></tr>
+<tr><td style="padding:3px 6px;color:var(--nox-blue);">E</td><td style="text-align:right;padding:3px 6px;">3.0%</td><td style="text-align:right;padding:3px 6px;">2G</td><td style="text-align:right;padding:3px 6px;">54.8%</td><td style="text-align:right;padding:3px 6px;">1.74</td><td style="text-align:right;padding:3px 6px;">1.35</td></tr>
+</tbody></table>
+
+<b style="color:var(--nox-cyan);">Combined Optimized vs Baseline:</b>
+<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:.7rem;margin:6px 0;">
+<thead><tr style="border-bottom:1px solid var(--border-subtle);color:var(--text-muted);">
+<th style="text-align:left;padding:3px 6px;"></th><th style="text-align:right;padding:3px 6px;">Baseline</th>
+<th style="text-align:right;padding:3px 6px;">Optimized</th><th style="text-align:right;padding:3px 6px;">Delta</th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;">WR</td><td style="text-align:right;padding:3px 6px;">54.9%</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">55.8%</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">+0.9%</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;">PF</td><td style="text-align:right;padding:3px 6px;">1.73</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">1.87</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">+0.14</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;">Sharpe</td><td style="text-align:right;padding:3px 6px;">1.34</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">1.46</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">+0.12</td></tr>
+<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 6px;">PnL TL</td><td style="text-align:right;padding:3px 6px;">126,793</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">145,234</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">+18,441</td></tr>
+<tr><td style="padding:3px 6px;">Max DD</td><td style="text-align:right;padding:3px 6px;">-16.8%</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">-16.5%</td><td style="text-align:right;padding:3px 6px;color:var(--nox-green);">+0.3%</td></tr>
+</tbody></table>
+<span style="color:var(--nox-orange);">&bull;</span> Ana bulgu: Tum kurallar 4% trail&apos;e yoneliyor &mdash; mevcut 3% erken kesiyor. D_BUY en guclu motor (PF 2.40).
+</div>
+</details>
+
+<details style="margin-top:8px;padding:8px 12px;border-radius:6px;background:rgba(96,165,250,0.04);border:1px solid rgba(96,165,250,0.12);">
+<summary style="cursor:pointer;font-weight:700;color:var(--nox-blue);font-size:.76rem;">EXECUTION REHBERI</summary>
+<div style="margin-top:8px;line-height:1.7;">
+<b style="color:var(--nox-red);">B (Kisa Setup):</b> 5G hedef. Trail 4%/4G. SAT yonlu &mdash; WR %61-76.<br>
+<b style="color:var(--nox-orange);">D BUY (MACD Premium):</b> 7-10G hold. Trail 4%/3G. <span style="color:var(--nox-green);">En guclu motor</span> &mdash; PF 2.27, MFE/MAE 5.66x. K40-59 sweet spot (%67.4 WR).<br>
+<b style="color:var(--nox-orange);">D SELL (MACD Premium):</b> 3-4G max 5G. Trail 2.5%/2G. Hizli &mdash; erken cikis.<br>
+<b style="color:var(--nox-green);">C (Yapisal Gizli):</b> 5G+runner. Trail 4%/3G. MFI_HIDDEN cikar, RSI/MACD_HIDDEN tut. C zayif &mdash; dusuk agirlik.<br>
+<b style="color:var(--nox-blue);">E (Cover):</b> 4-5G max 5G. Trail 3%/2G. Taktik pozisyon &mdash; dusuk agirlik.<br><br>
+<span style="color:var(--text-muted);">&bull; Hicbir kural hizli degil &mdash; erken cikis 7-17pp WR kaybi. &bull; Trail cikislari WR %43 vs max_hold WR %81.</span>
+</div>
+</details>
+
+</div>
+</details>
 <!-- Kural Kartlari -->
 <div class="rule-cards" id="ruleCards"></div>
 <!-- Tab Bar -->
