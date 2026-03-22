@@ -78,11 +78,16 @@ def _to_weekly(df):
     }).dropna(subset=['close'])
     # Son mum yarimsa at: W-FRI label = haftanin Cumasi.
     # Veri o Cumaya kadar ulasmamissa mum yarimdir.
+    # Ancak tatil/yari gun durumunda (orn: Cuma tatil, Persembe son islem gunu)
+    # mum yeterince tamamdir — Persembe veya Cuma verisi varsa kabul et.
     if len(weekly) > 0:
         last_friday = weekly.index[-1]
         last_data_date = df.index[-1]
-        if last_data_date < last_friday:  # Cuma kapanis verisi henuz yok
-            weekly = weekly.iloc[:-1]
+        if last_data_date < last_friday:
+            # Haftanin Persembe veya sonrasiysa mum yeterli (tatil/yari gun)
+            days_before_friday = (last_friday - last_data_date).days
+            if days_before_friday > 1:  # Carsamba veya oncesi = gercekten yarim
+                weekly = weekly.iloc[:-1]
     return weekly
 
 
