@@ -37,6 +37,7 @@ jobs:
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
           GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
           BIST_PAGES_BASE_URL: "https://aalpkk.github.io/bist-signals"
+          ML_SCORING_ENABLED: "1"
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
@@ -48,6 +49,7 @@ jobs:
           GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
           BIST_PAGES_BASE_URL: "https://aalpkk.github.io/bist-signals"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ML_SCORING_ENABLED: "1"
 
       - uses: actions/upload-artifact@v4
         with:
