@@ -37,6 +37,7 @@ from agent.institutional import format_sms_line as ice_format_line
 from agent.institutional import sms_icon as ice_sms_icon
 from agent.html_report import generate_briefing_html
 from agent.prompts import BRIEFING_PROMPT
+from agent.sector_regime import load_sector_map, fetch_sector_regimes, get_ticker_sector_regime
 from core.reports import send_telegram, push_html_to_github
 
 _TZ_TR = timezone(timedelta(hours=3))
@@ -126,9 +127,9 @@ def _fetch_sbt_data():
     import requests
     from html.parser import HTMLParser
 
-    bist_base = os.environ.get("BIST_PAGES_BASE_URL",
-                                "https://aalpkk.github.io/bist-signals").rstrip("/")
-    url = f"{bist_base}/smart_breakout.html"
+    nox_base = os.environ.get("GH_PAGES_BASE_URL",
+                               "https://aalpkk.github.io/nox-signals").rstrip("/")
+    url = f"{nox_base}/smart_breakout.html"
 
     try:
         resp = requests.get(url, timeout=15)
@@ -188,37 +189,46 @@ class _SBTTableParser:
             def __init__(self):
                 super().__init__()
                 self.rows = []
-                self._current_ticker = None
                 self._cells = []
                 self._in_td = False
                 self._td_text = ""
-                self._in_tbody = False
+                self._in_table = False
+                self._in_a_tk = False
+                self._row_ticker = None
 
             def handle_starttag(self, tag, attrs):
                 attrs_d = dict(attrs)
-                if tag == 'tbody':
-                    self._in_tbody = True
-                elif tag == 'tr' and self._in_tbody:
-                    t = attrs_d.get('data-ticker')
-                    if t:
-                        self._current_ticker = t
-                        self._cells = []
-                elif tag == 'td' and self._current_ticker is not None:
+                if tag in ('table', 'tbody'):
+                    self._in_table = True
+                elif tag == 'tr' and self._in_table:
+                    self._cells = []
+                    self._row_ticker = attrs_d.get('data-ticker')
+                elif tag == 'td' and self._in_table:
                     self._in_td = True
                     self._td_text = ""
+                elif tag == 'a' and self._in_td:
+                    if 'tk' in (attrs_d.get('class', '')):
+                        self._in_a_tk = True
 
             def handle_endtag(self, tag):
-                if tag == 'tbody':
-                    self._in_tbody = False
+                if tag == 'table':
+                    self._in_table = False
+                elif tag == 'a' and self._in_a_tk:
+                    self._in_a_tk = False
                 elif tag == 'td' and self._in_td:
                     self._in_td = False
                     self._cells.append(self._td_text.strip())
-                elif tag == 'tr' and self._current_ticker is not None:
-                    if self._cells:
-                        self.rows.append((self._current_ticker, self._cells))
-                    self._current_ticker = None
+                elif tag == 'tr' and self._in_table and self._cells:
+                    # Ticker: data-ticker attr veya ilk hücredeki text
+                    ticker = self._row_ticker or self._cells[0].strip()
+                    if ticker and len(ticker) >= 3 and not ticker.startswith('Sembol'):
+                        self.rows.append((ticker, self._cells))
+                    self._cells = []
+                    self._row_ticker = None
 
             def handle_data(self, data):
+                if self._in_a_tk and self._in_td:
+                    self._row_ticker = data.strip()
                 if self._in_td:
                     self._td_text += data
 
@@ -487,18 +497,19 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                     })
                     continue
 
-                # WEAK zone: W < 0.45
-                if ml_w is not None and ml_w < 0.45:
-                    if src_cnt >= 2 or is_tier or has_quality:
-                        # Multi-source, tier1, veya SBT A+/A → koru
+                # WEAK zone: W < 0.40 (gevşetildi, 0.45→0.40)
+                rule_s = sig_or_meta.get('_rule_score', final_score) if isinstance(sig_or_meta, dict) else final_score
+                if ml_w is not None and ml_w < 0.40:
+                    if src_cnt >= 2 or is_tier or has_quality or rule_s >= 150:
+                        # Multi-source, tier1, SBT A+/A, veya güçlü rule → koru
                         kept.append((ticker, final_score, reasons, sig_or_meta))
                         continue
                     else:
-                        # Tek kaynak + W<0.45 + kalitesiz → eleme
+                        # Tek kaynak + W<0.40 + kalitesiz + düşük rule → eleme
                         ml_filtered.append({
                             'ticker': ticker,
-                            'reason': f'tek kaynak + W<0.45 ({int(ml_w*100)})',
-                            'rule_score': sig_or_meta.get('_rule_score', final_score) if isinstance(sig_or_meta, dict) else final_score,
+                            'reason': f'tek kaynak + W<0.40 ({int(ml_w*100)})',
+                            'rule_score': rule_s,
                             'list': key,
                         })
                         continue
@@ -525,6 +536,86 @@ def _ml_overlay_v2(lists_dict, latest_signals):
         print(f"  [ML] Hata: {e} — atlanıyor")
         traceback.print_exc()
         return None
+
+
+# ═══════════════════════════════════════════
+# SEKTÖR REGIME OVERLAY (Soft gate + badge)
+# ═══════════════════════════════════════════
+
+def _sector_regime_overlay(lists_dict):
+    """Sektör endeksi regime overlay — soft gate + uyarı badge.
+
+    Her sinyal'in sektör endeksine RT trend kurallarını uygular.
+    trend_score >= 2 → ✅SEKTÖR↑ (+3 bonus), < 2 → ⚠️SEKTÖR↓ (-2 penaltı).
+    Hiçbir sinyal elenmez — sadece bilgi.
+    """
+    try:
+        print("\n📊 Sektör regime analizi yapılıyor...")
+
+        ticker_to_sector, sector_indexes = load_sector_map()
+
+        # Shortlist'teki unique sektör endekslerini topla
+        needed_sectors = set()
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+            for item in lists_dict.get(key, []):
+                ticker = item[0]
+                si = ticker_to_sector.get(ticker)
+                if si:
+                    needed_sectors.add(si)
+
+        if not needed_sectors:
+            print("  [SEKTÖR] Sektör mapping bulunamadı — atlanıyor")
+            return
+
+        print(f"  [SEKTÖR] {len(needed_sectors)} sektör endeksi çekiliyor...")
+        sector_regimes = fetch_sector_regimes(needed_sectors)
+
+        if not sector_regimes:
+            print("  [SEKTÖR] Sektör verisi çekilemedi — atlanıyor")
+            return
+
+        trend_count = sum(1 for r in sector_regimes.values() if r['trend_score'] >= 2)
+        weak_count = len(sector_regimes) - trend_count
+        print(f"  [SEKTÖR] {len(sector_regimes)} endeks: {trend_count} trendde, {weak_count} zayıf")
+
+        # Her sinyal'e badge enjekte
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+            items = lists_dict.get(key, [])
+            for i, (ticker, score, reasons, sig_or_meta) in enumerate(items):
+                info = get_ticker_sector_regime(ticker, sector_regimes, ticker_to_sector)
+                if not info:
+                    continue
+
+                # Badge enjekte
+                if isinstance(reasons, list):
+                    reasons.append(info['badge'])
+
+                # Score adjust: trend≥2 → +3, else → -2
+                if info['trend_score'] >= 2:
+                    new_score = score + 3
+                else:
+                    new_score = score - 2
+
+                # Metadata enjekte
+                if isinstance(sig_or_meta, dict):
+                    sig_or_meta['sector_index'] = info['sector_index']
+                    sig_or_meta['sector_regime'] = info['regime_label']
+                    sig_or_meta['sector_trend_score'] = info['trend_score']
+
+                items[i] = (ticker, new_score, reasons, sig_or_meta)
+
+        # Store sector data for message building
+        lists_dict['_sector_regimes'] = sector_regimes
+        lists_dict['_sector_stats'] = {
+            'trend': trend_count,
+            'weak': weak_count,
+            'no_data': len(needed_sectors) - len(sector_regimes),
+        }
+
+    except Exception as e:
+        print(f"  [SEKTÖR] Hata: {e} — atlanıyor")
+        import traceback
+        traceback.print_exc()
 
 
 # ── Günlük Input ──
@@ -702,9 +793,20 @@ def _compute_4_lists(latest_signals, confluence_results=None):
             tier_label = sig_type
             score = 400 + q  # CMB her zaman güçlü
         elif sig_type in ('DONUS', 'DÖNÜŞ') and q >= 70:
+            # DÖNÜŞ hard gate — RVOL>5 eleme (backtest: %33 WR)
+            _d_rvol = s.get('rvol', 0) or 0
+            if _d_rvol > 5:
+                continue  # hard eleme — aşırı spike, çöp sinyal
             passes = True
-            tier_label = 'DÖNÜŞ'
-            score = 50 + q
+            # ALTIN badge — ATR<3% + Part=3 (backtest: %63-70 WR)
+            _d_atr_pct = s.get('atr_pct', 99) or 99
+            _d_part = s.get('part_score', 0) or 0
+            if _d_atr_pct < 3 and _d_part == 3:
+                tier_label = '🥇DÖNÜŞ'
+                score = 150 + q  # ALTIN DÖNÜŞ — GÜÇLÜ seviyesine yakın
+            else:
+                tier_label = 'DÖNÜŞ'
+                score = 50 + q
         # PB ve düşük kaliteli sinyaller dahil değil
 
         if not passes:
@@ -1035,8 +1137,16 @@ def _compute_4_lists(latest_signals, confluence_results=None):
                         quality += 30  # Kalite filtrelerini geçmiş
                     elif sig_type in ('BILESEN', 'BİLEŞEN'):
                         quality += 25
+                    elif sig_type in ('DONUS', 'DÖNÜŞ'):
+                        # ALTIN DÖNÜŞ: ATR<3% + Part=3 (backtest: %63-70 WR)
+                        _d_atr = sig.get('atr_pct', 99) or 99
+                        _d_part = sig.get('part_score', 0) or 0
+                        if _d_atr < 3 and _d_part == 3:
+                            quality += 25  # ALTIN DÖNÜŞ
+                        else:
+                            quality += 10  # Normal DÖNÜŞ
                     else:
-                        quality += 10  # DÖNÜŞ
+                        quality += 10
                     q = sig.get('quality', 0) or 0
                     quality += q // 10  # Q=100→10, Q=75→7
                 elif list_name == 'tavan':
@@ -1351,6 +1461,8 @@ def _push_priority_tickers(lists_dict):
                         'ml_swing': sig.get('ml_score_swing'),
                         'ml_flag': sig.get('ml_effect', 'neutral'),
                         'sbt_bucket': sig.get('sbt_bucket'),
+                        'sector_index': sig.get('sector_index'),
+                        'sector_regime': sig.get('sector_regime'),
                         'final_score': item[1],
                     }
                 else:
@@ -1361,6 +1473,8 @@ def _push_priority_tickers(lists_dict):
                         'ml_swing': None,
                         'ml_flag': 'neutral',
                         'sbt_bucket': None,
+                        'sector_index': None,
+                        'sector_regime': None,
                         'final_score': item[1],
                     }
                 details.append(detail)
@@ -1495,12 +1609,13 @@ def _build_shortlist_message(lists_dict,
     ]
 
     def _sig_line(ticker, reasons, sig):
-        """Sinyal satırını formatla — SBT + dual ML + gate bilgisi."""
+        """Sinyal satırını formatla — SBT + dual ML + gate + sektör bilgisi."""
         # Kaynak tag'leri topla
         source_tags = []
         sbt_bucket = ''
         gate_tag = ''
         ml_badge = ''
+        sector_badge = ''
         other_reasons = []
 
         for r in reasons:
@@ -1510,6 +1625,10 @@ def _build_shortlist_message(lists_dict,
                 ml_badge = r
             elif 'soft gate' in r.lower():
                 gate_tag = 'soft gate'
+            elif r.startswith('✅') and 'X' in r:
+                sector_badge = r
+            elif r.startswith('⚠️') and '↓' in r:
+                sector_badge = r
             else:
                 other_reasons.append(r)
 
@@ -1524,6 +1643,8 @@ def _build_shortlist_message(lists_dict,
             parts.append(f"| {ml_badge}")
         if gate_tag:
             parts.append(f"| {gate_tag}")
+        if sector_badge:
+            parts.append(sector_badge)
 
         return " ".join(parts)
 
@@ -1665,6 +1786,18 @@ def _build_shortlist_message(lists_dict,
             tag = _LIST_SHORT.get(f['list'], f['list'])
             lines.append(f"  <b>{f['ticker']}</b> [{tag}] rule:{f['rule_score']}p — {f['reason']}")
 
+    # ── D. Sektör Durumu ──
+    sector_regimes = lists_dict.get('_sector_regimes', {})
+    if sector_regimes:
+        trend_sectors = sorted(k for k, v in sector_regimes.items() if v['trend_score'] >= 2)
+        weak_sectors = sorted(k for k, v in sector_regimes.items() if v['trend_score'] < 2)
+        lines.append("")
+        lines.append("📊 <b>Sektör Durumu</b>")
+        if trend_sectors:
+            lines.append("Trendde: " + " ".join(f"{s}✅" for s in trend_sectors))
+        if weak_sectors:
+            lines.append("Zayıf: " + " ".join(f"{s}⚠️" for s in weak_sectors))
+
     return "\n".join(lines)
 
 
@@ -1785,6 +1918,9 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         # ML overlay v2 (feature flag kontrollü, 3-katmanlı)
         _ml_overlay_v2(lists_dict, latest_signals)
 
+        # Sektör regime overlay (soft gate + badge)
+        _sector_regime_overlay(lists_dict)
+
         _LIST_LABELS = [
             ('alsat', '📋 AL/SAT Tarama'),
             ('tavan', '🔺 Tavan Tarayıcı'),
@@ -1861,6 +1997,9 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     # ML overlay v2 (feature flag kontrollü, 3-katmanlı)
     _ml_overlay_v2(lists_dict, latest_signals)
+
+    # Sektör regime overlay (soft gate + badge)
+    _sector_regime_overlay(lists_dict)
 
     news_items = fetch_market_news()
     if news_items:

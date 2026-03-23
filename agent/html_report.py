@@ -91,6 +91,10 @@ def _prepare_lists_json(lists_dict, max_per_list=5):
                 if sig.get('vol_tier'):
                     entry['vol_tier'] = sig['vol_tier']
                     entry['vol_tier_icon'] = sig.get('vol_tier_icon', '')
+                # Sektör regime
+                if sig.get('sector_index'):
+                    entry['sector_index'] = sig['sector_index']
+                    entry['sector_regime'] = sig.get('sector_regime', '')
             entries.append(entry)
         result[key] = {
             'label': _LIST_LABELS.get(key, key),
@@ -133,6 +137,10 @@ def _prepare_overlap_json(lists_dict, max_per_group=5):
             if meta.get('vol_tier'):
                 entry['vol_tier'] = meta['vol_tier']
                 entry['vol_tier_icon'] = meta.get('vol_tier_icon', '')
+            # Sektör regime
+            if meta.get('sector_index'):
+                entry['sector_index'] = meta['sector_index']
+                entry['sector_regime'] = meta.get('sector_regime', '')
         groups.setdefault(oc, []).append(entry)
     # Her grubun ilk max_per_group'unu al, buyuk overlap_count once
     result = []
@@ -154,6 +162,59 @@ def _prepare_macro_detail(macro_data):
         'signals': macro_data.get('signals', []),
         'categories': _sanitize(macro_data.get('category_regimes', {})),
         'instruments': _sanitize(macro_data.get('snapshot', [])),
+    }
+
+
+def _prepare_shortlist_json(lists_dict, max_items=10):
+    """Tier1 + Tier2A + Tier2B shortlist verisini JSON-serializable dict'e cevir."""
+    result = {}
+    for key, label, icon in [
+        ('tier1', 'Tier 1 — Çakışmalar', '🔥'),
+        ('tier2a', 'Tier 2A — Tactical ⚡1G', '⚡'),
+        ('tier2b', 'Tier 2B — Swing-Lite', '⭐'),
+    ]:
+        items = lists_dict.get(key, [])
+        entries = []
+        for ticker, score, reasons, meta in items[:max_items]:
+            entry = {
+                'ticker': ticker,
+                'score': score,
+                'reasons': reasons,
+            }
+            if isinstance(meta, dict):
+                entry['in_lists'] = meta.get('in_lists', [])
+                if meta.get('ml_score_short') is not None:
+                    entry['ml_score_short'] = meta['ml_score_short']
+                if meta.get('ml_score_swing') is not None:
+                    entry['ml_score_swing'] = meta['ml_score_swing']
+                if meta.get('ml_effect'):
+                    entry['ml_effect'] = meta['ml_effect']
+                if meta.get('sbt_bucket'):
+                    entry['sbt_bucket'] = meta['sbt_bucket']
+                if meta.get('sector_index'):
+                    entry['sector_index'] = meta['sector_index']
+                    entry['sector_regime'] = meta.get('sector_regime', '')
+            entries.append(entry)
+        result[key] = {
+            'label': label,
+            'icon': icon,
+            'total': len(items),
+            'items': entries,
+        }
+    return result
+
+
+def _prepare_sector_summary(lists_dict):
+    """Sektör regime özeti — trendde ve zayıf endeksler."""
+    regimes = lists_dict.get('_sector_regimes', {})
+    if not regimes:
+        return {}
+    trend = sorted(k for k, v in regimes.items() if v['trend_score'] >= 2)
+    weak = sorted(k for k, v in regimes.items() if v['trend_score'] < 2)
+    return {
+        'trend': trend,
+        'weak': weak,
+        'total': len(regimes),
     }
 
 
@@ -211,6 +272,14 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         ensure_ascii=False)
     sat_set_json = json.dumps(
         list(sat_tickers) if sat_tickers else [],
+        ensure_ascii=False)
+
+    # Shortlist (tier1/2a/2b) + sector summary
+    shortlist_json = json.dumps(
+        _sanitize(_prepare_shortlist_json(lists_dict)) if lists_dict else {},
+        ensure_ascii=False)
+    sector_summary_json = json.dumps(
+        _sanitize(_prepare_sector_summary(lists_dict)) if lists_dict else {},
         ensure_ascii=False)
 
     # ML rerank + filtered data
@@ -393,6 +462,17 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 .vol-tier.vt-altin {{ background: rgba(250,204,21,0.2); color: #facc15; }}
 .vol-tier.vt-gumus {{ background: rgba(192,192,192,0.2); color: #c0c0c0; }}
 .vol-tier.vt-bronz {{ background: rgba(205,127,50,0.2); color: #cd7f32; }}
+
+/* SECTOR BADGE */
+.sector-badge {{
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    white-space: nowrap;
+}}
+.sector-badge.sector-ok {{ background: rgba(74,222,128,0.15); color: #4ade80; }}
+.sector-badge.sector-warn {{ background: rgba(251,146,60,0.15); color: #fb923c; }}
 
 /* GATE TAG */
 .gate-tag {{
@@ -703,6 +783,13 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         </div>
     </div>
 
+    <!-- SHORTLIST -->
+    <h2 class="section-title">⬡ Shortlist — Öncelikli Hisseler</h2>
+    <div id="shortlistContainer"></div>
+
+    <!-- SECTOR SUMMARY -->
+    <div id="sectorSummary" style="margin-bottom:1.5rem"></div>
+
     <!-- SIGNAL LISTS -->
     <h2 class="section-title">📊 Sinyal Listeleri</h2>
     <div class="signal-grid" id="signalGrid"></div>
@@ -765,6 +852,89 @@ const SHORTLIST_SET = new Set({shortlist_set_json});
 const SAT_SET = new Set({sat_set_json});
 const RERANK_DATA = {rerank_json};
 const FILTERED_DATA = {filtered_json};
+const SHORTLIST = {shortlist_json};
+const SECTOR_SUMMARY = {sector_summary_json};
+
+// ── Shortlist (Tier1/2A/2B) ──
+(function() {{
+    const container = document.getElementById('shortlistContainer');
+    if (!SHORTLIST || Object.keys(SHORTLIST).length === 0) {{
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Shortlist verisi yok</div>';
+        return;
+    }}
+    const TV_BASE = '{_TV_BASE}';
+    let html = '';
+    ['tier1', 'tier2a', 'tier2b'].forEach(key => {{
+        const list = SHORTLIST[key];
+        if (!list || list.items.length === 0) return;
+        html += `<div style="margin-bottom:1rem">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+                <span style="font-size:1.1rem">${{list.icon}}</span>
+                <span style="font-weight:600;color:var(--text-primary)">${{list.label}}</span>
+                <span style="color:var(--text-muted);font-size:0.75rem">${{list.total}} hisse</span>
+            </div>`;
+        list.items.forEach((item, i) => {{
+            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !r.startsWith('⚠️')).slice(0, 3).join(' ');
+            const listsTag = (item.in_lists || []).map(l => ({{alsat:'AS',tavan:'TVN',nw:'NW',rt:'RT',sbt:'SBT'}})[l] || l).join('+');
+            // ML badge
+            let mlBadge = '';
+            if (item.ml_score_short != null || item.ml_score_swing != null) {{
+                const mkB = (val, pfx) => {{
+                    if (val == null) return '';
+                    const p = Math.round(val * 100);
+                    const c = val >= 0.60 ? 'ml-strong' : val >= 0.40 ? 'ml-mid' : 'ml-weak';
+                    return `<span class="ml-${{pfx}} ${{c}}">${{pfx.toUpperCase()}}${{p}}</span>`;
+                }};
+                mlBadge = `<span class="ml-dual">${{mkB(item.ml_score_short,'s')}}${{mkB(item.ml_score_swing,'w')}}</span>`;
+            }}
+            // SBT badge
+            let sbtBadge = '';
+            if (item.sbt_bucket) {{
+                const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
+                sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
+            }}
+            // Sector badge
+            let sectorBadge = '';
+            if (item.sector_index) {{
+                if (item.sector_regime === 'TREND') {{
+                    sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
+                }} else {{
+                    sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
+                }}
+            }}
+            html += `<div class="signal-card">
+                <span class="rank">${{i+1}}</span>
+                <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
+                ${{listsTag ? `<span class="lists-tag">${{listsTag}}</span>` : ''}}
+                <span class="reasons">${{reasons}}</span>
+                ${{sectorBadge}}${{sbtBadge}}${{mlBadge}}
+                <span class="score-pill">${{item.score}}p</span>
+            </div>`;
+        }});
+        html += '</div>';
+    }});
+    container.innerHTML = html;
+}})();
+
+// ── Sektör Özeti ──
+(function() {{
+    const container = document.getElementById('sectorSummary');
+    if (!SECTOR_SUMMARY || !SECTOR_SUMMARY.total) return;
+    let html = '<div style="padding:0.5rem 0.8rem;background:var(--bg-card);border-radius:8px;border:1px solid var(--border-subtle)">';
+    html += '<div style="font-weight:600;margin-bottom:0.3rem;font-size:0.85rem">📊 Sektör Endeks Durumu</div>';
+    if (SECTOR_SUMMARY.trend && SECTOR_SUMMARY.trend.length > 0) {{
+        html += '<div style="font-size:0.8rem;margin-bottom:0.2rem">Trendde: ';
+        html += SECTOR_SUMMARY.trend.map(s => `<span class="sector-badge sector-ok">✅${{s}}</span>`).join(' ');
+        html += '</div>';
+    }}
+    if (SECTOR_SUMMARY.weak && SECTOR_SUMMARY.weak.length > 0) {{
+        html += '<div style="font-size:0.8rem">Zayıf: ';
+        html += SECTOR_SUMMARY.weak.map(s => `<span class="sector-badge sector-warn">⚠️${{s}}↓</span>`).join(' ');
+        html += '</div>';
+    }}
+    html += '</div>';
+    container.innerHTML = html;
+}})();
 
 // ── Sinyal Listeleri (2x2 grid) ──
 (function() {{
@@ -783,8 +953,8 @@ const FILTERED_DATA = {filtered_json};
             html += '<div style="color:var(--text-muted);font-size:0.8rem">Sinyal yok</div>';
         }}
         list.items.forEach((item, i) => {{
-            // Filter out ML/SBT badges from reasons (rendered separately)
-            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:')).slice(0, 4).join(' ');
+            // Filter out ML/SBT/sector badges from reasons (rendered separately)
+            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !r.startsWith('⚠️')).slice(0, 4).join(' ');
             // Dual ML badge
             let mlBadge = '';
             if (item.ml_score_short != null || item.ml_score_swing != null) {{
@@ -820,11 +990,20 @@ const FILTERED_DATA = {filtered_json};
                 const vtIcon = item.vol_tier_icon || '';
                 volBadge = `<span class="vol-tier ${{vtCls}}">${{vtIcon}}${{item.vol_tier}}</span>`;
             }}
+            // Sector badge
+            let sectorBadge = '';
+            if (item.sector_index) {{
+                if (item.sector_regime === 'TREND') {{
+                    sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
+                }} else {{
+                    sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
+                }}
+            }}
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{volBadge}}${{sbtBadge}}${{mlBadge}}${{gateTag}}
+                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{gateTag}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -857,7 +1036,7 @@ const FILTERED_DATA = {filtered_json};
             }}).join('+');
             const relaxed = item.relaxed ? ' [RT↓]' : '';
             const reason0 = item.reasons && item.reasons.length > 0
-                ? item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:'))[0] || ''
+                ? item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !r.startsWith('⚠️'))[0] || ''
                 : '';
             // Dual ML badge
             let mlBadge = '';
@@ -887,11 +1066,20 @@ const FILTERED_DATA = {filtered_json};
                 const vtIcon = item.vol_tier_icon || '';
                 volBadge = `<span class="vol-tier ${{vtCls}}">${{vtIcon}}${{item.vol_tier}}</span>`;
             }}
+            // Sector badge
+            let sectorBadge = '';
+            if (item.sector_index) {{
+                if (item.sector_regime === 'TREND') {{
+                    sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
+                }} else {{
+                    sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
+                }}
+            }}
             html += `<div class="overlap-item">
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="lists-tag">${{listsTag}}${{relaxed}}</span>
                 <span class="reasons-text">${{reason0}}</span>
-                ${{volBadge}}${{sbtBadge}}${{mlBadge}}
+                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}
                 <span class="quality">${{item.quality}}p</span>
             </div>`;
         }});

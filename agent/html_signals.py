@@ -30,7 +30,7 @@ _HTML_SOURCES = {
     'rt_weekly': f'{_NOX_BASE}/regime_transition_weekly.html',
     'tavan': f'{_BIST_BASE}/tavan.html',
     'alsat': f'{_BIST_BASE}/',  # index.html
-    'sbt': f'{_BIST_BASE}/smart_breakout.html',  # SBT — Katman C, ML overlay'de consume edilir
+    'sbt': f'{_NOX_BASE}/smart_breakout.html',  # SBT — Katman C, ML overlay'de consume edilir
 }
 
 _TIMEOUT = 20
@@ -533,6 +533,17 @@ def fetch_alsat_signals(base_url=None):
             entry['target_price'] = round(row['tp'], 2) if isinstance(row['tp'], float) else row['tp']
         if row.get('macd_hist') is not None:
             entry['macd'] = round(row['macd_hist'], 4) if isinstance(row['macd_hist'], float) else row['macd_hist']
+        # Hacim meta (DONUS tier için)
+        if row.get('rvol') is not None:
+            entry['rvol'] = round(float(row['rvol']), 1)
+        if row.get('atr_pct') is not None:
+            entry['atr_pct'] = round(float(row['atr_pct']), 2)
+        elif row.get('atr') and row.get('close'):
+            entry['atr_pct'] = round(float(row['atr']) / float(row['close']) * 100, 2)
+        if row.get('part_score') is not None:
+            entry['part_score'] = int(row['part_score'])
+        if row.get('cmf') is not None:
+            entry['cmf'] = round(float(row['cmf']), 3)
         signals.append(entry)
 
     n_al = sum(1 for s in signals if s['karar'] == 'AL')
@@ -559,17 +570,19 @@ class _SBTBreakoutParser(HTMLParser):
         self._in_td = False
         self._td_text = ""
         self._td_data_val = None
-        self._in_tbody = False
+        self._in_table = False
         self._current_ticker = None
 
     def handle_starttag(self, tag, attrs):
         attrs_d = dict(attrs)
-        if tag == 'tbody':
-            self._in_tbody = True
-        elif tag == 'tr' and self._in_tbody:
+        if tag == 'table':
+            self._in_table = True
+        elif tag == 'tbody':
+            self._in_table = True
+        elif tag == 'tr' and self._in_table:
             self._current_row = []
             self._current_ticker = None
-        elif tag == 'td' and self._in_tbody:
+        elif tag == 'td' and self._in_table:
             self._in_td = True
             self._td_text = ""
             self._td_data_val = attrs_d.get('data-val')
@@ -579,14 +592,16 @@ class _SBTBreakoutParser(HTMLParser):
                 pass  # text content'i handle_data'da yakalanır
 
     def handle_endtag(self, tag):
-        if tag == 'tbody':
-            self._in_tbody = False
+        if tag == 'table':
+            self._in_table = False
+        elif tag == 'tbody':
+            pass  # table tag kapanışına güveniyoruz
         elif tag == 'td' and self._in_td:
             self._in_td = False
             val = self._td_data_val if self._td_data_val is not None else self._td_text.strip()
             self._current_row.append(val)
             self._td_data_val = None
-        elif tag == 'tr' and self._in_tbody and self._current_row:
+        elif tag == 'tr' and self._in_table and self._current_row:
             if len(self._current_row) >= 10:
                 # İlk kolon = sembol (ticker)
                 ticker = self._current_row[0].strip()
@@ -609,8 +624,8 @@ def fetch_sbt_signals(base_url=None):
 
     Returns: scanner_reader formatında signal dicts listesi
     """
-    _, bist_base = _get_base_urls()
-    url = f"{bist_base}/smart_breakout.html" if not base_url else f"{base_url}/smart_breakout.html"
+    nox_base, _ = _get_base_urls()
+    url = f"{nox_base}/smart_breakout.html" if not base_url else f"{base_url}/smart_breakout.html"
 
     html = _fetch_html(url)
     if not html:
