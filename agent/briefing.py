@@ -37,7 +37,6 @@ from agent.institutional import format_sms_line as ice_format_line
 from agent.institutional import sms_icon as ice_sms_icon
 from agent.html_report import generate_briefing_html
 from agent.prompts import BRIEFING_PROMPT
-from agent.sector_regime import load_sector_map, fetch_sector_regimes, fetch_index_regimes, get_ticker_sector_regime
 from core.reports import send_telegram, push_html_to_github
 
 _TZ_TR = timezone(timedelta(hours=3))
@@ -549,7 +548,10 @@ def _sector_regime_overlay(lists_dict):
     2) Tüm BIST endekslerini (şehir hariç) çekip özet için saklar.
     Hiçbir sinyal elenmez — sadece bilgi.
     """
-    from agent.sector_regime import _ALL_INDEX_CODES, _ALL_INDICES
+    from agent.sector_regime import (
+        _ALL_INDEX_CODES, _ALL_INDICES,
+        load_sector_map, fetch_index_regimes, get_ticker_sector_regime,
+    )
 
     try:
         print("\n📊 Endeks & sektör regime analizi yapılıyor...")

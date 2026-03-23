@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt tvdatafeed>=2.1
 
       # Sinyaller artık GitHub Pages HTML'lerden okunuyor (tek kaynak)
       # Artifact download'a gerek yok
