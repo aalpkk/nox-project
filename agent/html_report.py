@@ -242,7 +242,8 @@ def _prepare_sector_summary(lists_dict):
 
 def generate_briefing_html(briefing_text, macro_data, confluence_results,
                            signal_summary, lists_dict=None, news_items=None,
-                           shortlist_tickers=None, sat_tickers=None):
+                           shortlist_tickers=None, sat_tickers=None,
+                           limit_order_text=None):
     """
     Brifing HTML raporu olustur.
 
@@ -312,8 +313,10 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         _sanitize(lists_dict.get('_ml_filtered', [])) if lists_dict else [],
         ensure_ascii=False)
 
-    # Brifing metnini HTML'e cevir + ticker linkleri
-    briefing_html = _linkify_tickers(_markdown_to_html(briefing_text))
+    # Limit order AI metnini HTML'e çevir
+    limit_order_html = ""
+    if limit_order_text:
+        limit_order_html = _linkify_tickers(_markdown_to_html(limit_order_text))
 
     html = f"""<!DOCTYPE html>
 <html lang="tr">
@@ -827,6 +830,10 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     <!-- ML FILTERED -->
     <h2 class="section-title">⚠️ Filtreyle Elenenler</h2>
     <div id="filteredContainer"></div>
+
+    <!-- LIMIT ORDER STRATEGY (AI) -->
+    <h2 class="section-title">💰 Giriş Stratejisi</h2>
+    <div id="limitOrderContainer" class="briefing-text">{limit_order_html if limit_order_html else '<p style="color:var(--text-muted)">AI giriş stratejisi üretilmedi (--no-ai)</p>'}</div>
 
     <!-- MACRO -->
     <h2 class="section-title">🌍 Makro Durum</h2>

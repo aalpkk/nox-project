@@ -1829,6 +1829,417 @@ def _build_shortlist_message(lists_dict,
     return "\n".join(lines)
 
 
+# ═══════════════════════════════════════════
+# TEMPLATE-BASED BRİFİNG (AI yerine kod ile üretim)
+# ═══════════════════════════════════════════
+
+def _build_template_briefing(macro_result, signal_summary, lists_dict,
+                              latest_signals, news_items=None,
+                              confluence_results=None):
+    """Kod tabanlı brifing — AI olmadan tüm verileri template ile formatla.
+
+    AI sadece limit order stratejisi için çağrılır (ayrı fonksiyon).
+    Bu fonksiyon: makro + tarama + shortlist + çelişki + sektör + strateji üretir.
+    """
+    now = datetime.now(_TZ_TR)
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+
+    lines = [f"<b>⬡ NOX Brifing — {now.strftime('%d.%m.%Y %H:%M')}</b>", ""]
+
+    # ── 1. KÜRESEL ORTAM ──
+    if macro_result:
+        regime = macro_result.get('regime', 'N/A')
+        risk = macro_result.get('risk_score', 0)
+        regime_emoji = {
+            'GÜÇLÜ_RISK_ON': '🟢🟢', 'RISK_ON': '🟢', 'NÖTR': '⚪',
+            'RISK_OFF': '🔴', 'GÜÇLÜ_RISK_OFF': '🔴🔴',
+        }
+        lines.append(f"🌍 <b>Küresel Ortam: {regime_emoji.get(regime, '')} {regime}</b> (skor: {risk})")
+
+        # Kategori bazlı kısa özet
+        snapshot = macro_result.get('snapshot', [])
+        by_cat = {}
+        for s in snapshot:
+            by_cat.setdefault(s.get('category', ''), []).append(s)
+
+        for cat in ['BIST', 'US', 'FX', 'Emtia']:
+            items = by_cat.get(cat, [])
+            if not items:
+                continue
+            parts = []
+            for item in items:
+                price = item.get('price')
+                if price is None:
+                    continue
+                chg_1d = item.get('chg_1d')
+                trend = item.get('trend', '')
+                icon = '↑' if trend == 'UP' else ('↓' if trend == 'DOWN' else '→')
+                chg_str = f"{chg_1d:+.1f}%" if chg_1d is not None else ""
+                parts.append(f"{icon}{item['name']}:{price:,.1f}({chg_str})")
+            if parts:
+                lines.append(f"  <b>{cat}</b>: {' '.join(parts)}")
+
+        # Kategori rejimleri
+        cat_reg = macro_result.get('category_regimes', {})
+        if cat_reg:
+            cat_parts = []
+            for cat in ['BIST', 'US', 'FX', 'Emtia', 'Kripto', 'Faiz']:
+                cr = cat_reg.get(cat)
+                if cr:
+                    cat_parts.append(f"{cat}={cr['regime']}")
+            if cat_parts:
+                lines.append(f"  Kategori: {', '.join(cat_parts)}")
+
+        # Rejim sinyalleri (kısa)
+        sinyaller = macro_result.get('signals', [])
+        if sinyaller:
+            lines.append(f"  Sinyaller: {' | '.join(sinyaller[:4])}")
+
+        lines.append("")
+
+    # ── 2. TARAMA ÖZETİ ──
+    total = signal_summary.get('total', 0)
+    if lists_dict:
+        n_as = len(lists_dict.get('alsat', []))
+        n_tvn = len(lists_dict.get('tavan', []))
+        n_nw = len(lists_dict.get('nw', []))
+        n_rt = len(lists_dict.get('rt', []))
+        n_sbt = len(lists_dict.get('sbt', []))
+        n_tier1 = len(lists_dict.get('tier1', []))
+        n_tier2a = len(lists_dict.get('tier2a', []))
+        n_tier2b = len(lists_dict.get('tier2b', []))
+        core_total = n_as + n_tvn + n_nw + n_rt + n_sbt
+        lines.append(f"📋 <b>Tarama</b>: {total} sinyal → {core_total} shortlist "
+                     f"(AS:{n_as} TVN:{n_tvn} NW:{n_nw} RT:{n_rt} SBT:{n_sbt})")
+        lines.append(f"  Tier1:{n_tier1} çakışma | Tier2A:{n_tier2a} taktik | Tier2B:{n_tier2b} swing")
+    lines.append("")
+
+    # ── Fiyat bilgisi helper ──
+    def _collect_price(ticker):
+        """Ticker için fiyat/ATR/stop/target bilgisi topla."""
+        pi = {}
+        for ln in ('alsat', 'rt', 'nw', 'tavan', 'sbt'):
+            for t, sc, reas, sig in lists_dict.get(ln, []):
+                if t != ticker or not isinstance(sig, dict):
+                    continue
+                if not pi.get('close'):
+                    ep = sig.get('entry_price', 0)
+                    if ep:
+                        pi['close'] = ep
+                if not pi.get('atr_pct'):
+                    atr = sig.get('atr_pct', 0)
+                    if atr:
+                        pi['atr_pct'] = atr
+                if not pi.get('stop'):
+                    sp = sig.get('stop_price', 0)
+                    if sp:
+                        pi['stop'] = sp
+                if not pi.get('target'):
+                    tp = sig.get('target_price', 0)
+                    if tp:
+                        pi['target'] = tp
+                if not pi.get('oe') and pi.get('oe') != 0:
+                    oe = sig.get('oe', '')
+                    if oe != '':
+                        pi['oe'] = oe
+        return pi
+
+    def _price_tag(ticker):
+        pi = _collect_price(ticker)
+        if not pi.get('close'):
+            return ""
+        parts = [f"₺{pi['close']:.2f}"]
+        if pi.get('atr_pct'):
+            parts.append(f"ATR%{pi['atr_pct']:.1f}")
+        if pi.get('stop'):
+            parts.append(f"SL:{pi['stop']:.2f}")
+        if pi.get('target'):
+            parts.append(f"TP:{pi['target']:.2f}")
+        return " ".join(parts)
+
+    # ── 3. SHORTLIST ANALİZ ──
+
+    # Tier 1 — çakışmalar
+    tier1 = lists_dict.get('tier1', [])
+    if tier1:
+        lines.append(f"🔥 <b>Tier 1 — Çakışmalar</b> ({len(tier1)} hisse)")
+        lines.append("")
+        for i, (ticker, quality, reasons, meta) in enumerate(tier1[:15], 1):
+            in_lists = meta.get('in_lists', []) if isinstance(meta, dict) else []
+            list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
+            relaxed = " [RT↓]" if (isinstance(meta, dict) and meta.get('relaxed')) else ""
+            # Metrik detayları
+            metrics = []
+            for l in sorted(in_lists):
+                for t, sc, reas, sig in lists_dict.get(l, []):
+                    if t != ticker:
+                        continue
+                    if l == 'rt':
+                        badge = sig.get('badge', '')
+                        if badge:
+                            metrics.append(f"[{badge}]")
+                    elif l == 'nw':
+                        if sig.get('dw_overlap'):
+                            metrics.append("D+W")
+                        delta = sig.get('delta_pct')
+                        if delta is not None:
+                            metrics.append(f"δ={delta:.1f}%")
+                    elif l == 'alsat':
+                        st = sig.get('signal_type', '')
+                        if st:
+                            metrics.append(st)
+                    elif l == 'tavan':
+                        skor = sig.get('skor', 0) or 0
+                        if skor:
+                            metrics.append(f"tvn={skor}")
+                    break
+            # ML badge
+            ml_badge = ""
+            for r in reasons:
+                if r.startswith('🤖'):
+                    ml_badge = r
+                    break
+            pt = _price_tag(ticker)
+            metric_str = " ".join(metrics)
+            line = f"{i}. <b>{ticker}</b> [{list_tags}]{relaxed} Q={quality} {metric_str}"
+            if ml_badge:
+                line += f" {ml_badge}"
+            if pt:
+                line += f" | {pt}"
+            lines.append(line)
+        lines.append("")
+
+    # Tier 2B — swing
+    tier2b = lists_dict.get('tier2b', [])
+    if tier2b:
+        lines.append(f"⭐ <b>Tier 2B — Swing ⏳3G/🔄SW</b> ({len(tier2b)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons, sig) in enumerate(tier2b[:15], 1):
+            reason_parts = [r for r in reasons if not r.startswith('🤖')][:3]
+            ml_badge = next((r for r in reasons if r.startswith('🤖')), "")
+            pt = _price_tag(ticker)
+            line = f"{i}. <b>{ticker}</b> [{score}p] {' '.join(reason_parts)}"
+            if ml_badge:
+                line += f" {ml_badge}"
+            if pt:
+                line += f" | {pt}"
+            lines.append(line)
+        lines.append("")
+
+    # Tier 2A — tactical
+    tier2a = lists_dict.get('tier2a', [])
+    if tier2a:
+        lines.append(f"⚡ <b>Tier 2A — Tactical ⚡1G</b> ({len(tier2a)} hisse)")
+        lines.append("")
+        for i, (ticker, score, reasons, sig) in enumerate(tier2a[:15], 1):
+            reason_parts = [r for r in reasons if not r.startswith('🤖')][:3]
+            ml_badge = next((r for r in reasons if r.startswith('🤖')), "")
+            pt = _price_tag(ticker)
+            line = f"{i}. <b>{ticker}</b> [{score}p] {' '.join(reason_parts)}"
+            if ml_badge:
+                line += f" {ml_badge}"
+            if pt:
+                line += f" | {pt}"
+            lines.append(line)
+        lines.append("")
+
+    # ── 4. DİKKAT / ÇELİŞKİ ──
+    if latest_signals and lists_dict:
+        sat_tickers = {s['ticker'] for s in latest_signals
+                       if s.get('direction') == 'SAT' or s.get('karar') == 'SAT'}
+        shortlist_set = set()
+        for ln in ('tier1', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt'):
+            for item in lists_dict.get(ln, []):
+                shortlist_set.add(item[0])
+        conflicts = shortlist_set & sat_tickers
+        if conflicts:
+            lines.append(f"⚠️ <b>Çelişki</b> ({len(conflicts)} hisse — AL+SAT aynı anda)")
+            for ticker in sorted(conflicts):
+                sat_src = []
+                for s in latest_signals:
+                    if s['ticker'] == ticker and (s.get('direction') == 'SAT' or s.get('karar') == 'SAT'):
+                        scr = SCREENER_NAMES.get(s.get('screener', ''), s.get('screener', '?'))
+                        sat_src.append(scr)
+                al_src = []
+                for ln in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+                    for t, sc, reas, sig in lists_dict.get(ln, []):
+                        if t == ticker:
+                            al_src.append(_LIST_SHORT.get(ln, ln))
+                lines.append(f"  {ticker}: AL={'+'.join(al_src)} ↔ SAT={','.join(sat_src)} → BEKLE")
+            lines.append("")
+
+    # SAT sinyalleri (kısa)
+    if latest_signals:
+        sat_signals = [s for s in latest_signals
+                       if s.get('direction') == 'SAT' or s.get('karar') == 'SAT']
+        if sat_signals:
+            lines.append(f"🔴 <b>SAT Sinyalleri</b> ({len(sat_signals)})")
+            sat_str = ", ".join(s['ticker'] for s in sat_signals[:15])
+            lines.append(f"  {sat_str}")
+            lines.append("")
+
+    # ── 5. ENDEKS & SEKTÖR DURUMU ──
+    all_regimes = lists_dict.get('_index_regimes', {})
+    if all_regimes:
+        from agent.sector_regime import _ALL_INDICES
+        lines.append("📊 <b>Endeks & Sektör Durumu</b>")
+        group_labels = {
+            'piyasa': '📈 Piyasa', 'sektor': '🏭 Sektör',
+            'tematik': '🏷 Tematik', 'katilim': '☪️ Katılım',
+        }
+        for group, codes in _ALL_INDICES.items():
+            group_data = {c: all_regimes[c] for c in codes if c in all_regimes}
+            if not group_data:
+                continue
+            al = sorted(k for k, v in group_data.items() if v.get('in_trade', False))
+            pasif = sorted(k for k, v in group_data.items() if not v.get('in_trade', False))
+            label = group_labels.get(group, group)
+            parts = []
+            for s in al:
+                parts.append(f"{s}✅")
+            for s in pasif:
+                parts.append(f"{s}⚠️")
+            lines.append(f"  {label}: {' '.join(parts)}")
+        lines.append("")
+
+    # ── ML Rerank Değişimi ──
+    rank_changes = lists_dict.get('_ml_rank_changes', [])
+    if rank_changes:
+        up_changes = sorted([r for r in rank_changes if r['delta'] > 0], key=lambda x: -x['delta'])
+        down_changes = sorted([r for r in rank_changes if r['delta'] < 0], key=lambda x: x['delta'])
+        if up_changes or down_changes:
+            lines.append("🧠 <b>ML Rerank Değişimi</b>")
+            if up_changes:
+                up_str = " ".join(f"{r['ticker']}↑{r['delta']}" for r in up_changes[:5])
+                lines.append(f"  Yükselen: {up_str}")
+            if down_changes:
+                dn_str = " ".join(f"{r['ticker']}↓{abs(r['delta'])}" for r in down_changes[:5])
+                lines.append(f"  Düşen: {dn_str}")
+            lines.append("")
+
+    # ── Filtreyle Elenenler ──
+    ml_filtered = lists_dict.get('_ml_filtered', [])
+    if ml_filtered:
+        lines.append(f"⚠️ <b>ML Filtre</b> ({len(ml_filtered)} elendi)")
+        for f in ml_filtered[:6]:
+            tag = _LIST_SHORT.get(f['list'], f['list'])
+            lines.append(f"  {f['ticker']}[{tag}] rule:{f['rule_score']}p — {f['reason']}")
+        lines.append("")
+
+    # ── 6. STRATEJİ ──
+    if macro_result:
+        regime = macro_result.get('regime', 'NÖTR')
+        if regime in ('RISK_OFF', 'GÜÇLÜ_RISK_OFF'):
+            lines.append("📌 <b>Strateji</b>: Defansif — küçük pozisyon, seçici giriş, "
+                         "rejim düzelene kadar Tier1 odaklı.")
+        elif regime in ('RISK_ON', 'GÜÇLÜ_RISK_ON'):
+            lines.append("📌 <b>Strateji</b>: Momentum takibi — Tier1+Tier2B swing, "
+                         "sektör uyumlu hisseler öncelikli.")
+        else:
+            lines.append("📌 <b>Strateji</b>: Dengeli — Tier1 çakışma öncelikli, "
+                         "taktik fırsatlar seçici değerlendir.")
+
+    # ── Haberler ──
+    if news_items:
+        lines.append("")
+        lines.append(f"📰 <b>Haberler</b> ({len(news_items)})")
+        for item in news_items[:5]:
+            title = item.get('title', '')[:80]
+            lines.append(f"  • {title}")
+
+    return "\n".join(lines)
+
+
+def _generate_limit_order_ai(lists_dict):
+    """AI ile sadece limit order / giriş stratejisi üret.
+
+    Tüm shortlist verisini gönderir, AI sadece entry strategy yazar.
+    Template brifingden ayrı çağrılır — maliyet ve hata riski düşük.
+    """
+    from agent.claude_client import single_prompt
+
+    # Tier1 + Tier2 hisselerini topla
+    tickers_data = []
+    for ticker, quality, reasons, meta in lists_dict.get('tier1', [])[:15]:
+        in_lists = meta.get('in_lists', []) if isinstance(meta, dict) else []
+        pi = _get_price_info_for_ai(ticker, lists_dict)
+        if pi:
+            tickers_data.append(f"  {ticker} [Tier1 Q={quality} {'+'.join(in_lists)}] {pi}")
+
+    for tier_name, label in [('tier2b', 'Tier2B'), ('tier2a', 'Tier2A')]:
+        for ticker, score, reasons, sig in lists_dict.get(tier_name, [])[:10]:
+            pi = _get_price_info_for_ai(ticker, lists_dict)
+            if pi:
+                tickers_data.append(f"  {ticker} [{label} {score}p] {pi}")
+
+    if not tickers_data:
+        return ""
+
+    prompt = """Her hisse icin sabah acilisa GIRIS STRATEJISI yaz. SADECE strateji — piyasa yorumu yapma.
+
+## FORMAT (Telegram — HTML tag)
+Her hisse 3-4 satir:
+<b>TICKER</b>
+  Normal: limit [fiyat]
+  Gap-up: [strateji]
+  Gap-down: [strateji]
+  SL:[fiyat] TP1:[fiyat] TP2:[fiyat]
+
+## KURALLAR
+- ATR% kullan: <3 dar spread, >5 genis spread
+- OE=0 momentum taze → gap-up olasi → limit kapanis+ATR%/2
+- OE>=3 uzamis → pullback olasi → limit kapanis-1%
+- SL: stop verideyse kullan, yoksa 1.5xATR alti
+- TP: target verideyse kullan, yoksa TP1=2xATR TP2=3xATR
+- Kisa yaz, tablo KULLANMA
+
+## HISSELER
+"""
+    prompt += "\n".join(tickers_data)
+    return single_prompt(prompt, max_tokens=4096)
+
+
+def _get_price_info_for_ai(ticker, lists_dict):
+    """Ticker fiyat bilgisini AI prompt için formatla."""
+    pi = {}
+    for ln in ('alsat', 'rt', 'nw', 'tavan', 'sbt'):
+        for t, sc, reas, sig in lists_dict.get(ln, []):
+            if t != ticker or not isinstance(sig, dict):
+                continue
+            if not pi.get('close'):
+                ep = sig.get('entry_price', 0)
+                if ep:
+                    pi['close'] = ep
+            if not pi.get('atr_pct'):
+                atr = sig.get('atr_pct', 0)
+                if atr:
+                    pi['atr_pct'] = atr
+            if not pi.get('stop'):
+                sp = sig.get('stop_price', 0)
+                if sp:
+                    pi['stop'] = sp
+            if not pi.get('target'):
+                tp = sig.get('target_price', 0)
+                if tp:
+                    pi['target'] = tp
+            if not pi.get('oe') and pi.get('oe') != 0:
+                oe = sig.get('oe', '')
+                if oe != '':
+                    pi['oe'] = oe
+    if not pi.get('close'):
+        return ""
+    parts = [f"fiyat={pi['close']:.2f}"]
+    if pi.get('atr_pct'):
+        parts.append(f"ATR%={pi['atr_pct']:.1f}")
+    if pi.get('stop'):
+        parts.append(f"SL={pi['stop']:.2f}")
+    if pi.get('target'):
+        parts.append(f"TP={pi['target']:.2f}")
+    if pi.get('oe') is not None and pi.get('oe') != '':
+        parts.append(f"OE={pi['oe']}")
+    return " ".join(parts)
+
+
 def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     """Ana brifing pipeline.
 
@@ -2032,22 +2443,25 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     if news_items:
         print(f"  📰 {len(news_items)} haber çekildi")
 
-    # 4b. Claude ile brifing üret (shortlist verisini kullanarak)
-    briefing_text = ""
+    # 4b. Template brifing üret (kod tabanlı — AI yorumu yok)
+    print("\n📝 Template brifing oluşturuluyor...")
+    briefing_text = _build_template_briefing(
+        macro_result, signal_summary, lists_dict,
+        latest_signals, news_items=news_items,
+        confluence_results=confluence_results)
+    print(f"  ✅ Template brifing ({len(briefing_text)} karakter)")
+
+    # 4c. AI sadece limit order stratejisi için (use_ai=True ise)
+    limit_order_text = ""
     if use_ai:
-        print("\n🤖 Claude ile brifing üretiliyor...")
+        print("\n🤖 AI limit order stratejisi üretiliyor...")
         try:
-            briefing_text = _generate_ai_briefing(
-                signal_summary, macro_result, confluence_results, latest_signals,
-                lists_dict=lists_dict)
-            print(f"  ✅ Brifing üretildi ({len(briefing_text)} karakter)")
+            limit_order_text = _generate_limit_order_ai(lists_dict)
+            if limit_order_text:
+                print(f"  ✅ Limit order stratejisi ({len(limit_order_text)} karakter)")
+                briefing_text += "\n\n" + "💰 <b>Giriş Stratejisi (AI)</b>\n\n" + limit_order_text
         except Exception as e:
-            print(f"  ⚠️ Claude API hatası: {e}")
-            briefing_text = _generate_fallback_briefing(
-                signal_summary, macro_result, confluence_results)
-    else:
-        briefing_text = _generate_fallback_briefing(
-            signal_summary, macro_result, confluence_results)
+            print(f"  ⚠️ Limit order AI hatası: {e}")
 
     # 5. HTML rapor oluştur — shortlist + çelişki verisini hazırla
     print("\n📊 HTML rapor oluşturuluyor...")
@@ -2061,7 +2475,8 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     html = generate_briefing_html(
         briefing_text, macro_result, confluence_results, signal_summary,
         lists_dict=lists_dict, news_items=news_items,
-        shortlist_tickers=_shortlist_tickers, sat_tickers=_sat_tickers)
+        shortlist_tickers=_shortlist_tickers, sat_tickers=_sat_tickers,
+        limit_order_text=limit_order_text)
     date_str = now.strftime('%Y%m%d')
     html_path = os.path.join(ROOT, 'output', f'nox_briefing_{date_str}.html')
     os.makedirs(os.path.dirname(html_path), exist_ok=True)
@@ -2441,41 +2856,19 @@ def _generate_fallback_briefing(signal_summary, macro_result, confluence_results
 
 def _build_telegram_message(briefing_text, macro_result, confluence_results,
                             html_url=None):
-    """Telegram mesajını formatla."""
-    now = datetime.now(_TZ_TR)
+    """Telegram mesajını formatla — template brifing zaten tam içerik."""
+    lines = []
 
-    # Başlık + link (4000 char chunk bölünmesinde kaybolmaması için üstte)
-    lines = [f"<b>⬡ NOX Brifing — {now.strftime('%d.%m.%Y %H:%M')}</b>"]
+    # HTML rapor linki (üstte — chunk bölünmesinde kaybolmasın)
     if html_url:
         lines.append(f'🔗 <a href="{html_url}">Detaylı Rapor</a>')
-    lines.append("")
-
-    # Makro rejim
-    if macro_result:
-        regime = macro_result.get("regime", "N/A")
-        risk = macro_result.get("risk_score", 0)
-        lines.append(f"🌍 Rejim: <b>{regime}</b> (skor: {risk})")
         lines.append("")
 
-    # Brifing metni (kısalt)
+    # Brifing metni (template + AI limit order zaten birleşik)
     max_brief_len = 6000
     if len(briefing_text) > max_brief_len:
         briefing_text = briefing_text[:max_brief_len] + "..."
     lines.append(briefing_text)
-
-    # Çakışma top 5
-    if confluence_results:
-        lines.append("")
-        lines.append("<b>⬡ Top 5 Çakışma:</b>")
-        rec_emoji = {
-            "TRADEABLE": "🟢🟢", "TAKTİK": "🔵", "İZLE": "🟡",
-            "BEKLE": "🟠", "ELE": "🔴",
-        }
-        for r in confluence_results[:5]:
-            emoji = rec_emoji.get(r['recommendation'], '')
-            src = r.get('source_count', 0)
-            lines.append(
-                f"{emoji} <b>{r['ticker']}</b> skor:{r['score']} [{src} kaynak] ({r['recommendation']})")
 
     # Scanner HTML linkleri
     scanner_links = _build_scanner_links()

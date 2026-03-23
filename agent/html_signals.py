@@ -232,19 +232,7 @@ def fetch_nw_signals(base_url=None):
         }
         signals.append(entry)
 
-    # Weekly sells
-    for s in d.get('weekly', {}).get('sells', []):
-        signals.append({
-            'screener': 'nox_v3_weekly',
-            'ticker': s['ticker'],
-            'signal_date': s.get('signal_date', report_date),
-            'direction': 'SAT',
-            'signal_type': 'PIVOT_SAT',
-            'entry_price': s.get('close', 0),
-            'quality': None,
-            'fresh': s.get('fresh', 'YAKIN'),
-            'csv_date': report_date.replace('-', '') if report_date else '',
-        })
+    # Weekly sells — kaldırıldı (NW SAT sinyalleri kullanılmıyor)
 
     # Weekly candidates (ADAY — izleme, trade yok)
     for c in d.get('weekly', {}).get('candidates', []):
@@ -286,10 +274,9 @@ def fetch_nw_signals(base_url=None):
         })
 
     n_weekly_al = sum(1 for s in signals if s['screener'] == 'nox_v3_weekly' and s['direction'] == 'AL')
-    n_weekly_sat = sum(1 for s in signals if s['screener'] == 'nox_v3_weekly' and s['direction'] == 'SAT')
     n_daily_al = sum(1 for s in signals if s['screener'] == 'nox_v3_daily')
     n_daily_gate = sum(1 for s in signals if s['screener'] == 'nox_v3_daily' and s.get('gate'))
-    print(f"  NW: {n_weekly_al} W-AL + {n_weekly_sat} W-SAT | {n_daily_al} D-AL ({n_daily_gate} gate) ({daily_date})")
+    print(f"  NW: {n_weekly_al} W-AL | {n_daily_al} D-AL ({n_daily_gate} gate) ({daily_date})")
     return signals
 
 
