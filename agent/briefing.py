@@ -1667,7 +1667,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"📋 <b>1. AL/SAT Tarama</b> (Q skoru sıralı, {len(alsat_list)} sinyal)")
         lines.append("")
-        for i, (ticker, score, reasons, sig) in enumerate(alsat_list[:8], 1):
+        for i, (ticker, score, reasons, sig) in enumerate(alsat_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1680,7 +1680,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"🔺 <b>2. Tavan Tarayıcı</b> (skor/vol sıralı, {len(tavan_list)} hisse)")
         lines.append("")
-        for i, (ticker, score, reasons, sig) in enumerate(tavan_list[:8], 1):
+        for i, (ticker, score, reasons, sig) in enumerate(tavan_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1693,7 +1693,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"📊 <b>3. NW Pivot AL</b> (günlük gate açık, {len(nw_list)} sinyal)")
         lines.append("")
-        for i, (ticker, score, reasons, sig) in enumerate(nw_list[:10], 1):
+        for i, (ticker, score, reasons, sig) in enumerate(nw_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1706,7 +1706,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"⚡ <b>4. Regime Transition</b> (F≥3 OE≤2, {len(rt_list)} sinyal)")
         lines.append("")
-        for i, (ticker, score, reasons, sig) in enumerate(rt_list[:10], 1):
+        for i, (ticker, score, reasons, sig) in enumerate(rt_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1719,7 +1719,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"🚀 <b>5. SBT Breakout</b> (taze kırılma, {len(sbt_list)} sinyal)")
         lines.append("")
-        for i, (ticker, score, reasons, sig) in enumerate(sbt_list[:8], 1):
+        for i, (ticker, score, reasons, sig) in enumerate(sbt_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1735,7 +1735,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"🔥 <b>Tier 1 — Çakışmalar</b> ({len(tier1)} hisse)")
         lines.append("")
-        for i, (ticker, score, reasons, _) in enumerate(tier1[:10], 1):
+        for i, (ticker, score, reasons, _) in enumerate(tier1[:15], 1):
             reasons_str = " | ".join(reasons)
             lines.append(f"{i}. <b>{ticker}</b> {reasons_str}")
             if has_sm:
@@ -1749,7 +1749,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"⚡ <b>Tier 2A — Tactical ⚡1G</b> ({len(tier2a)} hisse)")
         lines.append("")
-        for i, (ticker, score, reasons, _) in enumerate(tier2a[:6], 1):
+        for i, (ticker, score, reasons, _) in enumerate(tier2a[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, _)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1762,7 +1762,7 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append(f"⭐ <b>Tier 2B — Swing-Lite ⏳3G/🔄SW</b> ({len(tier2b)} hisse)")
         lines.append("")
-        for i, (ticker, score, reasons, _) in enumerate(tier2b[:6], 1):
+        for i, (ticker, score, reasons, _) in enumerate(tier2b[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, _)}")
             if has_sm:
                 sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
@@ -1973,17 +1973,17 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         tier2b = lists_dict.get('tier2b', [])
         if tier1:
             print(f"  ── 🔥 Tier 1: Çakışmalar ({len(tier1)}) ──")
-            for i, (ticker, score, reasons, _) in enumerate(tier1[:10], 1):
+            for i, (ticker, score, reasons, _) in enumerate(tier1[:15], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' | '.join(reasons[:4])}")
             print()
         if tier2a:
             print(f"  ── ⚡ Tier 2A: Tactical ⚡1G ({len(tier2a)}) ──")
-            for i, (ticker, score, reasons, _) in enumerate(tier2a[:6], 1):
+            for i, (ticker, score, reasons, _) in enumerate(tier2a[:15], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:5])}")
             print()
         if tier2b:
             print(f"  ── ⭐ Tier 2B: Swing-Lite ({len(tier2b)}) ──")
-            for i, (ticker, score, reasons, _) in enumerate(tier2b[:6], 1):
+            for i, (ticker, score, reasons, _) in enumerate(tier2b[:15], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:5])}")
             print()
         if notify:
