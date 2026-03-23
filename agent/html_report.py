@@ -56,7 +56,7 @@ def _linkify_tickers(html_text):
     return ''.join(parts)
 
 
-def _prepare_lists_json(lists_dict, max_per_list=5):
+def _prepare_lists_json(lists_dict, max_per_list=15):
     """4 listenin her birinden top N sinyali JSON-serializable dict'e cevir."""
     result = {}
     for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
@@ -106,7 +106,7 @@ def _prepare_lists_json(lists_dict, max_per_list=5):
     return result
 
 
-def _prepare_overlap_json(lists_dict, max_per_group=5):
+def _prepare_overlap_json(lists_dict, max_per_group=15):
     """Tier1'den overlap_count bazli gruplama."""
     tier1 = lists_dict.get('tier1', [])
     groups = {}  # overlap_count -> items
@@ -165,7 +165,7 @@ def _prepare_macro_detail(macro_data):
     }
 
 
-def _prepare_shortlist_json(lists_dict, max_items=10):
+def _prepare_shortlist_json(lists_dict, max_items=15):
     """Tier1 + Tier2A + Tier2B shortlist verisini JSON-serializable dict'e cevir."""
     result = {}
     for key, label, icon in [
