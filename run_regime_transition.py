@@ -31,6 +31,7 @@ from markets.bist.regime_transition import (
     scan_regime_transition, find_last_transition,
     compute_trailing_stop, _find_pivot_lows,
     compute_trade_state, calc_oe_score,
+    classify_volume_quality,
     RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
     TIMEFRAME_CONFIGS,
 )
@@ -464,6 +465,12 @@ def _save_csv(results, date_str, output_dir, timeframe='daily',
             'di_spread': round(s.di_spread, 2),
             'atr': round(s.atr, 4),
         }
+        # Hacim-donus tier
+        _atr_pct_csv = round((s.atr / s.close * 100), 2) if s.close > 0 else 0
+        _vt_csv, _ = classify_volume_quality(
+            _atr_pct_csv, s.cmf, s.rvol, s.participation_score, s.oe_score)
+        row['atr_pct'] = _atr_pct_csv
+        row['vol_tier'] = _vt_csv
         # Badge: H+PB (haftalik AL + gunluk pullback), H+AL (haftalik AL aktif)
         if weekly_al_pb and s.ticker in weekly_al_pb:
             info = weekly_al_pb[s.ticker]
@@ -817,6 +824,10 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily',
     for s in results:
         # Stop-fiyat uzakligi %
         stop_dist_pct = round((s.close - s.stop) / s.close * 100, 1) if s.stop > 0 and s.close > 0 else 0
+        # Hacim-donus tier
+        _atr_pct = round((s.atr / s.close * 100), 2) if s.close > 0 else 0
+        _vt, _vt_icon = classify_volume_quality(
+            _atr_pct, s.cmf, s.rvol, s.participation_score, s.oe_score)
         rows_data.append({
             'ticker': s.ticker,
             'regime': s.regime,
@@ -844,6 +855,9 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily',
             'cmf': round(s.cmf, 3),
             'rvol': round(s.rvol, 2),
             'di_spread': round(s.di_spread, 1),
+            'atr_pct': _atr_pct,
+            'vol_tier': _vt,
+            'vol_tier_icon': _vt_icon,
         })
         # Haftalik AL + gunluk pullback bilgisi (sadece gunluk tarama icin)
         if weekly_al_pb and s.ticker in weekly_al_pb:
@@ -983,6 +997,17 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily',
 }}
 .wal-pb {{ background: rgba(74,222,128,0.2); color: var(--nox-green); }}
 .wal-al {{ background: rgba(34,211,238,0.15); color: var(--nox-cyan); }}
+
+/* VOL TIER BADGE (Hacim-donus kalitesi) */
+.vt-badge {{
+  display: inline-block; padding: 1px 6px; border-radius: var(--radius-sm);
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+  letter-spacing: 0.02em; margin-left: 4px; cursor: help;
+}}
+.vt-ALTIN {{ background: rgba(250,204,21,0.2); color: #facc15; }}
+.vt-GUMUS {{ background: rgba(192,192,192,0.2); color: #c0c0c0; }}
+.vt-BRONZ {{ background: rgba(205,127,50,0.2); color: #cd7f32; }}
+.vt-ELE {{ background: rgba(248,113,113,0.15); color: #f87171; }}
 </style>
 </head><body>
 <div class="nox-container">
@@ -1007,6 +1032,10 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily',
   <option value="TAZE">TAZE (0-1g)</option><option value="BEKLE">BEKLE (3-7g)</option>
   <option value="2.DALGA">2.DALGA (10-20g)</option><option value="GEC">GEC (30+g)</option></select></div>
   <div><label>OE≤</label><input type="number" id="fOE" value="" step="1" min="0" max="4" placeholder="max" oninput="render()"></div>
+  <div><label>Hacim</label>
+  <select id="fVT" onchange="render()"><option value="">Tumu</option>
+  <option value="ALTIN">🥇 ALTIN</option><option value="GUMUS">🥈 GUMUS</option>
+  <option value="BRONZ">🥉 BRONZ</option><option value="!ELE">ELE Haric</option></select></div>
   <div><label>Exit≤</label><input type="number" id="fExit" value="" step="1" min="0" max="3" placeholder="max" oninput="render()"></div>
   <div><label>ADX≥</label><input type="number" id="fADX" value="0" step="5" min="0" oninput="render()"></div>
   {'<div><label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fWPB" onchange="render()"> H+PB</label></div><div><label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fWAL" onchange="render()"> H-AL</label></div>' if timeframe == 'daily' else ''}
@@ -1315,6 +1344,11 @@ function applyFilters(rows){{
     if(!isNaN(fOE)&&r.oe_score>fOE) return false;
     if(!isNaN(fExit)&&r.exit_stage>fExit) return false;
     if(fADX>0&&r.adx<fADX) return false;
+    const fVT=document.getElementById('fVT');
+    if(fVT&&fVT.value){{
+      if(fVT.value==='!ELE'&&r.vol_tier==='ELE') return false;
+      else if(fVT.value!=='!ELE'&&r.vol_tier!==fVT.value) return false;
+    }}
     const wpbEl=document.getElementById('fWPB');
     if(wpbEl&&wpbEl.checked&&!r.weekly_pb) return false;
     const walEl=document.getElementById('fWAL');
@@ -1359,6 +1393,12 @@ function mkStopCell(stop, dist, close){{
   return `<span class="${{cls}}" title="Fiyattan uzaklik: %${{dist}}">${{stop.toFixed(1)}}</span>`;
 }}
 
+function mkVolTierBadge(tier, icon){{
+  if(!tier||tier==='NORMAL') return '';
+  const tips={{'ALTIN':'ATR≤3% + Part=3 + OE≤1 → 5G WR %75','GUMUS':'ATR≤3% + Part=3 → 5G WR %71','BRONZ':'ATR≤4% + Part≥3 → 5G WR %60','ELE':'ATR>5% / CMF<-0.1 / RVOL>5 → kotu hacim'}};
+  return `<span class="vt-badge vt-${{tier}}" title="${{tips[tier]||''}}">${{icon||''}}${{tier}}</span>`;
+}}
+
 function mkTable(rows, label, cssClass){{
   const sk=sortState[label];
   if(sk) rows=sortRows(rows, sk.col, sk.asc);
@@ -1398,7 +1438,7 @@ function mkTable(rows, label, cssClass){{
     const dateStr=r.transition_date||'—';
     const daysStr=r.days_since+'g';
     h+=`<tr>
-    <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a>${{r.weekly_pb?'<span class="wal-badge wal-pb" title="Haftalik AL + Gunluk Pullback (EMA%'+r.ema_dist+', RSI '+r.daily_rsi+') — '+r.w_transition+'">H+PB</span>':(r.weekly_al?'<span class="wal-badge wal-al" title="Haftalik AL aktif — '+r.w_transition+' ('+r.w_regime+')">H-AL</span>':'')}}</td>
+    <td><a class="tv-link" href="https://www.tradingview.com/chart/?symbol=BIST:${{r.ticker}}" target="_blank">${{r.ticker}}</a>${{r.weekly_pb?'<span class="wal-badge wal-pb" title="Haftalik AL + Gunluk Pullback (EMA%'+r.ema_dist+', RSI '+r.daily_rsi+') — '+r.w_transition+'">H+PB</span>':(r.weekly_al?'<span class="wal-badge wal-al" title="Haftalik AL aktif — '+r.w_transition+' ('+r.w_regime+')">H-AL</span>':'')}}${{mkVolTierBadge(r.vol_tier, r.vol_tier_icon)}}</td>
     <td>${{mkRegimeBadge(r.regime, r.regime_name)}}</td>
     <td>${{mkTransBadge(r.transition)}}</td>
     <td style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">${{dateStr}}</td>
@@ -1445,8 +1485,12 @@ function render(){{
 
   // Status
   const oeWarn=D.rows.filter(r=>r.oe_warning).length;
+  const vtCount={{}};
+  D.rows.forEach(r=>{{vtCount[r.vol_tier]=(vtCount[r.vol_tier]||0)+1}});
+  const vtSummary=['ALTIN','GUMUS','BRONZ','ELE'].filter(t=>vtCount[t])
+    .map(t=>`${{t}}:${{vtCount[t]}}`).join(' · ');
   document.getElementById('st').innerHTML=
-    `<b>${{D.rows.length}}</b> AL aktif · OE uyari: <b>${{oeWarn}}</b> · ${{D.date}}`;
+    `<b>${{D.rows.length}}</b> AL aktif · OE uyari: <b>${{oeWarn}}</b> · ${{vtSummary?' · '+vtSummary:''}} · ${{D.date}}`;
 }}
 
 render();
