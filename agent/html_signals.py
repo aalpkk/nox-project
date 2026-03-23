@@ -18,7 +18,7 @@ from html.parser import HTMLParser
 
 import requests
 
-from markets.bist.regime_transition import classify_volume_quality
+from markets.bist.regime_transition import classify_volume_quality, is_donus_transition
 
 # -- URL Yapılandırması --
 _NOX_BASE = "https://aalpkk.github.io/nox-signals"
@@ -350,14 +350,18 @@ def fetch_rt_signals(base_url=None):
         elif r.get('weekly_al'):
             badge = 'H+AL'
 
-        # Hacim-donus tier icin gerekli alanlar
+        # Hacim-donus tier — sadece DONUS sinyallerinde (backtest kanitli)
         _atr_pct = r.get('atr_pct', 0) or 0
         _rvol = r.get('rvol', 0) or 0
         _cmf = r.get('cmf', 0) or 0
         _part = r.get('participation_score', 0) or 0
         _oe = r.get('oe_score', 0) or 0
-        vol_tier, vol_tier_icon = classify_volume_quality(
-            float(_atr_pct), float(_cmf), float(_rvol), int(_part), int(_oe))
+        _transition = r.get('transition', '')
+        if is_donus_transition(_transition):
+            vol_tier, vol_tier_icon = classify_volume_quality(
+                float(_atr_pct), float(_cmf), float(_rvol), int(_part), int(_oe))
+        else:
+            vol_tier, vol_tier_icon = '', ''
 
         entry = {
             'screener': 'regime_transition',

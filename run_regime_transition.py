@@ -31,7 +31,7 @@ from markets.bist.regime_transition import (
     scan_regime_transition, find_last_transition,
     compute_trailing_stop, _find_pivot_lows,
     compute_trade_state, calc_oe_score,
-    classify_volume_quality,
+    classify_volume_quality, is_donus_transition,
     RegimeTransitionSignal, RT_CFG, REGIME_NAMES,
     TIMEFRAME_CONFIGS,
 )
@@ -467,10 +467,14 @@ def _save_csv(results, date_str, output_dir, timeframe='daily',
         }
         # Hacim-donus tier
         _atr_pct_csv = round((s.atr / s.close * 100), 2) if s.close > 0 else 0
-        _vt_csv, _ = classify_volume_quality(
-            _atr_pct_csv, s.cmf, s.rvol, s.participation_score, s.oe_score)
         row['atr_pct'] = _atr_pct_csv
-        row['vol_tier'] = _vt_csv
+        # Hacim tier — sadece DONUS
+        if is_donus_transition(s.transition):
+            _vt_csv, _ = classify_volume_quality(
+                _atr_pct_csv, s.cmf, s.rvol, s.participation_score, s.oe_score)
+            row['vol_tier'] = _vt_csv
+        else:
+            row['vol_tier'] = ''
         # Badge: H+PB (haftalik AL + gunluk pullback), H+AL (haftalik AL aktif)
         if weekly_al_pb and s.ticker in weekly_al_pb:
             info = weekly_al_pb[s.ticker]
@@ -824,10 +828,14 @@ def _generate_html(results, n_scanned, date_str, regime_dist, timeframe='daily',
     for s in results:
         # Stop-fiyat uzakligi %
         stop_dist_pct = round((s.close - s.stop) / s.close * 100, 1) if s.stop > 0 and s.close > 0 else 0
-        # Hacim-donus tier
+        # Hacim-donus tier — sadece DONUS sinyallerinde (backtest kanitli)
         _atr_pct = round((s.atr / s.close * 100), 2) if s.close > 0 else 0
-        _vt, _vt_icon = classify_volume_quality(
-            _atr_pct, s.cmf, s.rvol, s.participation_score, s.oe_score)
+        _is_donus = is_donus_transition(s.transition)
+        if _is_donus:
+            _vt, _vt_icon = classify_volume_quality(
+                _atr_pct, s.cmf, s.rvol, s.participation_score, s.oe_score)
+        else:
+            _vt, _vt_icon = '', ''
         rows_data.append({
             'ticker': s.ticker,
             'regime': s.regime,

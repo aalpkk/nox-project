@@ -915,14 +915,27 @@ def calc_oe_score(df, ema21, cfg=None):
 # HACIM-DONUS KALITE SINIFLANDIRMASI
 # =============================================================================
 
+def is_donus_transition(transition_str):
+    """
+    Gecis stringinden DONUS (gercek donus) olup olmadigini belirle.
+    DONUS = CHOPPY/GRI_BOLGE → TREND/FULL_TREND
+    """
+    _FROM = {'CHOPPY', 'GRI_BOLGE'}
+    _TO = {'TREND', 'FULL_TREND'}
+    parts = transition_str.split('\u2192')  # → karakteri
+    return len(parts) == 2 and parts[0].strip() in _FROM and parts[1].strip() in _TO
+
+
 def classify_volume_quality(atr_pct, cmf, rvol, part_score, oe_score):
     """
-    Hacim-donus kalite siniflandirmasi (backtest: 3y, N=6953).
+    Hacim-donus kalite siniflandirmasi (backtest: 3y, sadece DONUS, N=3038).
+
+    SADECE DONUS sinyallerinde gecerli — SICRAMA'da kullanilmamali.
 
     Tier'lar:
-      ALTIN  — atr_pct<=3 + part=3 + oe<=1 → 5G WR %75.4 (N=130)
-      GUMUS  — atr_pct<=3 + part=3          → 5G WR %70.7 (N=184)
-      BRONZ  — atr_pct<=4 + part>=3         → 5G WR %60.0 (N=668)
+      ALTIN  — atr_pct<=3 + part=3 + oe<=1 → DONUS 5G WR %78.9 (N=76)
+      GUMUS  — atr_pct<=3 + part=3          → DONUS 5G WR %66.7 (N=30)
+      BRONZ  — atr_pct<=4 + part>=3         → DONUS 5G WR %58.2 (N=292)
       ELE    — atr>5% OR cmf<-0.1 OR rvol>5 → kotu hacim
       NORMAL — hicbir kurala uymayan
 
