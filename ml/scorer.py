@@ -91,6 +91,39 @@ def calc_ml_rerank_bonus(ml_score):
     return 0
 
 
+def calc_ml_rerank_bonus_v2(ml_swing):
+    """W-score (swing/3g) bazlı 3-zone rerank bonusu.
+
+    Returns: int — composite score'a eklenecek bonus
+    """
+    if ml_swing is None:
+        return 0
+    if ml_swing >= 0.60:
+        return 4
+    elif ml_swing >= 0.55:
+        return 3
+    elif ml_swing >= 0.45:
+        return 0   # NEUTRAL zone
+    return -1       # WEAK zone
+
+
+ML_EFFECT_ICONS = {'up': 'ML↑', 'down': 'ML↓', 'neutral': 'ML='}
+
+
+def calc_ml_effect_label(ml_swing, rerank_bonus):
+    """ML'nin sinyale etkisini belirle.
+
+    Returns: str — 'up', 'down', or 'neutral'
+    """
+    if ml_swing is None:
+        return 'neutral'
+    if rerank_bonus >= 2:
+        return 'up'
+    elif rerank_bonus <= -1:
+        return 'down'
+    return 'neutral'
+
+
 def calc_source_quality_bonus(sbt_bucket):
     """SBT bucket bazlı kaynak kalite bonusu.
 

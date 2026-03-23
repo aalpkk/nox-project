@@ -89,6 +89,46 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["sq_atr"] = df["atr"] < df["atr_sma"] * ATR_SQUEEZE_RATIO
     df["squeeze"] = df["sq_bb"] & df["sq_atr"]
 
+    # ── ML feature'lar için ek indikatörler ──────────────────
+    df["ema20"] = c.ewm(span=20, adjust=False).mean()
+
+    # RSI 14
+    delta = c.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
+    rs = avg_gain / (avg_loss + 1e-10)
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    # ADX, +DI, -DI
+    tr_raw = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+    plus_dm = h.diff().clip(lower=0)
+    minus_dm = (-l.diff()).clip(lower=0)
+    both_pos = (plus_dm > 0) & (minus_dm > 0)
+    plus_dm_c = plus_dm.copy()
+    minus_dm_c = minus_dm.copy()
+    plus_dm_c[both_pos & (plus_dm <= minus_dm)] = 0
+    minus_dm_c[both_pos & (minus_dm < plus_dm)] = 0
+    atr14 = tr_raw.ewm(alpha=1 / 14, adjust=False).mean()
+    df["plus_di"] = 100 * plus_dm_c.ewm(alpha=1 / 14, adjust=False).mean() / (atr14 + 1e-10)
+    df["minus_di"] = 100 * minus_dm_c.ewm(alpha=1 / 14, adjust=False).mean() / (atr14 + 1e-10)
+    dx = 100 * (df["plus_di"] - df["minus_di"]).abs() / (df["plus_di"] + df["minus_di"] + 1e-10)
+    df["adx"] = dx.ewm(alpha=1 / 14, adjust=False).mean()
+    df["di_spread"] = df["plus_di"] - df["minus_di"]
+
+    # Returns & slopes
+    df["ret_5d"] = c.pct_change(5) * 100
+    df["ret_10d"] = c.pct_change(10) * 100
+    df["ret_20d"] = c.pct_change(20) * 100
+    df["ema50_slope"] = (df["htf_ema"] - df["htf_ema"].shift(10)) / (df["htf_ema"].shift(10) + 1e-10) * 100
+    df["ema20_slope"] = (df["ema20"] - df["ema20"].shift(5)) / (df["ema20"].shift(5) + 1e-10) * 100
+    df["dist_ema50"] = (c - df["htf_ema"]) / (df["htf_ema"] + 1e-10) * 100
+    df["low_10d"] = l.rolling(10).min()
+    df["runup_10d"] = (c - df["low_10d"]) / (df["low_10d"] + 1e-10) * 100
+    df["rs_10"] = c / c.shift(10)
+    df["rs_60"] = c / c.shift(60)
+
     return df
 
 
@@ -294,6 +334,53 @@ def scan_single(df: pd.DataFrame, use_vol: bool, use_htf: bool):
     bars_ago = n - 1 - bi
     bo_date = df.index[bi] if isinstance(df.index, pd.DatetimeIndex) else None
 
+    # ── ML Feature extraction (breakout barından) ────────────
+    sq_len = last_sq["length"]
+    sq_s, sq_e = last_sq["start"], last_sq["end"]
+    box_range = box_top - box_bot
+    box_mid = (box_top + box_bot) / 2.0
+
+    def _sv(col):
+        v = df[col].iloc[bi]
+        return float(v) if pd.notna(v) else 0.0
+
+    ml_features = {
+        "squeeze_bars": sq_len,
+        "box_range_atr": box_range / (atr_bo + 1e-10),
+        "box_range_pct": box_range / (entry + 1e-10) * 100,
+        "box_position": (entry - box_bot) / (box_range + 1e-10),
+        "close_vs_box_top_pct": (entry - box_top) / (box_top + 1e-10) * 100,
+        "days_since_sq_end": bi - sq_e,
+        "box_tightness": float(df["bb_width"].iloc[sq_e] / (df["bb_width_sma"].iloc[sq_e] + 1e-10))
+        if pd.notna(df["bb_width"].iloc[sq_e]) and pd.notna(df["bb_width_sma"].iloc[sq_e])
+        else 0.0,
+        "body_atr": float(body_bo / (atr_bo + 1e-10)),
+        "close_to_high": float((entry - df["Low"].iloc[bi]) / (df["High"].iloc[bi] - df["Low"].iloc[bi] + 1e-10)),
+        "gap_pct": float((df["Open"].iloc[bi] - df["Close"].iloc[bi - 1]) / (df["Close"].iloc[bi - 1] + 1e-10) * 100) if bi > 0 else 0.0,
+        "vol_ratio": float(vol_bo / (vol_sma_bo + 1e-10)) if vol_sma_bo > 0 else 0.0,
+        "bo_range_atr": float((df["High"].iloc[bi] - df["Low"].iloc[bi]) / (atr_bo + 1e-10)),
+        "above_ema50": 1 if entry > htf_ema_bo else 0,
+        "dist_ema50": _sv("dist_ema50"),
+        "ema50_slope": _sv("ema50_slope"),
+        "ema20_slope": _sv("ema20_slope"),
+        "ret_5d": _sv("ret_5d"),
+        "ret_10d": _sv("ret_10d"),
+        "ret_20d": _sv("ret_20d"),
+        "rsi": _sv("rsi"),
+        "adx": _sv("adx"),
+        "plus_di": _sv("plus_di"),
+        "minus_di": _sv("minus_di"),
+        "di_spread": _sv("di_spread"),
+        "rs_10": _sv("rs_10") if _sv("rs_10") != 0 else 1.0,
+        "rs_60": _sv("rs_60") if _sv("rs_60") != 0 else 1.0,
+        "risk_pct": risk / (entry + 1e-10) * 100,
+        "entry_to_box_mid_atr": (entry - box_mid) / (atr_bo + 1e-10),
+        "runup_10d": _sv("runup_10d"),
+        "strength": strength,
+        "xu100_above_ema": 0,  # placeholder — scanner'da doldurulacak
+        "xu100_ret_20d": 0.0,
+    }
+
     return {
         "status": "BREAKOUT",
         "dir": direction,
@@ -321,6 +408,7 @@ def scan_single(df: pd.DataFrame, use_vol: bool, use_htf: bool):
         "close": round(current_close, 2),
         "box_top": round(box_top, 2),
         "box_bot": round(box_bot, 2),
+        "ml_features": ml_features,
     }
 
 
@@ -370,6 +458,9 @@ def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5, no
 
     print(f"   Tarama tamamlandı ({errors} hata)\n")
 
+    # ── ML Scoring ──────────────────────────────────────────
+    _ml_score_breakouts(results["BREAKOUT"], start, end)
+
     # ── Sonuçları yazdır ──────────────────────────────────────
     _print_breakouts(results["BREAKOUT"])
     _print_boxes(results["BOX"])
@@ -389,19 +480,140 @@ def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5, no
     return results
 
 
+# ── ML Scoring + Gate + Bucket ────────────────────────────────
+ML_FEATURE_COLS = [
+    "squeeze_bars", "box_range_atr", "box_range_pct", "box_position",
+    "close_vs_box_top_pct", "days_since_sq_end", "box_tightness",
+    "body_atr", "close_to_high", "gap_pct", "vol_ratio", "bo_range_atr",
+    "above_ema50", "dist_ema50", "ema50_slope", "ema20_slope",
+    "ret_5d", "ret_10d", "ret_20d",
+    "rsi", "adx", "plus_di", "minus_di", "di_spread",
+    "rs_10", "rs_60",
+    "risk_pct", "entry_to_box_mid_atr", "runup_10d",
+    "strength",
+    "xu100_above_ema", "xu100_ret_20d",
+]
+
+
+def _ml_score_breakouts(breakouts, start, end):
+    """ML scoring → hard gate → bucket assignment."""
+    if not breakouts:
+        return
+
+    model_path = Path(__file__).parent / "output" / "lgb_tp1_10g.txt"
+    config_path = Path(__file__).parent / "output" / "ml_breakout_config.json"
+
+    if not model_path.exists():
+        print("   ⚠️ ML model bulunamadı (output/lgb_tp1_10g.txt) — skor atlanıyor\n")
+        for bo in breakouts:
+            bo["ml_prob"] = None
+            bo["ml_bucket"] = "?"
+            bo["ml_gate"] = "?"
+        return
+
+    import json
+    try:
+        import lightgbm as lgb
+    except ImportError:
+        print("   ⚠️ lightgbm yüklü değil — skor atlanıyor\n")
+        for bo in breakouts:
+            bo["ml_prob"] = None
+            bo["ml_bucket"] = "?"
+            bo["ml_gate"] = "?"
+        return
+
+    model = lgb.Booster(model_file=str(model_path))
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    p95 = config.get("p95", 0.35)
+    p85 = config.get("p85", 0.30)
+    p65 = config.get("p65", 0.25)
+
+    # XU100 regime
+    xu100_above = 0
+    xu100_ret = 0.0
+    try:
+        xu = yf.download("XU100.IS", start=start, end=end, progress=False, timeout=10)
+        if xu is not None and len(xu) > 50:
+            if isinstance(xu.columns, pd.MultiIndex):
+                xu.columns = xu.columns.get_level_values(0)
+            xu_ema = xu["Close"].ewm(span=50, adjust=False).mean()
+            xu100_above = 1 if xu["Close"].iloc[-1] > xu_ema.iloc[-1] else 0
+            xu100_ret = float((xu["Close"].iloc[-1] / xu["Close"].iloc[-21] - 1) * 100) if len(xu) > 21 else 0
+    except Exception:
+        pass
+
+    print(f"   ML scoring: XU100 {'▲UP' if xu100_above else '▼DOWN'} ({xu100_ret:+.1f}%)")
+
+    for bo in breakouts:
+        feat = bo.get("ml_features")
+        if not feat:
+            bo["ml_prob"] = None
+            bo["ml_bucket"] = "?"
+            bo["ml_gate"] = "?"
+            continue
+
+        # XU100 regime inject
+        feat["xu100_above_ema"] = xu100_above
+        feat["xu100_ret_20d"] = xu100_ret
+
+        # Score
+        X = np.array([[feat.get(f, 0) for f in ML_FEATURE_COLS]])
+        prob = float(model.predict(X)[0])
+        bo["ml_prob"] = prob
+
+        # Hard gates
+        gates = []
+        hard_fail = False
+        if feat.get("above_ema50", 1) == 0:
+            gates.append("EMA50↓")
+            hard_fail = True
+        if feat.get("risk_pct", 0) >= 20:
+            gates.append("RISK↑")
+            hard_fail = True
+        if xu100_above == 0:
+            gates.append("XU100↓")
+            # soft gate — not hard fail
+
+        bo["ml_gate"] = ",".join(gates) if gates else "OK"
+
+        # Bucket
+        if hard_fail:
+            bo["ml_bucket"] = "X"
+        elif prob >= p95:
+            bkt = "A+"
+            if bo["ml_gate"] == "OK":
+                bkt = "A+✓"
+            bo["ml_bucket"] = bkt
+        elif prob >= p85:
+            bo["ml_bucket"] = "A"
+        elif prob >= p65:
+            bo["ml_bucket"] = "B"
+        else:
+            bo["ml_bucket"] = "C"
+
+    # Bucket'a göre sırala (A+✓ > A+ > A > B > C > X)
+    bucket_order = {"A+✓": 0, "A+": 1, "A": 2, "B": 3, "C": 4, "X": 5, "?": 6}
+    breakouts.sort(key=lambda x: (bucket_order.get(x.get("ml_bucket", "?"), 9), -(x.get("ml_prob") or 0)))
+
+    n_scored = sum(1 for b in breakouts if b.get("ml_prob") is not None)
+    n_gated = sum(1 for b in breakouts if b.get("ml_bucket") == "X")
+    print(f"   {n_scored} skorlandı, {n_gated} gate'lendi (EMA50↓ / RISK↑)\n")
+
+
 def _print_breakouts(items):
     if not items:
         print("🚀 KIRILMA: Yok\n")
         return
 
-    items.sort(key=lambda x: x["strength"], reverse=True)
+    # ML bucket sıralaması zaten _ml_score_breakouts'ta yapıldı
     print(f"🚀 KIRILMA ({len(items)} adet)")
-    print("─" * 100)
+    print("─" * 120)
     print(
         f"{'Sembol':<10} {'Yön':<6} {'Güç':<12} {'Giriş':>8} {'SL':>8} "
-        f"{'TP1':>8} {'TP2':>8} {'TP3':>8} {'Risk':>7} {'Durum':<12} {'Gün':>4} {'SQ':>3}"
+        f"{'TP1':>8} {'TP2':>8} {'TP3':>8} {'Durum':<10} {'Gün':>4} "
+        f"{'ML':>6} {'Bucket':<6} {'Gate':<10}"
     )
-    print("─" * 100)
+    print("─" * 120)
     for r in items:
         tp_marks = ""
         if r["tp1_hit"]:
@@ -414,11 +626,16 @@ def _print_breakouts(items):
         if tp_marks:
             status += " " + tp_marks
 
+        prob = r.get("ml_prob")
+        prob_str = f"{prob:.2f}" if prob is not None else "  - "
+        bucket = r.get("ml_bucket", "?")
+        gate = r.get("ml_gate", "?")
+
         print(
             f"{r['ticker']:<10} {r['dir']:<6} {r['strength_label']:<12} "
             f"{r['entry']:>8.2f} {r['sl']:>8.2f} {r['tp1']:>8.2f} "
-            f"{r['tp2']:>8.2f} {r['tp3']:>8.2f} {r['risk']:>7.2f} "
-            f"{status:<12} {r['bars_ago']:>4} {r['squeeze_bars']:>3}"
+            f"{r['tp2']:>8.2f} {r['tp3']:>8.2f} {status:<10} {r['bars_ago']:>4} "
+            f"{prob_str:>6} {bucket:<6} {gate:<10}"
         )
     print()
 
@@ -495,7 +712,8 @@ def _generate_html(results):
 
     def _bo_rows():
         rows = []
-        for r in sorted(breakouts, key=lambda x: x["strength"], reverse=True):
+        # Breakout'lar zaten ML bucket sıralı
+        for r in breakouts:
             cls = "long" if r["dir"] == "LONG" else "short"
             tp_marks = ""
             if r["tp1_hit"]:
@@ -506,6 +724,20 @@ def _generate_html(results):
                 tp_marks += " ③"
             s = r["strength"]
             s_cls = "strong" if s >= 4 else "medium" if s >= 2 else "normal"
+
+            prob = r.get("ml_prob")
+            bucket = r.get("ml_bucket", "?")
+            gate = r.get("ml_gate", "?")
+            prob_str = f"{prob:.2f}" if prob is not None else "-"
+            prob_val = f"{prob:.4f}" if prob is not None else "0"
+
+            # Bucket renk
+            bkt_cls = "strong" if bucket.startswith("A+") else "medium" if bucket == "A" else "normal"
+            if bucket == "X":
+                bkt_cls = "short"
+
+            gate_html = f'<span style="color:#f85149">{gate}</span>' if gate != "OK" and gate != "?" else gate
+
             rows.append(
                 f'<tr class="{cls}">'
                 f"<td><b>{_tk(r['ticker'])}</b></td>"
@@ -518,6 +750,9 @@ def _generate_html(results):
                 f'<td data-val="{r["tp3"]:.2f}">{r["tp3"]:.2f}</td>'
                 f"<td>{r['trade_status']}{tp_marks}</td>"
                 f'<td data-val="{r["bars_ago"]}">{r["bars_ago"]}G</td>'
+                f'<td data-val="{prob_val}">{prob_str}</td>'
+                f'<td class="{bkt_cls}" data-val="{bucket}">{bucket}</td>'
+                f"<td>{gate_html}</td>"
                 f"</tr>"
             )
         return "\n".join(rows)
@@ -624,7 +859,7 @@ function sortTable(th) {{
 <div class="section">
   <h2>🚀 Kırılmalar (Aktif Trade)</h2>
   <table>
-    <tr><th class="sortable" onclick="sortTable(this)">Sembol</th><th class="sortable" onclick="sortTable(this)">Yön</th><th class="sortable" onclick="sortTable(this)">Güç</th><th class="sortable" onclick="sortTable(this)">Giriş</th><th class="sortable" onclick="sortTable(this)">SL</th><th class="sortable" onclick="sortTable(this)">TP1</th><th class="sortable" onclick="sortTable(this)">TP2</th><th class="sortable" onclick="sortTable(this)">TP3</th><th class="sortable" onclick="sortTable(this)">Durum</th><th class="sortable" onclick="sortTable(this)">Gün</th></tr>
+    <tr><th class="sortable" onclick="sortTable(this)">Sembol</th><th class="sortable" onclick="sortTable(this)">Yön</th><th class="sortable" onclick="sortTable(this)">Güç</th><th class="sortable" onclick="sortTable(this)">Giriş</th><th class="sortable" onclick="sortTable(this)">SL</th><th class="sortable" onclick="sortTable(this)">TP1</th><th class="sortable" onclick="sortTable(this)">TP2</th><th class="sortable" onclick="sortTable(this)">TP3</th><th class="sortable" onclick="sortTable(this)">Durum</th><th class="sortable" onclick="sortTable(this)">Gün</th><th class="sortable" onclick="sortTable(this)">ML</th><th class="sortable" onclick="sortTable(this)">Bucket</th><th>Gate</th></tr>
     {_bo_rows()}
   </table>
   {f'<p style="color:#8b949e;margin-top:8px;">Sonuç yok</p>' if not breakouts else ''}
@@ -750,25 +985,34 @@ def _build_telegram_message(results, html_url=None):
 
     if bo:
         lines.append("<b>🚀 Kırılmalar</b>")
-        for r in sorted(bo, key=lambda x: x["strength"], reverse=True):
+        # ML bucket sıralı zaten
+        for r in bo:
             s = r["strength"]
-            s_icon = "🟢" if s >= 4 else "🟡" if s >= 2 else "⚫"
-            tp_marks = ""
-            if r["tp1_hit"]:
-                tp_marks += "①"
-            if r["tp2_hit"]:
-                tp_marks += "②"
-            if r["tp3_hit"]:
-                tp_marks += "③"
-            status = r["trade_status"]
-            if tp_marks:
-                status += " " + tp_marks
+            bucket = r.get("ml_bucket", "?")
+            prob = r.get("ml_prob")
+            gate = r.get("ml_gate", "?")
+
+            # Bucket ikonu
+            if bucket.startswith("A+"):
+                b_icon = "⭐"
+            elif bucket == "A":
+                b_icon = "🟢"
+            elif bucket == "B":
+                b_icon = "🟡"
+            elif bucket == "X":
+                b_icon = "⛔"
+            else:
+                b_icon = "⚪"
+
+            prob_str = f"{prob:.2f}" if prob is not None else "-"
+            gate_str = f" ⚠{gate}" if gate not in ("OK", "?") else ""
+
             lines.append(
-                f"{s_icon}<b>{r['ticker']}</b> {r['dir']} {r['entry']:.2f} "
-                f"[{s}/4] {r['bars_ago']}G"
+                f"{b_icon}<b>{r['ticker']}</b> [{bucket}] {r['entry']:.2f} "
+                f"ML:{prob_str} {r['bars_ago']}G{gate_str}"
             )
             lines.append(
-                f"  SL:{r['sl']:.2f} TP1:{r['tp1']:.2f} TP2:{r['tp2']:.2f} TP3:{r['tp3']:.2f} | {status}"
+                f"  SL:{r['sl']:.2f} TP1:{r['tp1']:.2f} TP2:{r['tp2']:.2f} TP3:{r['tp3']:.2f}"
             )
         lines.append("")
 

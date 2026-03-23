@@ -18,6 +18,8 @@ from html.parser import HTMLParser
 
 import requests
 
+from markets.bist.regime_transition import classify_volume_quality
+
 # -- URL Yapılandırması --
 _NOX_BASE = "https://aalpkk.github.io/nox-signals"
 _BIST_BASE = "https://aalpkk.github.io/bist-signals"
@@ -348,6 +350,15 @@ def fetch_rt_signals(base_url=None):
         elif r.get('weekly_al'):
             badge = 'H+AL'
 
+        # Hacim-donus tier icin gerekli alanlar
+        _atr_pct = r.get('atr_pct', 0) or 0
+        _rvol = r.get('rvol', 0) or 0
+        _cmf = r.get('cmf', 0) or 0
+        _part = r.get('participation_score', 0) or 0
+        _oe = r.get('oe_score', 0) or 0
+        vol_tier, vol_tier_icon = classify_volume_quality(
+            float(_atr_pct), float(_cmf), float(_rvol), int(_part), int(_oe))
+
         entry = {
             'screener': 'regime_transition',
             'ticker': r['ticker'],
@@ -365,6 +376,12 @@ def fetch_rt_signals(base_url=None):
             'regime': r.get('regime_name', ''),
             'transition_date': r.get('transition_date', r.get('transition_date_iso', '')),
             'csv_date': report_date.replace('-', '') if report_date else '',
+            # Hacim-donus tier
+            'atr_pct': _atr_pct,
+            'rvol': _rvol,
+            'participation_score': _part,
+            'vol_tier': vol_tier,
+            'vol_tier_icon': vol_tier_icon,
         }
         if badge:
             entry['badge'] = badge
@@ -524,17 +541,209 @@ def fetch_alsat_signals(base_url=None):
 # SBT (Smart Breakout Targets) Sinyaller — Stub
 # ============================================================================
 
-def fetch_sbt_signals(base_url=None):
-    """SBT HTML'den sinyal çek — STUB.
+class _SBTBreakoutParser(HTMLParser):
+    """SBT Breakout HTML tablosunu parse eder.
 
-    SBT verisi fetch_all_html_signals()'a dahil DEĞİLDİR.
-    _ml_overlay_v2() (briefing.py) tarafından ayrı consume edilir.
-    Full SBT → html_signals entegrasyonu ayrı task.
-
-    Returns: []
+    Ticker: <a class="tk">TICKER</a> link text'inden.
+    Kolonlar: Sembol, Yön, Güç, Giriş, SL, TP1, TP2, TP3, Durum, Gün, ML, Bucket, Gate
+    data-val attribute varsa kullan, yoksa text content.
     """
-    # TODO: SBT HTML parse → scanner_reader formatında signal dicts
-    return []
+    def __init__(self):
+        super().__init__()
+        self.rows = []
+        self._current_row = []
+        self._in_td = False
+        self._td_text = ""
+        self._td_data_val = None
+        self._in_tbody = False
+        self._current_ticker = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs_d = dict(attrs)
+        if tag == 'tbody':
+            self._in_tbody = True
+        elif tag == 'tr' and self._in_tbody:
+            self._current_row = []
+            self._current_ticker = None
+        elif tag == 'td' and self._in_tbody:
+            self._in_td = True
+            self._td_text = ""
+            self._td_data_val = attrs_d.get('data-val')
+        elif tag == 'a' and self._in_td:
+            # <a class="tk">TICKER</a> — ticker link
+            if 'tk' in (attrs_d.get('class', '')):
+                pass  # text content'i handle_data'da yakalanır
+
+    def handle_endtag(self, tag):
+        if tag == 'tbody':
+            self._in_tbody = False
+        elif tag == 'td' and self._in_td:
+            self._in_td = False
+            val = self._td_data_val if self._td_data_val is not None else self._td_text.strip()
+            self._current_row.append(val)
+            self._td_data_val = None
+        elif tag == 'tr' and self._in_tbody and self._current_row:
+            if len(self._current_row) >= 10:
+                # İlk kolon = sembol (ticker)
+                ticker = self._current_row[0].strip()
+                if ticker and len(ticker) >= 3:
+                    self.rows.append({
+                        'ticker': ticker,
+                        'cells': self._current_row,
+                    })
+            self._current_row = []
+
+    def handle_data(self, data):
+        if self._in_td:
+            self._td_text += data
+
+
+def fetch_sbt_signals(base_url=None):
+    """SBT HTML'den breakout sinyallerini çek.
+
+    Filtre: bars_ago <= 3, trade_status OPEN/WIN_TRAIL, bucket != 'X'
+
+    Returns: scanner_reader formatında signal dicts listesi
+    """
+    _, bist_base = _get_base_urls()
+    url = f"{bist_base}/smart_breakout.html" if not base_url else f"{base_url}/smart_breakout.html"
+
+    html = _fetch_html(url)
+    if not html:
+        return []
+
+    # Önce const D JSON formatını dene
+    d = _extract_const_d(html)
+    if d and d.get('rows'):
+        return _parse_sbt_json(d)
+
+    # Fallback: HTML tablo parse
+    parser = _SBTBreakoutParser()
+    parser.feed(html)
+
+    if not parser.rows:
+        print("  ⚠️ SBT HTML: tablo satırı bulunamadı")
+        return []
+
+    # Tarih
+    date_m = re.search(r'(\d{2})\.(\d{2})\.(\d{4})', html)
+    if date_m:
+        report_date = f"{date_m.group(3)}-{date_m.group(2)}-{date_m.group(1)}"
+    else:
+        from datetime import datetime, timezone, timedelta
+        report_date = datetime.now(timezone(timedelta(hours=3))).strftime('%Y-%m-%d')
+
+    signals = []
+    for row in parser.rows:
+        cells = row['cells']
+        # Kolon sırası: Sembol(0), Yön(1), Güç(2), Giriş(3), SL(4),
+        # TP1(5), TP2(6), TP3(7), Durum(8), Gün(9), ML(10), Bucket(11), Gate(12)
+        ticker = row['ticker']
+        direction_raw = cells[1].strip() if len(cells) > 1 else ''
+        strength = _safe_int(cells[2]) if len(cells) > 2 else 0
+        entry_price = _safe_float(cells[3]) if len(cells) > 3 else 0
+        sl_price = _safe_float(cells[4]) if len(cells) > 4 else 0
+        tp1_price = _safe_float(cells[5]) if len(cells) > 5 else 0
+        tp2_price = _safe_float(cells[6]) if len(cells) > 6 else 0
+        tp3_price = _safe_float(cells[7]) if len(cells) > 7 else 0
+        trade_status = cells[8].strip() if len(cells) > 8 else ''
+        bars_ago = _safe_int(cells[9]) if len(cells) > 9 else 99
+        ml_prob_raw = cells[10].strip() if len(cells) > 10 else '0'
+        bucket = cells[11].strip() if len(cells) > 11 else ''
+        gate = cells[12].strip() if len(cells) > 12 else ''
+
+        # ML prob parse
+        ml_prob = _safe_float(ml_prob_raw)
+        if ml_prob > 1:
+            ml_prob = ml_prob / 100
+
+        # Filtreler
+        if bars_ago > 3:
+            continue
+        if not any(k in trade_status.upper() for k in ('OPEN', 'WIN_TRAIL', 'ACIK')):
+            continue
+        if bucket == 'X':
+            continue
+
+        signals.append({
+            'screener': 'sbt',
+            'ticker': ticker,
+            'signal_date': report_date,
+            'direction': 'AL',
+            'signal_type': 'BREAKOUT',
+            'entry_price': entry_price,
+            'quality': strength,
+            'sl_price': sl_price,
+            'tp1_price': tp1_price,
+            'tp2_price': tp2_price,
+            'tp3_price': tp3_price,
+            'sbt_bucket': bucket,
+            'sbt_ml_prob': ml_prob,
+            'sbt_gate': gate,
+            'bars_ago': bars_ago,
+            'csv_date': report_date.replace('-', ''),
+        })
+
+    print(f"  SBT: {len(signals)} breakout ({report_date})")
+    return signals
+
+
+def _parse_sbt_json(d):
+    """const D JSON formatından SBT sinyallerini parse et."""
+    report_date = d.get('date', d.get('report_date', ''))
+    if report_date and '.' in report_date:
+        try:
+            parts = report_date.split()[0].split('.')
+            report_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
+        except (IndexError, ValueError):
+            pass
+    if not report_date:
+        from datetime import datetime, timezone, timedelta
+        report_date = datetime.now(timezone(timedelta(hours=3))).strftime('%Y-%m-%d')
+
+    signals = []
+    for row in d.get('rows', []):
+        ticker = row.get('ticker', '')
+        if not ticker:
+            continue
+        bars_ago = row.get('bars_ago', row.get('gun', 99))
+        trade_status = str(row.get('trade_status', row.get('durum', '')))
+        bucket = str(row.get('ml_bucket', row.get('bucket', '')))
+
+        # Filtreler
+        if bars_ago > 3:
+            continue
+        if not any(k in trade_status.upper() for k in ('OPEN', 'WIN_TRAIL', 'ACIK')):
+            continue
+        if bucket == 'X':
+            continue
+
+        ml_prob = row.get('ml_prob', row.get('prob', 0))
+        ml_prob = float(ml_prob) if ml_prob else 0.0
+        if ml_prob > 1:
+            ml_prob = ml_prob / 100
+
+        signals.append({
+            'screener': 'sbt',
+            'ticker': ticker,
+            'signal_date': report_date,
+            'direction': 'AL',
+            'signal_type': 'BREAKOUT',
+            'entry_price': float(row.get('entry', row.get('giris', 0)) or 0),
+            'quality': int(row.get('strength', row.get('guc', 0)) or 0),
+            'sl_price': float(row.get('sl', 0) or 0),
+            'tp1_price': float(row.get('tp1', 0) or 0),
+            'tp2_price': float(row.get('tp2', 0) or 0),
+            'tp3_price': float(row.get('tp3', 0) or 0),
+            'sbt_bucket': bucket,
+            'sbt_ml_prob': ml_prob,
+            'sbt_gate': str(row.get('gate', '')),
+            'bars_ago': int(bars_ago),
+            'csv_date': report_date.replace('-', ''),
+        })
+
+    print(f"  SBT: {len(signals)} breakout ({report_date})")
+    return signals
 
 
 # ============================================================================
@@ -557,6 +766,7 @@ def fetch_all_html_signals():
         ('RT', fetch_rt_signals),
         ('Tavan', fetch_tavan_signals),
         ('AL/SAT', fetch_alsat_signals),
+        ('SBT', fetch_sbt_signals),
     ]:
         try:
             sigs = fetcher()

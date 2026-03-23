@@ -22,18 +22,20 @@ _TICKER_EXCLUDE = {
     'ONERI', 'UYARI', 'ALTIN', 'DOVIZ', 'FAIZ', 'EMTIA',
 }
 
-_LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT'}
+_LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
 _LIST_LABELS = {
     'alsat': 'AL/SAT Tarama',
     'tavan': 'Tavan Tarayici',
     'nw': 'NW Pivot AL',
     'rt': 'Regime Transition',
+    'sbt': 'SBT Breakout',
 }
 _LIST_ICONS = {
     'alsat': '\U0001f4cb',  # clipboard
     'tavan': '\U0001f53a',  # up triangle
     'nw': '\U0001f4ca',     # chart
     'rt': '\u26a1',         # lightning
+    'sbt': '\U0001f680',    # rocket
 }
 
 
@@ -57,7 +59,7 @@ def _linkify_tickers(html_text):
 def _prepare_lists_json(lists_dict, max_per_list=5):
     """4 listenin her birinden top N sinyali JSON-serializable dict'e cevir."""
     result = {}
-    for key in ('alsat', 'tavan', 'nw', 'rt'):
+    for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
         items = lists_dict.get(key, [])
         entries = []
         for ticker, score, reasons, sig in items[:max_per_list]:
@@ -75,6 +77,9 @@ def _prepare_lists_json(lists_dict, max_per_list=5):
                     entry['ml_score_short'] = sig['ml_score_short']
                 if sig.get('ml_score_swing') is not None:
                     entry['ml_score_swing'] = sig['ml_score_swing']
+                # ML effect
+                if sig.get('ml_effect'):
+                    entry['ml_effect'] = sig['ml_effect']
                 # SBT bucket + gate
                 if sig.get('sbt_bucket'):
                     entry['sbt_bucket'] = sig['sbt_bucket']
@@ -82,6 +87,10 @@ def _prepare_lists_json(lists_dict, max_per_list=5):
                     entry['gate_penalty'] = sig['gate_penalty']
                 if sig.get('_rule_score') is not None:
                     entry['rule_score'] = sig['_rule_score']
+                # Vol tier (RT hacim-donus)
+                if sig.get('vol_tier'):
+                    entry['vol_tier'] = sig['vol_tier']
+                    entry['vol_tier_icon'] = sig.get('vol_tier_icon', '')
             entries.append(entry)
         result[key] = {
             'label': _LIST_LABELS.get(key, key),
@@ -114,10 +123,16 @@ def _prepare_overlap_json(lists_dict, max_per_group=5):
                 entry['ml_score_short'] = meta['ml_score_short']
             if meta.get('ml_score_swing') is not None:
                 entry['ml_score_swing'] = meta['ml_score_swing']
+            if meta.get('ml_effect'):
+                entry['ml_effect'] = meta['ml_effect']
             if meta.get('sbt_bucket'):
                 entry['sbt_bucket'] = meta['sbt_bucket']
             if meta.get('gate_penalty'):
                 entry['gate_penalty'] = meta['gate_penalty']
+            # Vol tier (RT hacim-donus)
+            if meta.get('vol_tier'):
+                entry['vol_tier'] = meta['vol_tier']
+                entry['vol_tier_icon'] = meta.get('vol_tier_icon', '')
         groups.setdefault(oc, []).append(entry)
     # Her grubun ilk max_per_group'unu al, buyuk overlap_count once
     result = []
@@ -365,6 +380,19 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 .sbt-badge.sbt-a {{ background: rgba(96,165,250,0.2); color: #60a5fa; }}
 .sbt-badge.sbt-b {{ background: rgba(161,161,170,0.12); color: #a1a1aa; }}
 .sbt-badge.sbt-x {{ background: rgba(248,113,113,0.15); color: #f87171; }}
+
+/* VOL TIER BADGE (Hacim-donus) */
+.vol-tier {{
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    white-space: nowrap;
+}}
+.vol-tier.vt-altin {{ background: rgba(250,204,21,0.2); color: #facc15; }}
+.vol-tier.vt-gumus {{ background: rgba(192,192,192,0.2); color: #c0c0c0; }}
+.vol-tier.vt-bronz {{ background: rgba(205,127,50,0.2); color: #cd7f32; }}
 
 /* GATE TAG */
 .gate-tag {{
@@ -741,7 +769,7 @@ const FILTERED_DATA = {filtered_json};
 // ── Sinyal Listeleri (2x2 grid) ──
 (function() {{
     const grid = document.getElementById('signalGrid');
-    const order = ['alsat', 'tavan', 'nw', 'rt'];
+    const order = ['alsat', 'tavan', 'nw', 'rt', 'sbt'];
     order.forEach(key => {{
         const list = LISTS[key];
         if (!list) return;
@@ -785,11 +813,18 @@ const FILTERED_DATA = {filtered_json};
             }} else if (item.gate_penalty >= 1) {{
                 gateTag = '<span class="gate-tag">soft</span>';
             }}
+            // Vol tier badge (RT hacim-donus)
+            let volBadge = '';
+            if (item.vol_tier && item.vol_tier !== 'NORMAL') {{
+                const vtCls = {{'ALTIN':'vt-altin','GUMUS':'vt-gumus','BRONZ':'vt-bronz'}}[item.vol_tier] || '';
+                const vtIcon = item.vol_tier_icon || '';
+                volBadge = `<span class="vol-tier ${{vtCls}}">${{vtIcon}}${{item.vol_tier}}</span>`;
+            }}
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{sbtBadge}}${{mlBadge}}${{gateTag}}
+                ${{volBadge}}${{sbtBadge}}${{mlBadge}}${{gateTag}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -817,7 +852,7 @@ const FILTERED_DATA = {filtered_json};
         </div>`;
         group.items.forEach(item => {{
             const listsTag = (item.in_lists || []).map(l => {{
-                const short = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT'}}[l] || l;
+                const short = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT','sbt':'SBT'}}[l] || l;
                 return short;
             }}).join('+');
             const relaxed = item.relaxed ? ' [RT↓]' : '';
@@ -845,11 +880,18 @@ const FILTERED_DATA = {filtered_json};
                 const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
                 sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
             }}
+            // Vol tier badge
+            let volBadge = '';
+            if (item.vol_tier && item.vol_tier !== 'NORMAL') {{
+                const vtCls = {{'ALTIN':'vt-altin','GUMUS':'vt-gumus','BRONZ':'vt-bronz'}}[item.vol_tier] || '';
+                const vtIcon = item.vol_tier_icon || '';
+                volBadge = `<span class="vol-tier ${{vtCls}}">${{vtIcon}}${{item.vol_tier}}</span>`;
+            }}
             html += `<div class="overlap-item">
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="lists-tag">${{listsTag}}${{relaxed}}</span>
                 <span class="reasons-text">${{reason0}}</span>
-                ${{sbtBadge}}${{mlBadge}}
+                ${{volBadge}}${{sbtBadge}}${{mlBadge}}
                 <span class="quality">${{item.quality}}p</span>
             </div>`;
         }});
@@ -903,7 +945,7 @@ const FILTERED_DATA = {filtered_json};
         container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Elenen sinyal yok</div>';
         return;
     }}
-    const listShort = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
+    const listShort = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT','sbt':'SBT','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
     const sec = document.createElement('div');
     sec.className = 'overlap-section';
     let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Rule güçlü ama ML zayıf — ${{FILTERED_DATA.length}} hisse elendi</div>`;

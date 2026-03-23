@@ -433,20 +433,33 @@ def format_macro_summary(macro_result):
     return "\n".join(lines)
 
 
-def fetch_market_news(max_items=10):
+_FINANCE_KEYWORDS = [
+    'borsa', 'bist', 'endeks', 'hisse', 'faiz', 'dolar',
+    'enflasyon', 'merkez bankası', 'tcmb', 'xu100', 'piyasa',
+    'tüfe', 'büyüme', 'cari açık', 'ihracat', 'ithalat',
+    'hazine', 'tahvil', 'altın', 'petrol', 'euro', 'kur',
+]
+
+
+def fetch_market_news(max_items=5):
     """Google News RSS'den BIST/borsa haberlerini çek.
 
+    Filtreler: finans anahtar kelimesi + 24 saat taze.
     Returns: [{"title": str, "link": str, "pub_date": str, "source": str}, ...]
     Hata durumunda boş liste döner.
     """
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+
     url = ("https://news.google.com/rss/search?"
-           "q=BIST+borsa+piyasa&hl=tr&gl=TR&ceid=TR:tr")
+           "q=borsa+BIST+endeks+hisse&hl=tr&gl=TR&ceid=TR:tr")
     try:
         resp = requests.get(url, timeout=5, headers={
             "User-Agent": "Mozilla/5.0 (compatible; NOXBot/1.0)"
         })
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
+        now_utc = datetime.now(timezone.utc)
         items = []
         for item in root.iter("item"):
             if len(items) >= max_items:
@@ -455,6 +468,22 @@ def fetch_market_news(max_items=10):
             link = item.findtext("link", "")
             pub_date = item.findtext("pubDate", "")
             source = item.findtext("source", "")
+
+            # 24 saatten eski haberleri atla
+            if pub_date:
+                try:
+                    pub_dt = parsedate_to_datetime(pub_date)
+                    age_hours = (now_utc - pub_dt).total_seconds() / 3600
+                    if age_hours > 24:
+                        continue
+                except Exception:
+                    pass  # parse hatası — haberi dahil et
+
+            # Finans anahtar kelime filtresi
+            title_lower = title.lower()
+            if not any(kw in title_lower for kw in _FINANCE_KEYWORDS):
+                continue
+
             items.append({
                 "title": title,
                 "link": link,

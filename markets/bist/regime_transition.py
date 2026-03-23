@@ -909,3 +909,39 @@ def calc_oe_score(df, ema21, cfg=None):
         'oe_tags': tags,
         'oe_warning': score >= 3,
     }
+
+
+# =============================================================================
+# HACIM-DONUS KALITE SINIFLANDIRMASI
+# =============================================================================
+
+def classify_volume_quality(atr_pct, cmf, rvol, part_score, oe_score):
+    """
+    Hacim-donus kalite siniflandirmasi (backtest: 3y, N=6953).
+
+    Tier'lar:
+      ALTIN  — atr_pct<=3 + part=3 + oe<=1 → 5G WR %75.4 (N=130)
+      GUMUS  — atr_pct<=3 + part=3          → 5G WR %70.7 (N=184)
+      BRONZ  — atr_pct<=4 + part>=3         → 5G WR %60.0 (N=668)
+      ELE    — atr>5% OR cmf<-0.1 OR rvol>5 → kotu hacim
+      NORMAL — hicbir kurala uymayan
+
+    Returns: (tier: str, icon: str)
+    """
+    # ELE: kotu hacim profili
+    if atr_pct > 5 or cmf < -0.1 or rvol > 5:
+        return 'ELE', '\U0001f534'      # 🔴
+
+    # ALTIN: dusuk volatilite + tam katilim + dusuk OE
+    if atr_pct <= 3 and part_score == 3 and oe_score <= 1:
+        return 'ALTIN', '\U0001f947'    # 🥇
+
+    # GUMUS: dusuk volatilite + tam katilim
+    if atr_pct <= 3 and part_score == 3:
+        return 'GUMUS', '\U0001f948'    # 🥈
+
+    # BRONZ: orta volatilite + yuksek katilim
+    if atr_pct <= 4 and part_score >= 3:
+        return 'BRONZ', '\U0001f949'    # 🥉
+
+    return 'NORMAL', ''
