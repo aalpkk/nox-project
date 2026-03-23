@@ -210,21 +210,7 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
         if oe is not None and oe != '' and int(oe or 0) >= 3:
             details.append(f"ℹ️ AL/SAT OE={oe} (bilgi notu)")
 
-    # ── 3. Rejim v3 (bist-tavan-screener) ──
-    rt_signals = [s for s in ticker_signals if s['screener'] == 'rejim_v3']
-    for s in rt_signals:
-        sources.add('rejim_v3')
-        sig_type = s.get('signal_type', '')
-        if sig_type in ('FULL_TREND', 'TREND'):
-            _add(2, 'regime_transition', f"+2 RT {sig_type}")
-        elif sig_type in ('GUCLU', 'GÜÇLÜ', 'CMB'):
-            _add(1, 'regime_transition', f"+1 RT {sig_type}")
-
-        oe = s.get('oe')
-        if oe is not None and oe != '' and int(oe or 0) >= 3:
-            details.append(f"ℹ️ RT OE={oe} (bilgi notu)")
-
-    # ── 4. Regime Transition — badge'ler (yapısal) ──
+    # ── 3. Regime Transition — badge'ler (yapısal) ──
     rt2_signals = [s for s in ticker_signals if s['screener'] == 'regime_transition']
     rt2_al = [s for s in rt2_signals if s['direction'] == 'AL']
     for s in rt2_al:

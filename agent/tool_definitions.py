@@ -16,8 +16,8 @@ TOOLS = [
                 },
                 "screener": {
                     "type": "string",
-                    "description": "Screener filtresi (opsiyonel). Degerler: alsat, rejim_v3, tavan, nox_v3_weekly, divergence, regime_transition",
-                    "enum": ["alsat", "rejim_v3", "tavan", "nox_v3_weekly", "nox_v3_daily", "divergence", "regime_transition"]
+                    "description": "Screener filtresi (opsiyonel). Degerler: alsat, tavan, nox_v3_weekly, divergence, regime_transition",
+                    "enum": ["alsat", "tavan", "nox_v3_weekly", "nox_v3_daily", "divergence", "regime_transition"]
                 },
                 "direction": {
                     "type": "string",

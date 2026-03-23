@@ -2,7 +2,7 @@
 NOX Agent — Scanner Sonuc Okuyucu
 Tum scanner CSV'lerini kesfet, parse et, normalize et.
 GitHub artifact'lerini iki repo'dan indirir:
-  - aalpkk/bist-tavan-screener (alsat, rejim_v3, tavan)
+  - aalpkk/bist-tavan-screener (alsat, tavan)
   - aalpkk/nox-project (nox_v3, divergence, regime_transition)
 Render/remote ortamda: latest_signals.json'dan HTTP ile yükler.
 """
@@ -16,7 +16,7 @@ import pandas as pd
 
 # -- CSV Dosya Adi Pattern'lari --
 # Aktif workflow ciktilari:
-#   bist-tavan-screener: rejim_v3_screener, rejim_scan, daily_scan
+#   bist-tavan-screener: daily_scan (alsat, tavan)
 #   nox-project: nox-weekly, nox-divergence, nox-regime
 _CSV_PATTERNS_OUTPUT = [
     # nox-project workflows
@@ -28,7 +28,7 @@ _CSV_PATTERNS_OUTPUT = [
     (re.compile(r'^regime_transition_(\d{8})\.csv$'),      'regime_transition'),
     # bist-tavan-screener workflows
     (re.compile(r'^alsat_signals_(\d{8})\.csv$'),          'alsat'),
-    (re.compile(r'^rejim_v3_signals_(\d{8})\.csv$'),       'rejim_v3'),
+    # rejim_v3 kaldirildi — regime_transition (nox-project HTML) tek kaynak
     (re.compile(r'^tavan_devam_(\d{8})_\d{4}\.csv$'),      'tavan'),
     (re.compile(r'^tavan_kandidat_(\d{8})_\d{4}\.csv$'),   'tavan_kandidat'),
     (re.compile(r'^tavan_signals_(\d{8})\.csv$'),          'tavan'),
@@ -44,7 +44,6 @@ SCREENER_NAMES = {
     'divergence': 'Divergence',
     'regime_transition': 'Regime Transition',
     'alsat': 'AL/SAT Screener',
-    'rejim_v3': 'Rejim v3 (eski)',
     'tavan': 'Tavan Scanner',
     'tavan_kandidat': 'Tavan Kandidat',
     'kademe': 'Kademe S/A',
@@ -217,34 +216,6 @@ def _parse_alsat(path, date_str):
     return signals
 
 
-def _parse_rejim_v3(path, date_str):
-    """Rejim v3 CSV parse."""
-    df = pd.read_csv(path)
-    sig_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-    signals = []
-    for _, row in df.iterrows():
-        entry = {
-            'screener': 'rejim_v3',
-            'ticker': str(row['ticker']).strip(),
-            'signal_date': sig_date,
-            'direction': 'AL',
-            'signal_type': str(row.get('signal', '')).strip(),
-            'entry_price': float(row['close']),
-            'quality': int(row['quality']) if pd.notna(row.get('quality')) else None,
-        }
-        if pd.notna(row.get('rs_score')):
-            entry['rs_score'] = round(float(row['rs_score']), 1)
-        regime = str(row.get('regime', '')).strip()
-        if regime and regime != 'nan':
-            entry['regime'] = regime
-        if pd.notna(row.get('oe')):
-            entry['oe'] = int(row['oe'])
-            entry['oe_detail'] = str(row.get('oe_detail', '')).strip()
-        karar = str(row.get('karar', '')).strip()
-        if karar and karar != 'nan':
-            entry['karar'] = karar
-        signals.append(entry)
-    return signals
 
 
 def _parse_regime_transition(path, date_str):
@@ -400,8 +371,6 @@ def parse_all_csvs(csv_map):
                     sigs = _parse_divergence(path)
                 elif screener == 'alsat':
                     sigs = _parse_alsat(path, date_str)
-                elif screener == 'rejim_v3':
-                    sigs = _parse_rejim_v3(path, date_str)
                 elif screener == 'regime_transition':
                     sigs = _parse_regime_transition(path, date_str)
                 elif screener in ('tavan', 'tavan_kandidat'):
@@ -440,11 +409,6 @@ _GH_ARTIFACT_SOURCES = [
         "repo": "aalpkk/bist-tavan-screener",
         "prefix": "signals-",
         "csv_patterns": None,  # alsat CSV'leri
-    },
-    {
-        "repo": "aalpkk/bist-tavan-screener",
-        "prefix": "rejim-results-",
-        "csv_patterns": ['rejim_v3_signals_'],
     },
     {
         "repo": "aalpkk/bist-tavan-screener",

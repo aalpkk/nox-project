@@ -194,7 +194,6 @@ GitHub Actions workflow'u ile günlük çalışan 5 screener + 1 ek kaynak var. 
 | 3 | **NW** | NOX v3 Haftalık Pivot (`nox_v3_weekly.html`) | Günlük |
 | 4 | **D+W** | NW Günlük+Haftalık Çakışma (NW raporundaki `dw_overlap` tab'ı) | Günlük |
 | 5 | **TVN** | Tavan Scanner (`tavan.html`) | Günlük |
-| 6 | **R3** | Rejim v3 Filtre (`rejim_v3_YYYYMMDD.html`, kullanıcı paylaşır) | Günlük |
 
 ### Çakışma Sayma:
 - Her kaynak (RT-W, RT-D, NW, TVN, R3) ayrı sayılır → max 5 kaynak
