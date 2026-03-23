@@ -106,6 +106,23 @@ NOTR/TRANSITION rejimde:
 - Tier 1 cakisma: decay etiketine gore (1G/3G/SW).
 - TAKTIK overlap'lari premium gibi sunma.
 
+## LIMIT ORDER STRATEJISI (ZORUNLU — her Tier 1 ve Tier 2 hisse icin)
+
+Veride fiyat/ATR/stop/target bilgisi varsa, her shortlist hissesi icin sabah acilisa giris stratejisi yaz:
+
+Her hisse icin:
+- **Limit fiyat**: Dunku kapanis, ATR ve OE'ye gore mantikli giris seviyesi oner
+- **Gap-up ihtimali**: Momentum guclu mu (badge, CMF+, coklu cakisma) → gap-up olasi → limit kapanis+0.5% yukarida veya piyasa emri
+- **Gap-down ihtimali**: OE yuksek, hacim spike, zayif momentum → gap-down olasi → limit kapanis-1% asagida bekle
+- **Strateji**: 3 senaryoyu kisa ver:
+  1. Normal acilis → limit [fiyat]
+  2. Gap-up → max [fiyat]'a kadar piyasa emri veya bekle
+  3. Gap-down → limit [fiyat] (firsata donusur mu?)
+- **SL/TP**: stop ve target verideyse kullan, yoksa ATR bazli hesapla (SL=1.5xATR alti, TP1=2xATR, TP2=3xATR)
+
+ATR% bilgisini kullan: ATR%<3 = dusuk volatilite (dar spread), ATR%>5 = yuksek volatilite (genis spread).
+OE=0 ise momentum taze — gap-up daha olasi. OE>=3 ise uzamis — pullback/gap-down daha olasi.
+
 ONEMLI:
 - TELEGRAM icin yaz. Kisa satirlar, emoji.
 - Tablo KULLANMA.

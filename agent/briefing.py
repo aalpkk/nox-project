@@ -2193,6 +2193,52 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
             name = SCREENER_NAMES.get(scr, scr)
             data_context.append(f"  {name}: {stats['total']} ({stats.get('AL', 0)} AL, {stats.get('SAT', 0)} SAT)")
 
+    # ── Ticker → fiyat bilgisi toplama (tüm listelerden) ──
+    def _collect_price_info(ticker):
+        """Ticker için fiyat/ATR/stop/target bilgisi topla (ilk bulunan)."""
+        price_info = {}
+        for ln in ('alsat', 'rt', 'nw', 'tavan', 'sbt'):
+            for t, sc, reas, sig in lists_dict.get(ln, []):
+                if t != ticker or not isinstance(sig, dict):
+                    continue
+                if not price_info.get('close'):
+                    ep = sig.get('entry_price', 0)
+                    if ep:
+                        price_info['close'] = ep
+                if not price_info.get('atr_pct'):
+                    atr = sig.get('atr_pct', 0)
+                    if atr:
+                        price_info['atr_pct'] = atr
+                if not price_info.get('stop'):
+                    sp = sig.get('stop_price', 0)
+                    if sp:
+                        price_info['stop'] = sp
+                if not price_info.get('target'):
+                    tp = sig.get('target_price', 0)
+                    if tp:
+                        price_info['target'] = tp
+                if not price_info.get('oe'):
+                    oe = sig.get('oe', '')
+                    if oe != '':
+                        price_info['oe'] = oe
+        return price_info
+
+    def _price_str(ticker):
+        """Fiyat bilgisi string — data context için."""
+        pi = _collect_price_info(ticker)
+        if not pi.get('close'):
+            return ""
+        parts = [f"fiyat={pi['close']:.2f}"]
+        if pi.get('atr_pct'):
+            parts.append(f"ATR%={pi['atr_pct']:.1f}")
+        if pi.get('stop'):
+            parts.append(f"SL={pi['stop']:.2f}")
+        if pi.get('target'):
+            parts.append(f"TP={pi['target']:.2f}")
+        if pi.get('oe') is not None and pi.get('oe') != '':
+            parts.append(f"OE={pi['oe']}")
+        return " ".join(parts)
+
     # ── Tier 1: Çapraz Çakışmalar (detaylı) ──
     if lists_dict and lists_dict.get('tier1'):
         tier1 = lists_dict['tier1']
@@ -2235,8 +2281,9 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
                             metrics.append(f"tavan_skor={skor}")
                         break
             metrics_str = " ".join(metrics)
+            ps = _price_str(ticker)
             data_context.append(
-                f"  {ticker}: {list_tags}{relaxed} quality={quality} {metrics_str}")
+                f"  {ticker}: {list_tags}{relaxed} quality={quality} {metrics_str} {ps}".rstrip())
 
     # ── Tier 2: Tekil Kalite Sinyaller (horizon bazlı) ──
     def _format_tier2_items(items, label):
@@ -2274,6 +2321,9 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
                     skor = sig.get('skor')
                     if skor is not None:
                         detail_parts.append(f"skor={skor}")
+                ps = _price_str(ticker)
+                if ps:
+                    detail_parts.append(ps)
                 tickers_str.append(" ".join(detail_parts))
             data_context.append(f"  {tag} ({len(group)} hisse): {', '.join(tickers_str)}")
 
