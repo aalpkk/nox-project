@@ -112,7 +112,7 @@ Veride fiyat/ATR/stop/target bilgisi varsa, her shortlist hissesi icin sabah aci
 
 Her hisse icin:
 - **Limit fiyat**: Dunku kapanis, ATR ve OE'ye gore mantikli giris seviyesi oner
-- **Gap-up ihtimali**: Momentum guclu mu (badge, CMF+, coklu cakisma) → gap-up olasi → limit kapanis+0.5% yukarida veya piyasa emri
+- **Gap-up ihtimali**: Momentum guclu mu (badge, CMF+, coklu cakisma) → gap-up olasi → limit kapanis+ATR%/2 yukarida veya piyasa emri (ornek: ATR%=4 ise +%2 yukari)
 - **Gap-down ihtimali**: OE yuksek, hacim spike, zayif momentum → gap-down olasi → limit kapanis-1% asagida bekle
 - **Strateji**: 3 senaryoyu kisa ver:
   1. Normal acilis → limit [fiyat]
