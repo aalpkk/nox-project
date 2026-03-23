@@ -37,7 +37,7 @@ from agent.institutional import format_sms_line as ice_format_line
 from agent.institutional import sms_icon as ice_sms_icon
 from agent.html_report import generate_briefing_html
 from agent.prompts import BRIEFING_PROMPT
-from agent.sector_regime import load_sector_map, fetch_sector_regimes, get_ticker_sector_regime
+from agent.sector_regime import load_sector_map, fetch_sector_regimes, fetch_index_regimes, get_ticker_sector_regime
 from core.reports import send_telegram, push_html_to_github
 
 _TZ_TR = timezone(timedelta(hours=3))
@@ -545,12 +545,14 @@ def _ml_overlay_v2(lists_dict, latest_signals):
 def _sector_regime_overlay(lists_dict):
     """Sektör endeksi regime overlay — soft gate + uyarı badge.
 
-    Her sinyal'in sektör endeksine RT trend kurallarını uygular.
-    trend_score >= 2 → ✅SEKTÖR↑ (+3 bonus), < 2 → ⚠️SEKTÖR↓ (-2 penaltı).
+    1) Shortlist'teki hisselerin sektör endekslerini çekip badge enjekte eder.
+    2) Tüm BIST endekslerini (şehir hariç) çekip özet için saklar.
     Hiçbir sinyal elenmez — sadece bilgi.
     """
+    from agent.sector_regime import _ALL_INDEX_CODES, _ALL_INDICES
+
     try:
-        print("\n📊 Sektör regime analizi yapılıyor...")
+        print("\n📊 Endeks & sektör regime analizi yapılıyor...")
 
         ticker_to_sector, sector_indexes = load_sector_map()
 
@@ -563,20 +565,28 @@ def _sector_regime_overlay(lists_dict):
                 if si:
                     needed_sectors.add(si)
 
-        if not needed_sectors:
-            print("  [SEKTÖR] Sektör mapping bulunamadı — atlanıyor")
+        # Tüm endeksleri tek seferde çek (sektör + piyasa + tematik + katılım)
+        all_codes = list(set(_ALL_INDEX_CODES) | needed_sectors)
+        print(f"  [ENDEKS] {len(all_codes)} endeks çekiliyor (tvDatafeed)...")
+        all_regimes = fetch_index_regimes(all_codes)
+
+        if not all_regimes:
+            print("  [ENDEKS] Endeks verisi çekilemedi — atlanıyor")
             return
 
-        print(f"  [SEKTÖR] {len(needed_sectors)} sektör endeksi çekiliyor...")
-        sector_regimes = fetch_sector_regimes(needed_sectors)
+        # Sektör alt kümesi (badge'ler için)
+        sector_regimes = {k: v for k, v in all_regimes.items() if k in needed_sectors}
+        al_count = sum(1 for r in sector_regimes.values() if r.get('in_trade', False))
+        pasif_count = len(sector_regimes) - al_count
+        print(f"  [SEKTÖR] {len(sector_regimes)} sektör: {al_count} AL, {pasif_count} pasif")
 
-        if not sector_regimes:
-            print("  [SEKTÖR] Sektör verisi çekilemedi — atlanıyor")
-            return
-
-        trend_count = sum(1 for r in sector_regimes.values() if r['trend_score'] >= 2)
-        weak_count = len(sector_regimes) - trend_count
-        print(f"  [SEKTÖR] {len(sector_regimes)} endeks: {trend_count} trendde, {weak_count} zayıf")
+        # Grup özeti
+        for group_name, group_codes in _ALL_INDICES.items():
+            group_results = {c: all_regimes[c] for c in group_codes if c in all_regimes}
+            al = sum(1 for v in group_results.values() if v.get('in_trade', False))
+            total = len(group_results)
+            if total > 0:
+                print(f"  [{group_name.upper():8s}] {total} endeks: {al} AL, {total-al} pasif")
 
         # Her sinyal'e badge enjekte
         for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
@@ -590,8 +600,8 @@ def _sector_regime_overlay(lists_dict):
                 if isinstance(reasons, list):
                     reasons.append(info['badge'])
 
-                # Score adjust: trend≥2 → +3, else → -2
-                if info['trend_score'] >= 2:
+                # Score adjust: AL aktif → +3, pasif → -2
+                if info.get('in_trade', False):
                     new_score = score + 3
                 else:
                     new_score = score - 2
@@ -600,20 +610,21 @@ def _sector_regime_overlay(lists_dict):
                 if isinstance(sig_or_meta, dict):
                     sig_or_meta['sector_index'] = info['sector_index']
                     sig_or_meta['sector_regime'] = info['regime_label']
-                    sig_or_meta['sector_trend_score'] = info['trend_score']
+                    sig_or_meta['sector_in_trade'] = info.get('in_trade', False)
 
                 items[i] = (ticker, new_score, reasons, sig_or_meta)
 
-        # Store sector data for message building
+        # Store for message + HTML
         lists_dict['_sector_regimes'] = sector_regimes
+        lists_dict['_index_regimes'] = all_regimes
         lists_dict['_sector_stats'] = {
-            'trend': trend_count,
-            'weak': weak_count,
+            'al': al_count,
+            'pasif': pasif_count,
             'no_data': len(needed_sectors) - len(sector_regimes),
         }
 
     except Exception as e:
-        print(f"  [SEKTÖR] Hata: {e} — atlanıyor")
+        print(f"  [ENDEKS] Hata: {e} — atlanıyor")
         import traceback
         traceback.print_exc()
 
@@ -1786,17 +1797,32 @@ def _build_shortlist_message(lists_dict,
             tag = _LIST_SHORT.get(f['list'], f['list'])
             lines.append(f"  <b>{f['ticker']}</b> [{tag}] rule:{f['rule_score']}p — {f['reason']}")
 
-    # ── D. Sektör Durumu ──
-    sector_regimes = lists_dict.get('_sector_regimes', {})
-    if sector_regimes:
-        trend_sectors = sorted(k for k, v in sector_regimes.items() if v['trend_score'] >= 2)
-        weak_sectors = sorted(k for k, v in sector_regimes.items() if v['trend_score'] < 2)
+    # ── D. Endeks & Sektör Durumu ──
+    all_regimes = lists_dict.get('_index_regimes', {})
+    if all_regimes:
+        from agent.sector_regime import _ALL_INDICES
         lines.append("")
-        lines.append("📊 <b>Sektör Durumu</b>")
-        if trend_sectors:
-            lines.append("Trendde: " + " ".join(f"{s}✅" for s in trend_sectors))
-        if weak_sectors:
-            lines.append("Zayıf: " + " ".join(f"{s}⚠️" for s in weak_sectors))
+        lines.append("📊 <b>Endeks & Sektör Durumu</b>")
+
+        group_labels = {
+            'piyasa': '📈 Piyasa',
+            'sektor': '🏭 Sektör',
+            'tematik': '🏷 Tematik',
+            'katilim': '☪️ Katılım',
+        }
+        for group, codes in _ALL_INDICES.items():
+            group_data = {c: all_regimes[c] for c in codes if c in all_regimes}
+            if not group_data:
+                continue
+            al = sorted(k for k, v in group_data.items() if v.get('in_trade', False))
+            pasif = sorted(k for k, v in group_data.items() if not v.get('in_trade', False))
+            label = group_labels.get(group, group)
+            parts = []
+            for s in al:
+                parts.append(f"{s}✅")
+            for s in pasif:
+                parts.append(f"{s}⚠️")
+            lines.append(f"{label}: {' '.join(parts)}")
 
     return "\n".join(lines)
 

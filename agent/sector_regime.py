@@ -1,17 +1,16 @@
 """
-Sektör Endeksi Regime Tespiti — RT trend kuralları bazlı soft gate.
+Sektör & Ana Endeks Regime Tespiti — RT AL sinyali bazlı soft gate.
 
-sector_map.json'daki sektör endekslerini yfinance ile çekip RT'nin
-compute_trend_score fonksiyonuyla trend/choppy sınıflandırması yapar.
-
-yfinance'ta çoğu BIST sektör endeksi yetersiz veri döndürür.
-Fallback olarak her sektör için en büyük proxy hissesi kullanılır.
+tvDatafeed ile gerçek BIST sektör endeksi verisi çekip RT'nin tam
+pipeline'ını (scan_regime_transition + compute_trade_state) çalıştırır.
+in_trade=True → AL aktif, False → pasif.
 
 Kullanım:
-    from agent.sector_regime import load_sector_map, fetch_sector_regimes, get_ticker_sector_regime
+    from agent.sector_regime import load_sector_map, fetch_sector_regimes, \
+        fetch_index_regimes, get_ticker_sector_regime
 
-Not: Sadece trend_score kullanılır — endeks hacmi gerçek birikim/dağılım
-göstermez, participation skoru güvenilir değil.
+Not: Endekslerde volume=0 olduğu için participation_score her zaman 0 kalır.
+RT'nin AL sinyali trend_score + expansion_score + regime geçişine bakar.
 """
 import json
 import os
@@ -22,35 +21,30 @@ sys.path.insert(0, ROOT)
 
 SECTOR_MAP_PATH = os.path.join(ROOT, 'tools', 'sector_map.json')
 
-# Sektör endeksi → proxy hisse (en büyük/en likit temsilci)
-# yfinance'ta çoğu BIST sektör endeksi yeterli veri dönmüyor,
-# bu proxy'ler o sektörün trend yönünü temsil eder.
-_SECTOR_PROXY = {
-    'XBANK': 'GARAN',
-    'XUTEK': 'ASELS',
-    'XHOLD': 'SAHOL',
-    'XELKT': 'EUPWR',
-    'XTRZM': 'THYAO',
-    'XUSIN': 'TOASO',
-    'XGIDA': 'ULKER',
-    'XKMYA': 'SASA',
-    'XMANA': 'EREGL',
-    'XMESY': 'FROTO',
-    'XTEKS': 'BRISA',
-    'XTAST': 'AEFES',
-    'XINSA': 'ENKAI',
-    'XULAS': 'PGSUS',
-    'XSGRT': 'ANHYT',
-    'XBLSM': 'MGROS',
-    'XTCRT': 'BIMAS',
-    'XKAGT': 'KARTN',
-    'XMADN': 'CEMAS',
-    'XGMYO': 'ISGYO',
-    'XFINK': 'YKBNK',
-    'XSPOR': 'BJKAS',
-    'XUMAL': 'AKBNK',
-    'XUHIZ': 'TTKOM',
+# Tüm BIST endeksleri (şehir endeksleri hariç)
+# Gruplar: piyasa, sektör, tematik, katılım
+_ALL_INDICES = {
+    'piyasa': [
+        'XU100', 'XU050', 'XU030', 'XU500', 'XUTUM',
+        'XYUZO', 'XTUMY', 'XYLDZ', 'XBANA', 'XLBNK', 'X10XB',
+    ],
+    'sektor': [
+        'XUSIN', 'XGIDA', 'XKMYA', 'XMADN', 'XMANA', 'XMESY', 'XKAGT',
+        'XTAST', 'XTEKS', 'XUHIZ', 'XELKT', 'XILTM', 'XINSA', 'XSPOR',
+        'XTCRT', 'XTRZM', 'XULAS', 'XUMAL', 'XBANK', 'XSGRT', 'XFINK',
+        'XHOLD', 'XGMYO', 'XAKUR', 'XYORT', 'XUTEK', 'XBLSM',
+    ],
+    'tematik': [
+        'XHARZ', 'XKOBI', 'XTMTU', 'XTM25', 'XKURY',
+        'XUSRD', 'XSD25', 'XUGRA', 'XT05Y', 'XT10Y',
+    ],
+    'katilim': [
+        'XKTUM', 'XK100', 'XK050', 'XK030', 'XKTMT', 'XSRDK',
+    ],
 }
+
+# Flat list
+_ALL_INDEX_CODES = [c for group in _ALL_INDICES.values() for c in group]
 
 # Module-level cache
 _CACHE = {'ticker_to_sector': None, 'sector_indexes': None}
@@ -85,8 +79,12 @@ def load_sector_map():
 
 
 def _score_single_df(df):
-    """Tek bir DataFrame için trend_score hesapla → dict veya None."""
-    from markets.bist.regime_transition import compute_trend_score
+    """Tek bir DataFrame için RT tam pipeline — AL sinyali aktif mi?
+
+    scan_regime_transition + compute_trade_state çalıştırır.
+    in_trade=True → AL aktif (pozitif), False → AL yok (negatif).
+    """
+    from markets.bist.regime_transition import scan_regime_transition, compute_trade_state
 
     # Kolonları lowercase yap (RT convention)
     col_map = {}
@@ -107,134 +105,127 @@ def _score_single_df(df):
     if 'close' not in df.columns or len(df) < 30:
         return None
 
-    trend_result = compute_trend_score(df, weekly_df=None)
+    rt = scan_regime_transition(df, weekly_df=None)
+    trade = compute_trade_state(rt['regime'], rt['close'], rt['ema21'])
 
-    ts = int(trend_result['trend_score'].iloc[-1])
-    eb = bool(trend_result['ema_bull'].iloc[-1])
-    sb = bool(trend_result['st_bull'].iloc[-1])
+    regime = int(rt['regime'].iloc[-1])
+    in_trade = bool(trade['in_trade'].iloc[-1])
+    ts = int(rt['trend_score'].iloc[-1])
+    eb = bool(rt['ema_bull'].iloc[-1])
+    sb = bool(rt['st_bull'].iloc[-1])
 
-    if ts >= 2:
-        label = 'TREND'
-    elif ts == 1:
-        label = 'GRI'
+    if in_trade:
+        label = 'AL'
     else:
-        label = 'CHOPPY'
+        label = 'PASIF'
 
     return {
         'trend_score': ts,
         'ema_bull': eb,
         'st_bull': sb,
+        'regime': regime,
+        'in_trade': in_trade,
         'regime_label': label,
     }
 
 
-def fetch_sector_regimes(sector_codes):
-    """Sektör endekslerini yfinance ile çek + RT trend_score hesapla.
+def _fetch_tv_batch(symbols):
+    """tvDatafeed ile batch endeks verisi çek.
 
-    İki aşamalı: önce sektör endeksini dene, veri yoksa proxy hisse kullan.
+    Args:
+        symbols: ['XBANK', 'XUTEK', 'XU100', ...]
+
+    Returns: {code: DataFrame, ...} — başarılı olanlar
+    """
+    import time
+    from tvDatafeed import TvDatafeed, Interval
+
+    tv = TvDatafeed()
+    results = {}
+    failed = []
+
+    for code in symbols:
+        try:
+            df = tv.get_hist(code, 'BIST', interval=Interval.in_daily, n_bars=130)
+            if df is not None and len(df) >= 30:
+                df = df.drop(columns=['symbol'], errors='ignore')
+                results[code] = df
+            else:
+                failed.append(code)
+        except Exception:
+            failed.append(code)
+
+    # Retry — connection drop olabilir
+    if failed:
+        time.sleep(1)
+        try:
+            tv2 = TvDatafeed()
+            for code in failed:
+                try:
+                    df = tv2.get_hist(code, 'BIST', interval=Interval.in_daily, n_bars=130)
+                    if df is not None and len(df) >= 30:
+                        df = df.drop(columns=['symbol'], errors='ignore')
+                        results[code] = df
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    return results
+
+
+def fetch_sector_regimes(sector_codes):
+    """Sektör endekslerini tvDatafeed ile çek + RT AL sinyali hesapla.
 
     Args:
         sector_codes: {'XBANK', 'XUTEK', ...} unique set
 
     Returns: {
-        'XBANK': {'trend_score': 2, 'ema_bull': True, 'st_bull': True, 'regime_label': 'TREND'},
-        'XUTEK': {'trend_score': 1, 'ema_bull': True, 'st_bull': False, 'regime_label': 'CHOPPY'},
+        'XBANK': {'trend_score': 0, 'in_trade': False, 'regime_label': 'PASIF', ...},
+        'XUTEK': {'trend_score': 2, 'in_trade': True, 'regime_label': 'AL', ...},
     }
     """
-    import yfinance as yf
-    import pandas as pd
-
-    _, sector_indexes = load_sector_map()
+    dfs = _fetch_tv_batch(list(sector_codes))
 
     results = {}
+    for code, df in dfs.items():
+        result = _score_single_df(df)
+        if result:
+            results[code] = result
 
-    # ── Aşama 1: Endeks verisiyle dene ──
-    yf_to_code = {}
-    yf_tickers = []
-    for code in sector_codes:
-        yf_sym = sector_indexes.get(code)
-        if yf_sym:
-            yf_to_code[yf_sym] = code
-            yf_tickers.append(yf_sym)
+    return results
 
-    if yf_tickers:
-        try:
-            raw = yf.download(" ".join(yf_tickers), period="6mo",
-                               progress=False, auto_adjust=True,
-                               group_by='ticker', threads=True)
 
-            if not raw.empty:
-                for yf_sym, code in yf_to_code.items():
-                    try:
-                        if len(yf_tickers) == 1:
-                            df = raw.copy()
-                        elif isinstance(raw.columns, pd.MultiIndex):
-                            level_0 = raw.columns.get_level_values(0).unique().tolist()
-                            price_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
-                            if any(v in price_cols for v in level_0):
-                                df = raw.xs(yf_sym, level=1, axis=1).copy()
-                            else:
-                                df = raw[yf_sym].copy()
-                        else:
-                            continue
+def fetch_index_regimes(codes=None):
+    """BIST endekslerini tvDatafeed ile çek + RT AL sinyali.
 
-                        df = df.dropna(subset=[c for c in df.columns
-                                               if str(c).lower() == 'close'])
+    Args:
+        codes: Çekilecek endeks kodları (None → tüm endeksler)
 
-                        result = _score_single_df(df)
-                        if result:
-                            results[code] = result
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+    Returns: {
+        'XU100': {'trend_score': 0, 'in_trade': False, 'regime_label': 'PASIF', 'group': 'piyasa'},
+        ...
+    }
+    """
+    if codes is None:
+        codes = _ALL_INDEX_CODES
 
-    # ── Aşama 2: Proxy hisselerle eksikleri tamamla ──
-    missing = sector_codes - set(results.keys())
-    if missing:
-        proxy_tickers = []
-        proxy_to_codes = {}  # yf_sym → [code1, code2, ...] (aynı proxy çakışması)
-        for code in missing:
-            proxy = _SECTOR_PROXY.get(code)
-            if proxy:
-                yf_sym = f"{proxy}.IS"
-                proxy_to_codes.setdefault(yf_sym, []).append(code)
-                if yf_sym not in [p for p in proxy_tickers]:
-                    proxy_tickers.append(yf_sym)
+    # Grup bilgisi ekle
+    code_to_group = {}
+    for group, members in _ALL_INDICES.items():
+        for c in members:
+            code_to_group[c] = group
 
-        if proxy_tickers:
-            try:
-                raw = yf.download(" ".join(proxy_tickers), period="6mo",
-                                   progress=False, auto_adjust=True,
-                                   group_by='ticker', threads=True)
+    dfs = _fetch_tv_batch(codes)
 
-                if not raw.empty:
-                    for yf_sym, codes in proxy_to_codes.items():
-                        try:
-                            if len(proxy_tickers) == 1:
-                                df = raw.copy()
-                            elif isinstance(raw.columns, pd.MultiIndex):
-                                level_0 = raw.columns.get_level_values(0).unique().tolist()
-                                price_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
-                                if any(v in price_cols for v in level_0):
-                                    df = raw.xs(yf_sym, level=1, axis=1).copy()
-                                else:
-                                    df = raw[yf_sym].copy()
-                            else:
-                                continue
-
-                            df = df.dropna(subset=[c for c in df.columns
-                                                   if str(c).lower() == 'close'])
-
-                            result = _score_single_df(df)
-                            if result:
-                                result['proxy'] = yf_sym.replace('.IS', '')
-                                for code in codes:
-                                    results[code] = result.copy()
-                        except Exception:
-                            continue
-            except Exception:
-                pass
+    results = {}
+    for code in codes:
+        df = dfs.get(code)
+        if df is not None:
+            result = _score_single_df(df)
+            if result:
+                result['group'] = code_to_group.get(code, 'diger')
+                results[code] = result
 
     return results
 
@@ -242,8 +233,10 @@ def fetch_sector_regimes(sector_codes):
 def get_ticker_sector_regime(ticker, sector_regimes, ticker_to_sector):
     """Tek ticker için sektör regime bilgisi döndür.
 
-    Returns: {'sector_index': 'XBANK', 'trend_score': 2,
-              'regime_label': 'TREND', 'badge': '✅XBANK'} veya None
+    in_trade=True → ✅ (AL aktif), False → ⚠️ (pasif).
+
+    Returns: {'sector_index': 'XBANK', 'in_trade': True,
+              'regime_label': 'AL', 'badge': '✅XBANK'} veya None
     """
     sector_code = ticker_to_sector.get(ticker)
     if not sector_code:
@@ -253,17 +246,18 @@ def get_ticker_sector_regime(ticker, sector_regimes, ticker_to_sector):
     if not regime:
         return None
 
-    ts = regime['trend_score']
+    in_trade = regime.get('in_trade', False)
     label = regime['regime_label']
 
-    if ts >= 2:
+    if in_trade:
         badge = f'✅{sector_code}'
     else:
         badge = f'⚠️{sector_code}↓'
 
     return {
         'sector_index': sector_code,
-        'trend_score': ts,
+        'trend_score': regime['trend_score'],
+        'in_trade': in_trade,
         'regime_label': label,
         'badge': badge,
     }

@@ -205,16 +205,38 @@ def _prepare_shortlist_json(lists_dict, max_items=10):
 
 
 def _prepare_sector_summary(lists_dict):
-    """Sektör regime özeti — trendde ve zayıf endeksler."""
-    regimes = lists_dict.get('_sector_regimes', {})
-    if not regimes:
+    """Tüm BIST endeksleri regime özeti — gruplu, AL sinyali bazlı."""
+    from agent.sector_regime import _ALL_INDICES
+
+    all_regimes = lists_dict.get('_index_regimes', {})
+    if not all_regimes:
         return {}
-    trend = sorted(k for k, v in regimes.items() if v['trend_score'] >= 2)
-    weak = sorted(k for k, v in regimes.items() if v['trend_score'] < 2)
+
+    group_labels = {
+        'piyasa': '📈 Piyasa',
+        'sektor': '🏭 Sektör',
+        'tematik': '🏷 Tematik',
+        'katilim': '☪️ Katılım',
+    }
+
+    groups = []
+    for group, codes in _ALL_INDICES.items():
+        group_data = {c: all_regimes[c] for c in codes if c in all_regimes}
+        if not group_data:
+            continue
+        al = sorted(k for k, v in group_data.items() if v.get('in_trade', False))
+        pasif = sorted(k for k, v in group_data.items() if not v.get('in_trade', False))
+        groups.append({
+            'key': group,
+            'label': group_labels.get(group, group),
+            'al': al,
+            'pasif': pasif,
+            'total': len(group_data),
+        })
+
     return {
-        'trend': trend,
-        'weak': weak,
-        'total': len(regimes),
+        'groups': groups,
+        'total': len(all_regimes),
     }
 
 
@@ -816,12 +838,6 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     <h2 class="section-title">📰 Piyasa Haberleri</h2>
     <div id="newsContainer"></div>
 
-    <!-- AI ANALYSIS -->
-    <h2 class="section-title">🤖 AI Analiz</h2>
-    <div class="briefing-text">
-        {briefing_html}
-    </div>
-
     <!-- CONFLUENCE TABLE -->
     <h2 class="section-title">⬡ Çakışma Tablosu</h2>
     <table class="confluence-table" id="confluenceTable">
@@ -896,7 +912,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
             // Sector badge
             let sectorBadge = '';
             if (item.sector_index) {{
-                if (item.sector_regime === 'TREND') {{
+                if (item.sector_regime === 'AL') {{
                     sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
                 }} else {{
                     sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
@@ -916,22 +932,20 @@ const SECTOR_SUMMARY = {sector_summary_json};
     container.innerHTML = html;
 }})();
 
-// ── Sektör Özeti ──
+// ── Endeks & Sektör Özeti ──
 (function() {{
     const container = document.getElementById('sectorSummary');
-    if (!SECTOR_SUMMARY || !SECTOR_SUMMARY.total) return;
+    if (!SECTOR_SUMMARY || !SECTOR_SUMMARY.groups || SECTOR_SUMMARY.groups.length === 0) return;
     let html = '<div style="padding:0.5rem 0.8rem;background:var(--bg-card);border-radius:8px;border:1px solid var(--border-subtle)">';
-    html += '<div style="font-weight:600;margin-bottom:0.3rem;font-size:0.85rem">📊 Sektör Endeks Durumu</div>';
-    if (SECTOR_SUMMARY.trend && SECTOR_SUMMARY.trend.length > 0) {{
-        html += '<div style="font-size:0.8rem;margin-bottom:0.2rem">Trendde: ';
-        html += SECTOR_SUMMARY.trend.map(s => `<span class="sector-badge sector-ok">✅${{s}}</span>`).join(' ');
+    html += '<div style="font-weight:600;margin-bottom:0.4rem;font-size:0.85rem">📊 Endeks & Sektör Durumu <small style="color:var(--text-muted)">(' + SECTOR_SUMMARY.total + ' endeks)</small></div>';
+    SECTOR_SUMMARY.groups.forEach(g => {{
+        const alCount = g.al ? g.al.length : 0;
+        html += '<div style="font-size:0.78rem;margin-bottom:0.25rem">';
+        html += `<span style="font-weight:500">${{g.label}}</span> <small style="color:var(--text-muted)">${{alCount}}/${{g.total}} AL</small> `;
+        if (g.al) g.al.forEach(s => {{ html += `<span class="sector-badge sector-ok">✅${{s}}</span> `; }});
+        if (g.pasif) g.pasif.forEach(s => {{ html += `<span class="sector-badge sector-warn">⚠️${{s}}</span> `; }});
         html += '</div>';
-    }}
-    if (SECTOR_SUMMARY.weak && SECTOR_SUMMARY.weak.length > 0) {{
-        html += '<div style="font-size:0.8rem">Zayıf: ';
-        html += SECTOR_SUMMARY.weak.map(s => `<span class="sector-badge sector-warn">⚠️${{s}}↓</span>`).join(' ');
-        html += '</div>';
-    }}
+    }});
     html += '</div>';
     container.innerHTML = html;
 }})();
@@ -993,7 +1007,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
             // Sector badge
             let sectorBadge = '';
             if (item.sector_index) {{
-                if (item.sector_regime === 'TREND') {{
+                if (item.sector_regime === 'AL') {{
                     sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
                 }} else {{
                     sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
@@ -1069,7 +1083,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
             // Sector badge
             let sectorBadge = '';
             if (item.sector_index) {{
-                if (item.sector_regime === 'TREND') {{
+                if (item.sector_regime === 'AL') {{
                     sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
                 }} else {{
                     sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
