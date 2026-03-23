@@ -129,7 +129,7 @@ def ml_badge_dual(ml_short, ml_swing):
         ml_short: float or None — 1g ML skoru
         ml_swing: float or None — 3g ML skoru
 
-    Returns: str — örn. '🤖S58🟡·W61🟢'
+    Returns: str — örn. '🤖S58🔵·W61🟡'
     """
     if ml_short is None and ml_swing is None:
         return ''
@@ -137,11 +137,11 @@ def ml_badge_dual(ml_short, ml_swing):
     parts = []
     if ml_short is not None:
         s100 = int(ml_short * 100)
-        icon = '🟢' if ml_short >= 0.60 else ('🟡' if ml_short >= 0.40 else '⚪')
+        icon = '🟡' if ml_short >= 0.60 else ('🔵' if ml_short >= 0.40 else '🔴')
         parts.append(f'S{s100}{icon}')
     if ml_swing is not None:
         w100 = int(ml_swing * 100)
-        icon = '🟢' if ml_swing >= 0.60 else ('🟡' if ml_swing >= 0.40 else '⚪')
+        icon = '🟡' if ml_swing >= 0.60 else ('🔵' if ml_swing >= 0.40 else '🔴')
         parts.append(f'W{w100}{icon}')
 
     return '🤖' + '·'.join(parts) if parts else ''
@@ -427,8 +427,8 @@ class MLScorer:
 
         score_100 = int(ml_score * 100)
         if ml_score >= 0.60:
-            return f'🤖{score_100}🟢'
-        elif ml_score >= 0.40:
             return f'🤖{score_100}🟡'
+        elif ml_score >= 0.40:
+            return f'🤖{score_100}🔵'
         else:
-            return f'🤖{score_100}⚪'
+            return f'🤖{score_100}🔴'

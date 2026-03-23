@@ -334,9 +334,9 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     border-radius: 4px;
     white-space: nowrap;
 }}
-.ml-badge.ml-strong {{ background: rgba(74,222,128,0.15); color: #4ade80; }}
-.ml-badge.ml-mid {{ background: rgba(250,204,21,0.15); color: #facc15; }}
-.ml-badge.ml-weak {{ background: rgba(161,161,170,0.12); color: #a1a1aa; }}
+.ml-badge.ml-strong {{ background: rgba(250,204,21,0.15); color: #facc15; }}
+.ml-badge.ml-mid {{ background: rgba(59,130,246,0.15); color: #3b82f6; }}
+.ml-badge.ml-weak {{ background: rgba(239,68,68,0.15); color: #ef4444; }}
 
 /* DUAL ML BADGE */
 .ml-dual {{
