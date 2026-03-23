@@ -1961,9 +1961,8 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
             if not items:
                 print(f"  ── {label} (0) ──\n")
                 continue
-            limit = 10 if key in ('nw', 'rt') else 8
             print(f"  ── {label} ({len(items)}) ──")
-            for i, (ticker, score, reasons, _sig) in enumerate(items[:limit], 1):
+            for i, (ticker, score, reasons, _sig) in enumerate(items[:15], 1):
                 print(f"  {i:2d}. {ticker:6s} [{score:3d}p] — {' '.join(reasons[:6])}")
             print()
 
