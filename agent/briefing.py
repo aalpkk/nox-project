@@ -1964,7 +1964,11 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
         n_tier2b = len(lists_dict.get('tier2b', []))
         core_total = n_as + n_tvn + n_nw + n_rt + n_sbt
         lines.append(f"📋 <b>Tarama</b>: {total} sinyal → {core_total} shortlist "
-                     f"(AS:{n_as} TVN:{n_tvn} NW:{n_nw} RT:{n_rt} SBT:{n_sbt})")
+                     f'(<a href="{_SCAN_URL2["alsat"]}">AS:{n_as}</a> '
+                     f'<a href="{_SCAN_URL2["tavan"]}">TVN:{n_tvn}</a> '
+                     f'<a href="{_SCAN_URL2["nw"]}">NW:{n_nw}</a> '
+                     f'<a href="{_SCAN_URL2["rt"]}">RT:{n_rt}</a> '
+                     f'<a href="{_SCAN_URL2["sbt"]}">SBT:{n_sbt}</a>)')
         lines.append(f"  Tier1:{n_tier1} çakışma | Tier2A:{n_tier2a} taktik | Tier2B:{n_tier2b} swing")
     lines.append("")
 
@@ -2012,6 +2016,17 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
         return " ".join(parts)
 
     # ── 3. SHORTLIST ANALİZ ──
+
+    # Scanner HTML linkleri
+    _nox_base2 = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
+    _bist_base2 = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
+    _SCAN_URL2 = {
+        'alsat': f'{_bist_base2}/',
+        'tavan': f'{_bist_base2}/tavan.html',
+        'nw': f'{_nox_base2}/nox_v3_weekly.html',
+        'rt': f'{_nox_base2}/regime_transition.html',
+        'sbt': f'{_nox_base2}/smart_breakout.html',
+    }
 
     # Tier 1 — çakışmalar
     tier1 = lists_dict.get('tier1', [])
@@ -2154,6 +2169,37 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
             for s in pasif:
                 parts.append(f"{s}⚠️")
             lines.append(f"  {label}: {' '.join(parts)}")
+        lines.append("")
+
+    # ── ML Güçlü (≥0.50) ──
+    ml_strong2 = []
+    _ml_seen2 = set()
+    for key2 in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for ticker, score, reasons, sig in lists_dict.get(key2, []):
+            if ticker in _ml_seen2 or not isinstance(sig, dict):
+                continue
+            s_val = sig.get('ml_score_short')
+            w_val = sig.get('ml_score_swing')
+            if s_val is None and w_val is None:
+                continue
+            best = max(s_val or 0, w_val or 0)
+            if best >= 0.50:
+                _ml_seen2.add(ticker)
+                s_pct = int(s_val * 100) if s_val else 0
+                w_pct = int(w_val * 100) if w_val else 0
+                src = []
+                for ln2 in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+                    for t2, _, _, _ in lists_dict.get(ln2, []):
+                        if t2 == ticker:
+                            src.append(_LIST_SHORT.get(ln2, ln2))
+                            break
+                ml_strong2.append((ticker, best, s_pct, w_pct, src))
+    ml_strong2.sort(key=lambda x: -x[1])
+    if ml_strong2:
+        lines.append(f"🤖 <b>ML Güçlü</b> (skor≥50, {len(ml_strong2)} hisse)")
+        for i, (ticker, best, s_pct, w_pct, src) in enumerate(ml_strong2[:15], 1):
+            src_str = "+".join(src)
+            lines.append(f"  {i}. <b>{ticker}</b> — S{s_pct}·W{w_pct} [{src_str}]")
         lines.append("")
 
     # ── ML Rerank Değişimi ──
