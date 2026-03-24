@@ -3,6 +3,7 @@ NOX Agent — Brifing HTML Raporu
 Mevcut _NOX_CSS temasını kullanır.
 """
 import json
+import os
 import re
 from datetime import datetime, timezone, timedelta
 
@@ -312,6 +313,10 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     filtered_json = json.dumps(
         _sanitize(lists_dict.get('_ml_filtered', [])) if lists_dict else [],
         ensure_ascii=False)
+
+    # Scanner base URL'leri (HTML'deki JS linkleri için)
+    _nox_base = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
+    _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
 
     # ML Güçlü listesi (≥0.50)
     _LIST_SHORT_HTML = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
@@ -998,13 +1003,21 @@ const SECTOR_SUMMARY = {sector_summary_json};
 (function() {{
     const grid = document.getElementById('signalGrid');
     const order = ['alsat', 'tavan', 'nw', 'rt', 'sbt'];
+    const scanUrls = {{
+        'alsat': '{_bist_base}/',
+        'tavan': '{_bist_base}/tavan.html',
+        'nw': '{_nox_base}/nox_v3_weekly.html',
+        'rt': '{_nox_base}/regime_transition.html',
+        'sbt': '{_nox_base}/smart_breakout.html',
+    }};
     order.forEach(key => {{
         const list = LISTS[key];
         if (!list) return;
         const sec = document.createElement('div');
         sec.className = 'signal-section';
+        const scanUrl = scanUrls[key] || '#';
         let html = `<div class="list-header">
-            <span>${{list.icon}} ${{list.label}}</span>
+            <span><a href="${{scanUrl}}" target="_blank" style="color:inherit;text-decoration:none">${{list.icon}} ${{list.label}}</a></span>
             <span class="count">${{list.total}} sinyal</span>
         </div>`;
         if (list.items.length === 0) {{
