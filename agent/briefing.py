@@ -439,8 +439,8 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                 if ml_effect != 'neutral' and isinstance(reasons, list):
                     reasons.append(ML_EFFECT_ICONS[ml_effect])
 
-                # SBT bucket tag ekle
-                if sbt_bucket and isinstance(reasons, list):
+                # SBT bucket tag ekle (? ve boş değerleri atla)
+                if sbt_bucket and sbt_bucket not in ('?', '') and isinstance(reasons, list):
                     reasons.append(f"SBT:{sbt_bucket}")
 
         # ── Step 9: Re-sort + rank delta ──
@@ -1059,7 +1059,7 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         if s.get('screener') != 'sbt':
             continue
         bucket = s.get('sbt_bucket', '')
-        if bucket == 'X':
+        if bucket in ('X', '?', ''):
             continue
         strength = s.get('quality', 0) or 0
         ml_prob = s.get('sbt_ml_prob', 0) or 0
