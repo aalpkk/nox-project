@@ -413,7 +413,11 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                 overlap_b = 0 if is_tier1 else calc_overlap_bonus(src_count)
                 ml_rerank = calc_ml_rerank_bonus_v2(ml_swing)
                 sq_bonus = calc_source_quality_bonus(sbt_bucket)
-                gate_pen = _calc_gate_penalty(ticker, sig_or_meta if isinstance(sig_or_meta, dict) else {}, sbt_data)
+                # SBT gate sadece SBT listesine uygulanır — AS/NW/RT/TVN kendi sinyalleri
+                if key == 'sbt':
+                    gate_pen = _calc_gate_penalty(ticker, sig_or_meta if isinstance(sig_or_meta, dict) else {}, sbt_data)
+                else:
+                    gate_pen = 0
 
                 # ML effect hesapla
                 ml_effect = calc_ml_effect_label(ml_swing, ml_rerank)
@@ -424,7 +428,7 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                     sig_or_meta['ml_effect'] = ml_effect
 
                 if gate_pen >= 99:
-                    # Hard gate — eleme
+                    # Hard gate — eleme (sadece SBT listesinde)
                     final_score = -9999
                 else:
                     final_score = score + overlap_b + ml_rerank + sq_bonus - gate_pen
