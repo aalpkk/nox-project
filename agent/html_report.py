@@ -313,6 +313,38 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         _sanitize(lists_dict.get('_ml_filtered', [])) if lists_dict else [],
         ensure_ascii=False)
 
+    # ML Güçlü listesi (≥0.50)
+    _LIST_SHORT_HTML = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+    ml_strong_items = []
+    if lists_dict:
+        _ml_seen_html = set()
+        for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+            for ticker, score, reasons, sig in lists_dict.get(key, []):
+                if ticker in _ml_seen_html or not isinstance(sig, dict):
+                    continue
+                s_val = sig.get('ml_score_short')
+                w_val = sig.get('ml_score_swing')
+                if s_val is None and w_val is None:
+                    continue
+                best = max(s_val or 0, w_val or 0)
+                if best >= 0.50:
+                    _ml_seen_html.add(ticker)
+                    src = []
+                    for ln in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+                        for t2, _, _, _ in lists_dict.get(ln, []):
+                            if t2 == ticker:
+                                src.append(_LIST_SHORT_HTML[ln])
+                                break
+                    ml_strong_items.append({
+                        'ticker': ticker,
+                        'ml_short': round(s_val * 100) if s_val else 0,
+                        'ml_swing': round(w_val * 100) if w_val else 0,
+                        'best': round(best * 100),
+                        'sources': src,
+                    })
+        ml_strong_items.sort(key=lambda x: -x['best'])
+    ml_strong_json = json.dumps(_sanitize(ml_strong_items), ensure_ascii=False)
+
     # Limit order AI metnini HTML'e çevir
     limit_order_html = ""
     if limit_order_text:
@@ -831,6 +863,10 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     <h2 class="section-title">⚠️ Filtreyle Elenenler</h2>
     <div id="filteredContainer"></div>
 
+    <!-- ML GÜÇLÜ -->
+    <h2 class="section-title">🤖 ML Güçlü (skor≥50)</h2>
+    <div id="mlStrongContainer"></div>
+
     <!-- LIMIT ORDER STRATEGY (AI) -->
     <h2 class="section-title">💰 Giriş Stratejisi</h2>
     <div id="limitOrderContainer" class="briefing-text">{limit_order_html if limit_order_html else '<p style="color:var(--text-muted)">AI giriş stratejisi üretilmedi (--no-ai)</p>'}</div>
@@ -875,6 +911,7 @@ const SHORTLIST_SET = new Set({shortlist_set_json});
 const SAT_SET = new Set({sat_set_json});
 const RERANK_DATA = {rerank_json};
 const FILTERED_DATA = {filtered_json};
+const ML_STRONG = {ml_strong_json};
 const SHORTLIST = {shortlist_json};
 const SECTOR_SUMMARY = {sector_summary_json};
 
@@ -1165,6 +1202,31 @@ const SECTOR_SUMMARY = {sector_summary_json};
             <span class="lists-tag">${{tag}}</span>
             <span style="font-family:var(--font-mono);font-size:0.75rem">rule:${{item.rule_score}}p</span>
             <span class="reason">${{item.reason}}</span>
+        </div>`;
+    }});
+    sec.innerHTML = html;
+    container.appendChild(sec);
+}})();
+
+// ── ML Güçlü ──
+(function() {{
+    const container = document.getElementById('mlStrongContainer');
+    if (!ML_STRONG || ML_STRONG.length === 0) {{
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">ML≥50 sinyal yok</div>';
+        return;
+    }}
+    const sec = document.createElement('div');
+    sec.className = 'overlap-section';
+    let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">ML skor ≥50 — ${{ML_STRONG.length}} hisse</div>`;
+    ML_STRONG.slice(0, 15).forEach((item, idx) => {{
+        const srcStr = item.sources ? item.sources.join('+') : '';
+        const sColor = item.ml_short >= 55 ? 'var(--nox-cyan)' : item.ml_short >= 50 ? '#eab308' : 'var(--text-muted)';
+        const wColor = item.ml_swing >= 55 ? 'var(--nox-cyan)' : item.ml_swing >= 50 ? '#eab308' : 'var(--text-muted)';
+        html += `<div class="filtered-item">
+            <span style="color:var(--text-muted);font-size:0.75rem;min-width:1.2rem">${{idx+1}}.</span>
+            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
+            <span style="font-family:var(--font-mono);font-size:0.8rem">S<span style="color:${{sColor}}">${{item.ml_short}}</span>·W<span style="color:${{wColor}}">${{item.ml_swing}}</span></span>
+            <span class="lists-tag">${{srcStr}}</span>
         </div>`;
     }});
     sec.innerHTML = html;
