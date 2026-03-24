@@ -1667,12 +1667,22 @@ def _build_shortlist_message(lists_dict,
         return " ".join(parts)
 
     # ── A. ML Destekli Ana Shortlist ──
+    # Scanner HTML linkleri
+    _nox_base = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
+    _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
+    _SCAN_URL = {
+        'alsat': f'{_bist_base}/',
+        'tavan': f'{_bist_base}/tavan.html',
+        'nw': f'{_nox_base}/nox_v3_weekly.html',
+        'rt': f'{_nox_base}/regime_transition.html',
+        'sbt': f'{_nox_base}/smart_breakout.html',
+    }
 
     # ── 1. AL/SAT Tarama ──
     alsat_list = lists_dict.get('alsat', [])
     if alsat_list:
         lines.append("")
-        lines.append(f"📋 <b>1. AL/SAT Tarama</b> (Q skoru sıralı, {len(alsat_list)} sinyal)")
+        lines.append(f'📋 <a href="{_SCAN_URL["alsat"]}"><b>1. AL/SAT Tarama</b></a> (Q skoru sıralı, {len(alsat_list)} sinyal)')
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(alsat_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
@@ -1685,7 +1695,7 @@ def _build_shortlist_message(lists_dict,
     tavan_list = lists_dict.get('tavan', [])
     if tavan_list:
         lines.append("")
-        lines.append(f"🔺 <b>2. Tavan Tarayıcı</b> (skor/vol sıralı, {len(tavan_list)} hisse)")
+        lines.append(f'🔺 <a href="{_SCAN_URL["tavan"]}"><b>2. Tavan Tarayıcı</b></a> (skor/vol sıralı, {len(tavan_list)} hisse)')
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(tavan_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
@@ -1698,7 +1708,7 @@ def _build_shortlist_message(lists_dict,
     nw_list = lists_dict.get('nw', [])
     if nw_list:
         lines.append("")
-        lines.append(f"📊 <b>3. NW Pivot AL</b> (günlük gate açık, {len(nw_list)} sinyal)")
+        lines.append(f'📊 <a href="{_SCAN_URL["nw"]}"><b>3. NW Pivot AL</b></a> (günlük gate açık, {len(nw_list)} sinyal)')
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(nw_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
@@ -1711,7 +1721,7 @@ def _build_shortlist_message(lists_dict,
     rt_list = lists_dict.get('rt', [])
     if rt_list:
         lines.append("")
-        lines.append(f"⚡ <b>4. Regime Transition</b> (F≥3 OE≤2, {len(rt_list)} sinyal)")
+        lines.append(f'⚡ <a href="{_SCAN_URL["rt"]}"><b>4. Regime Transition</b></a> (F≥3 OE≤2, {len(rt_list)} sinyal)')
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(rt_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
@@ -1724,7 +1734,7 @@ def _build_shortlist_message(lists_dict,
     sbt_list = lists_dict.get('sbt', [])
     if sbt_list:
         lines.append("")
-        lines.append(f"🚀 <b>5. SBT Breakout</b> (taze kırılma, {len(sbt_list)} sinyal)")
+        lines.append(f'🚀 <a href="{_SCAN_URL["sbt"]}"><b>5. SBT Breakout</b></a> (taze kırılma, {len(sbt_list)} sinyal)')
         lines.append("")
         for i, (ticker, score, reasons, sig) in enumerate(sbt_list[:15], 1):
             lines.append(f"{i}. {_sig_line(ticker, reasons, sig)}")
