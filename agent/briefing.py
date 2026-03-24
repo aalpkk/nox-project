@@ -1951,6 +1951,17 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
 
         lines.append("")
 
+    # Scanner HTML linkleri (tüm bölümlerde kullanılır)
+    _nox_base2 = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
+    _bist_base2 = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
+    _SCAN_URL2 = {
+        'alsat': f'{_bist_base2}/',
+        'tavan': f'{_bist_base2}/tavan.html',
+        'nw': f'{_nox_base2}/nox_v3_weekly.html',
+        'rt': f'{_nox_base2}/regime_transition.html',
+        'sbt': f'{_nox_base2}/smart_breakout.html',
+    }
+
     # ── 2. TARAMA ÖZETİ ──
     total = signal_summary.get('total', 0)
     if lists_dict:
@@ -2016,17 +2027,6 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
         return " ".join(parts)
 
     # ── 3. SHORTLIST ANALİZ ──
-
-    # Scanner HTML linkleri
-    _nox_base2 = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
-    _bist_base2 = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
-    _SCAN_URL2 = {
-        'alsat': f'{_bist_base2}/',
-        'tavan': f'{_bist_base2}/tavan.html',
-        'nw': f'{_nox_base2}/nox_v3_weekly.html',
-        'rt': f'{_nox_base2}/regime_transition.html',
-        'sbt': f'{_nox_base2}/smart_breakout.html',
-    }
 
     # Tier 1 — çakışmalar
     tier1 = lists_dict.get('tier1', [])
