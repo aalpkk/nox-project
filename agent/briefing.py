@@ -1750,6 +1750,41 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append("ℹ️ SBT ML: veri yok, breakout-quality bonus uygulanmadı")
 
+    # ── 6. ML Güçlü (≥0.50) ──
+    ml_strong = []
+    _ml_seen = set()
+    for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for ticker, score, reasons, sig in lists_dict.get(key, []):
+            if ticker in _ml_seen:
+                continue
+            if not isinstance(sig, dict):
+                continue
+            s_val = sig.get('ml_score_short')
+            w_val = sig.get('ml_score_swing')
+            if s_val is None and w_val is None:
+                continue
+            best = max(s_val or 0, w_val or 0)
+            if best >= 0.50:
+                _ml_seen.add(ticker)
+                s_pct = int(s_val * 100) if s_val else 0
+                w_pct = int(w_val * 100) if w_val else 0
+                # Hangi listelerde var
+                src = []
+                for ln in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+                    for t2, _, _, _ in lists_dict.get(ln, []):
+                        if t2 == ticker:
+                            src.append({'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}[ln])
+                            break
+                ml_strong.append((ticker, best, s_pct, w_pct, src))
+    ml_strong.sort(key=lambda x: -x[1])
+    if ml_strong:
+        lines.append("")
+        lines.append(f"🤖 <b>6. ML Güçlü</b> (skor≥50, {len(ml_strong)} hisse)")
+        lines.append("")
+        for i, (ticker, best, s_pct, w_pct, src) in enumerate(ml_strong[:15], 1):
+            src_str = "+".join(src)
+            lines.append(f"{i}. <b>{ticker}</b> — S{s_pct}·W{w_pct} [{src_str}]")
+
     # ── Tier 1: Çapraz Çakışmalar ──
     tier1 = lists_dict.get('tier1', [])
     if tier1:
