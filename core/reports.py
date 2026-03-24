@@ -81,17 +81,30 @@ def push_html_to_github(html_content, filename, date_str):
     payload = {"message": f"NOX {filename} — {date_str}", "content": content_b64, "branch": "main"}
     if sha:
         payload["sha"] = sha
-    try:
-        resp = requests.put(api_url, headers=headers, json=payload, timeout=15)
-        if resp.status_code in (200, 201):
-            owner, name = repo.split("/")
-            page_url = f"https://{owner}.github.io/{name}/{filename}"
-            print(f"✅ HTML rapor yayınlandı: {page_url}")
-            return page_url
-        else:
-            print(f"⚠️ GitHub push hata: {resp.status_code}")
-    except Exception as e:
-        print(f"⚠️ GitHub push hata: {e}")
+
+    import time
+    for attempt in range(3):
+        try:
+            resp = requests.put(api_url, headers=headers, json=payload, timeout=30)
+            if resp.status_code in (200, 201):
+                owner, name = repo.split("/")
+                page_url = f"https://{owner}.github.io/{name}/{filename}"
+                print(f"✅ HTML rapor yayınlandı: {page_url}")
+                return page_url
+            elif resp.status_code >= 500 and attempt < 2:
+                print(f"  ⚠️ GitHub 5xx ({resp.status_code}), retry {attempt+1}/2...")
+                time.sleep(3)
+                continue
+            else:
+                print(f"⚠️ GitHub push hata: {resp.status_code} — {resp.text[:200]}")
+                break
+        except Exception as e:
+            if attempt < 2:
+                print(f"  ⚠️ Push timeout/hata, retry {attempt+1}/2...")
+                time.sleep(3)
+                continue
+            print(f"⚠️ GitHub push hata: {e}")
+            break
     return None
 
 
