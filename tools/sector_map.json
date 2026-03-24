@@ -1,0 +1,6531 @@
+{
+  "meta": {
+    "source": "KAP.org.tr",
+    "date": "2026-03-23",
+    "total_tickers": 606,
+    "sector_coverage": 584,
+    "index_coverage": 566
+  },
+  "sector_indexes": {
+    "XBANK": "XBANK.IS",
+    "XUTEK": "XUTEK.IS",
+    "XHOLD": "XHOLD.IS",
+    "XELKT": "XELKT.IS",
+    "XTRZM": "XTRZM.IS",
+    "XUSIN": "XUSIN.IS",
+    "XGIDA": "XGIDA.IS",
+    "XKMYA": "XKMYA.IS",
+    "XMANA": "XMANA.IS",
+    "XMESY": "XMESY.IS",
+    "XTEKS": "XTEKS.IS",
+    "XTAST": "XTAST.IS",
+    "XINSA": "XINSA.IS",
+    "XULAS": "XULAS.IS",
+    "XSGRT": "XSGRT.IS",
+    "XBLSM": "XBLSM.IS",
+    "XTCRT": "XTCRT.IS",
+    "XKAGT": "XKAGT.IS",
+    "XMADN": "XMADN.IS",
+    "XGMYO": "XGMYO.IS",
+    "XFINK": "XFINK.IS",
+    "XSPOR": "XSPOR.IS",
+    "XUMAL": "XUMAL.IS",
+    "XUHIZ": "XUHIZ.IS"
+  },
+  "tickers": {
+    "A1CAP": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "A1YEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ACSEL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "ADEL": {
+      "sector": "DİĞER İMALAT SANAYİİ",
+      "sector_index": "XUSIN",
+      "all_sector_indexes": [
+        "XUSIN"
+      ]
+    },
+    "ADESE": {
+      "sector": "GAYRİMENKUL FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "ADGYO": {
+      "sector": "ARACI KURUMLAR",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AEFES": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "AFYON": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "AGESA": {
+      "sector": "BANKALAR",
+      "sector_index": "XSGRT",
+      "all_sector_indexes": [
+        "XSGRT",
+        "XUMAL"
+      ]
+    },
+    "AGHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "AGROT": {
+      "sector": "TARIM VE HAYVANCILIK AVCILIK VE İLGİLİ HİZMET FAALİYETLERİ",
+      "sector_index": "XUSIN",
+      "all_sector_indexes": [
+        "XUSIN"
+      ]
+    },
+    "AGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AHGAZ": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AHSGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AKBNK": {
+      "sector": "BANKALAR",
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "AKCNS": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "AKENR": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AKFGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AKFIS": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "AKFYE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AKGRT": {
+      "sector": "SİGORTA ŞİRKETLERİ",
+      "sector_index": "XSGRT",
+      "all_sector_indexes": [
+        "XSGRT",
+        "XUMAL"
+      ]
+    },
+    "AKHAN": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "AKMGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AKSA": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "AKSEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AKSGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AKSUE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AKYHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ALARK": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ALBRK": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "ALCAR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "ALCTL": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ALFAS": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ALGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "ALKA": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "ALKIM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "ALKLC": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ALTNY": {
+      "sector": "SAVUNMA",
+      "sector_index": "XUTEK",
+      "all_sector_indexes": [
+        "XUTEK"
+      ]
+    },
+    "ALVES": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "ANELE": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "ANGEN": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "ANHYT": {
+      "sector": "SİGORTA ŞİRKETLERİ",
+      "sector_index": "XSGRT",
+      "all_sector_indexes": [
+        "XSGRT",
+        "XUMAL"
+      ]
+    },
+    "ANSGR": {
+      "sector": "SİGORTA ŞİRKETLERİ",
+      "sector_index": "XSGRT",
+      "all_sector_indexes": [
+        "XSGRT",
+        "XUMAL"
+      ]
+    },
+    "ARASE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ARCLK": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "ARDYZ": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ARENA": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ARFYE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ARMGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ARSAN": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ARTMS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "ARZUM": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "ASELS": {
+      "sector": "SAVUNMA",
+      "sector_index": "XUTEK",
+      "all_sector_indexes": [
+        "XUTEK"
+      ]
+    },
+    "ASGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "ASTOR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "ASUZU": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "ATAGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "ATAKP": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ATATP": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ATATR": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "ATEKS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "ATLAS": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "ATSYH": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "AVGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AVHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "AVOD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "AVPGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "AVTUR": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "AYCES": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "AYDEM": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AYEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "AYES": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "AYGAZ": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "AZTEK": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "BAGFS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "BAHKM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "BAKAB": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "BALAT": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "BALSU": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "BANVT": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "BARMA": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "BASCM": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "BASGZ": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "BAYRK": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "BEGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "BERA": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "BESLR": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "BESTE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "BEYAZ": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "BFREN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "BIENY": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "BIGCH": {
+      "sector": "YİYECEK VE İÇECEK HİZMETLERİ",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "BIGEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "BIGTK": {
+      "sector": "YAYIMCILIK",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "BIMAS": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "BINBN": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "BINHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "BIOEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "BIZIM": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "BJKAS": {
+      "sector": "SPOR FAALİYETLERİ EĞLENCE VE OYUN FAALİYETLERİ",
+      "sector_index": "XSPOR",
+      "all_sector_indexes": [
+        "XSPOR",
+        "XUHIZ"
+      ]
+    },
+    "BLCYT": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "BLUME": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "BMSCH": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "BMSTL": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "BNTAS": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "BOBET": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "BORLS": {
+      "sector": "KİRALAMA VE LEASING FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "BORSK": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "BOSSA": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "BRISA": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "BRKO": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "BRKSN": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "BRKVY": {
+      "sector": "VARLIK YÖNETİM ŞİRKETLERİ",
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "BRLSM": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "BRMEN": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "BRSAN": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "BRYAT": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "BSOKE": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "BTCIM": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "BUCIM": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "BULGS": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "BURCE": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "BURVA": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "BVSAN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "BYDNR": {
+      "sector": "YİYECEK VE İÇECEK HİZMETLERİ",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "CANTE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "CASA": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "CATES": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "CCOLA": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "CELHA": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "CEMAS": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "CEMTS": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "CEMZY": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "CEOEM": {
+      "sector": "BÜRO YÖNETİMİ, BÜRO DESTEĞİ VE DİĞER ŞİRKET DESTEK FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "CGCAM": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "CIMSA": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "CLEBI": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "CMBTN": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "CMENT": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "CONSE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "COSMO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "CRDFA": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "CRFSA": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "CUSAN": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "CVKMD": {
+      "sector": "METAL CEVHERİ MADENCİLİĞİ",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "CWENE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "DAGI": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "DAPGM": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "DARDL": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "DCTTR": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "DENGE": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "DERHL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "DERIM": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "DESA": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "DESPC": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "DEVA": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "DGATE": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "DGGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "DGNMO": {
+      "sector": "ORMAN ÜRÜNLERİ VE MOBİLYA",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "DIRIT": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "DITAS": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "DMRGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "DMSAS": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "DNISI": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "DOAS": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "DOCO": {
+      "sector": "YİYECEK VE İÇECEK HİZMETLERİ",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "DOFER": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "DOFRB": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "DOGUB": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "DOHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "DOKTA": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "DSTKF": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "DUNYH": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "DURDO": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "DURKN": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "DYOBY": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "DZGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "EBEBK": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "ECILC": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ECOGR": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ECZYT": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "EDATA": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "EDIP": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "EFOR": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "EGEEN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "EGEGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "EGEPO": {
+      "sector": "İNSAN SAĞLIĞI VE SOSYAL HİZMETLER",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "EGGUB": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "EGPRO": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "EGSER": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "EKGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "EKIZ": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "EKOS": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "EKSUN": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ELITE": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "EMKEL": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "EMNIS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "EMPAE": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ENDAE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ENERY": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ENJSA": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ENKAI": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "ENSRI": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "ENTRA": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "EPLAS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "ERBOS": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "ERCB": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "EREGL": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "ERSU": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ESCAR": {
+      "sector": "KİRALAMA VE LEASING FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "ESCOM": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ESEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ETILR": {
+      "sector": "YİYECEK VE İÇECEK HİZMETLERİ",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "ETYAT": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "EUHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "EUKYO": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "EUPWR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "EUREN": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "EUYO": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "EYGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "FADE": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "FENER": {
+      "sector": "SPOR FAALİYETLERİ EĞLENCE VE OYUN FAALİYETLERİ",
+      "sector_index": "XSPOR",
+      "all_sector_indexes": [
+        "XSPOR",
+        "XUHIZ"
+      ]
+    },
+    "FLAP": {
+      "sector": "BÜRO YÖNETİMİ, BÜRO DESTEĞİ VE DİĞER ŞİRKET DESTEK FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "FMIZP": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "FONET": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "FORMT": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "FORTE": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "FRIGO": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "FRMPL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "FROTO": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "FZLGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "GARAN": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "GARFA": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "GATEG": {
+      "sector": "YARATICI SANATLAR GÖSTERİ SANATLARI VE EĞLENCE FAALİYETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "GEDIK": {
+      "sector": "ARACI KURUMLAR",
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "GEDZA": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "GENIL": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "GENKM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "GENTS": {
+      "sector": "ORMAN ÜRÜNLERİ VE MOBİLYA",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "GEREL": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "GESAN": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "GIPTA": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "GLBMD": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "GLCVY": {
+      "sector": "VARLIK YÖNETİM ŞİRKETLERİ",
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "GLRMK": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "GLRYH": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "GLYHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "GMTAS": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "GOKNR": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "GOLTS": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "GOODY": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "GOZDE": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "GRNYO": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "GRSEL": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "GRTHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "GSDDE": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "GSDHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "GSRAY": {
+      "sector": "SPOR FAALİYETLERİ EĞLENCE VE OYUN FAALİYETLERİ",
+      "sector_index": "XSPOR",
+      "all_sector_indexes": [
+        "XSPOR",
+        "XUHIZ"
+      ]
+    },
+    "GUBRF": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "GUNDG": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "GWIND": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "GZNMI": {
+      "sector": "SEYAHAT ACENTESİ, TUR OPERATÖRÜ VE DİĞER REZERVASYON HİZMETLERİ İLE İLGİLİ FAALİYETLER",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "HALKB": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "HATEK": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "HATSN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "HDFGS": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "HEDEF": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "HEKTS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "HKTM": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "HLGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "HOROZ": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "HRKET": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "HTTBT": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "HUBVC": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "HUNER": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "HURGZ": {
+      "sector": "YAYIMCILIK",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "ICBCT": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "ICUGS": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "IDGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "IEYHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "IHAAS": {
+      "sector": "BİLGİ HİZMET FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "IHEVA": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "IHGZT": {
+      "sector": "YAYIMCILIK",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "IHLAS": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "IHLGM": {
+      "sector": "GAYRİMENKUL FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "IHYAY": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "IMASM": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "INDES": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "INFO": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "INGRM": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "INTEK": {
+      "sector": "BİLİŞİM",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "INTEM": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "INVEO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "INVES": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ISATR": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "ISBIR": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "ISBTR": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "ISCTR": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "ISDMR": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "ISFIN": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "ISGSY": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ISGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "ISKPL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "ISMEN": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "ISSEN": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "ISYAT": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "IZENR": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "IZFAS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "IZINV": {
+      "sector": "TARIM VE HAYVANCILIK AVCILIK VE İLGİLİ HİZMET FAALİYETLERİ",
+      "sector_index": "XUSIN",
+      "all_sector_indexes": [
+        "XUSIN"
+      ]
+    },
+    "IZMDC": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "JANTS": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "KAPLM": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "KAREL": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "KARSN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "KARTN": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "KATMR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "KAYSE": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "KBORU": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "KCAER": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "KCHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "KENT": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "KERVN": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "KFEIN": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "KGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "KIMMR": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "KLGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "KLKIM": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "KLMSN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "KLRHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "KLSER": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "KLSYN": {
+      "sector": "ORMAN ÜRÜNLERİ VE MOBİLYA",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "KLYPV": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "KMPUR": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "KNFRT": {
+      "sector": "TARIM VE HAYVANCILIK AVCILIK VE İLGİLİ HİZMET FAALİYETLERİ",
+      "sector_index": "XUSIN",
+      "all_sector_indexes": [
+        "XUSIN"
+      ]
+    },
+    "KOCMT": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "KONKA": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "KONTR": {
+      "sector": "MİMARLIK VE MÜHENDİSLİK FAALİYETLERİ; TEKNİK MUAYENE VE ANALİZ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "KONYA": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "KOPOL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "KORDS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "KOTON": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "KRDMA": {
+      "sector": null,
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "KRDMB": {
+      "sector": null,
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "KRDMD": {
+      "sector": null,
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "KRGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "KRONT": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "KRPLS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "KRSTL": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "KRTEK": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "KRVGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "KSTUR": {
+      "sector": "KONAKLAMA",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "KTLEV": {
+      "sector": "FİNANSMAN ŞİRKETLERİ",
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "KTSKR": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "KUTPO": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "KUVVA": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "KUYAS": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "KZBGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "KZGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "LIDER": {
+      "sector": "KİRALAMA VE LEASING FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "LIDFA": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "LILAK": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "LINK": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "LKMNH": {
+      "sector": "İNSAN SAĞLIĞI VE SOSYAL HİZMETLER",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "LMKDC": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "LOGO": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "LRSHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "LUKSK": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "LXGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "LYDHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "LYDYE": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "MAALT": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "MACKO": {
+      "sector": "SPOR EĞLENCE BOŞ ZAMANLARI DEĞERLENDİRME HİZMETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "MAGEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "MAKIM": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "MAKTK": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "MANAS": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "MARBL": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "MARKA": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "MARMR": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "MARTI": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "MAVI": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "MCARD": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "MEDTR": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "MEGAP": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "MEGMT": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "MEKAG": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "MEPET": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "MERCN": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "MERIT": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "MERKO": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "METRO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "MEYSU": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "MGROS": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "MHRGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "MIATK": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "MMCAS": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "MNDRS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "MNDTR": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "MOBTL": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "MOGAN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "MOPAS": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "MPARK": {
+      "sector": "İNSAN SAĞLIĞI VE SOSYAL HİZMETLER",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "MRGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "MRSHL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "MSGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "MTRKS": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "MTRYO": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "MZHLD": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "NATEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "NETAS": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "NETCD": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "NIBAS": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "NTGAZ": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "NTHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "NUGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "NUHCM": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "OBAMS": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "OBASE": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "ODAS": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ODINE": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "OFSYM": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ONCSM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "ONRYT": {
+      "sector": "SAVUNMA",
+      "sector_index": "XUTEK",
+      "all_sector_indexes": [
+        "XUTEK"
+      ]
+    },
+    "ORCAY": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ORGE": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "ORMA": {
+      "sector": "ORMAN ÜRÜNLERİ VE MOBİLYA",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "OSMEN": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "OSTIM": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "OTKAR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "OTTO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "OYAKC": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "OYAYO": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "OYLUM": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "OYYAT": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "OZATD": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "OZGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "OZKGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "OZRDN": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "OZSUB": {
+      "sector": "BALIKÇILIK VE SU ÜRÜNLERİ",
+      "sector_index": "XUSIN",
+      "all_sector_indexes": [
+        "XUSIN"
+      ]
+    },
+    "OZYSR": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "PAGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "PAHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "PAMEL": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "PAPIL": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "PARSN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "PASEU": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "PATEK": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "PCILT": {
+      "sector": "REKLAMCILIK VE PAZAR ARAŞTIRMASI",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "PEKGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "PENGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "PENTA": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "PETKM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "PETUN": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "PGSUS": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "PINSU": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "PKART": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "PKENT": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "PLTUR": {
+      "sector": "KİRALAMA VE LEASING FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "PNLSN": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "PNSUT": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "POLHO": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "POLTK": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "PRDGS": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "PRKAB": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "PRKME": {
+      "sector": "KÖMÜR VE LİNYİT MADENCİLİĞİ",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "PRZMA": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "PSDTC": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "PSGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "QNBFK": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "QUAGR": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "RALYH": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "RAYSG": {
+      "sector": "SİGORTA ŞİRKETLERİ",
+      "sector_index": "XSGRT",
+      "all_sector_indexes": [
+        "XSGRT",
+        "XUMAL"
+      ]
+    },
+    "REEDR": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "RGYAS": {
+      "sector": "GAYRİMENKUL FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "RNPOL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "RODRG": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "ROYAL": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "RTALB": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "RUBNS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "RUZYE": {
+      "sector": "KÖMÜR VE LİNYİT MADENCİLİĞİ",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "RYGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "RYSAS": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "SAFKR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "SAHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "SAMAT": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "SANEL": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "SANFM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "SANKO": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "SARKY": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "SASA": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "SAYAS": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "SDTTR": {
+      "sector": "SAVUNMA",
+      "sector_index": "XUTEK",
+      "all_sector_indexes": [
+        "XUTEK"
+      ]
+    },
+    "SEGMN": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "SEGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "SEKFK": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "SEKUR": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "SELEC": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "SELVA": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "SERNT": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "SEYKM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "SILVR": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "SISE": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "SKBNK": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "SKTAS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "SKYLP": {
+      "sector": "HUKUK VE MUHASEBE FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "SKYMD": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "SMART": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "SMRTG": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "SMRVA": {
+      "sector": "VARLIK YÖNETİM ŞİRKETLERİ",
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "SNGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "SNICA": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "SNPAM": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "SODSN": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "SOKE": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "SOKM": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "SONME": {
+      "sector": "GAYRİMENKUL FAALİYETLERİ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "SRVGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "SUMAS": {
+      "sector": "ORMAN ÜRÜNLERİ VE MOBİLYA",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "SUNTK": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "SURGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "SUWEN": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "SVGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "TABGD": {
+      "sector": "YİYECEK VE İÇECEK HİZMETLERİ",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "TARKM": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "TATEN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "TATGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "TAVHL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "TBORG": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "TCELL": {
+      "sector": "TELEKOMÜNİKASYON",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "TCKRC": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "TDGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "TEHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "TEKTU": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "TERA": {
+      "sector": null,
+      "sector_index": "XUMAL",
+      "all_sector_indexes": [
+        "XUMAL"
+      ]
+    },
+    "TEZOL": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "TGSAS": {
+      "sector": "TOPTAN TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "THYAO": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "TKFEN": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "TKNSA": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "TLMAN": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "TMPOL": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "TMSN": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "TNZTP": {
+      "sector": "İNSAN SAĞLIĞI VE SOSYAL HİZMETLER",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "TOASO": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "TRALT": {
+      "sector": "METAL CEVHERİ MADENCİLİĞİ",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "TRCAS": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "TRENJ": {
+      "sector": "HAM PETROL VE DOĞAL GAZ ÇIKARTILMASI",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "TRGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "TRHOL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "TRILC": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "TRMET": {
+      "sector": "METAL CEVHERİ MADENCİLİĞİ",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "TSGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "TSKB": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "TSPOR": {
+      "sector": "SPOR FAALİYETLERİ EĞLENCE VE OYUN FAALİYETLERİ",
+      "sector_index": "XSPOR",
+      "all_sector_indexes": [
+        "XSPOR",
+        "XUHIZ"
+      ]
+    },
+    "TTKOM": {
+      "sector": "TELEKOMÜNİKASYON",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "TTRAK": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "TUCLK": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "TUKAS": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "TUPRS": {
+      "sector": "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER",
+      "sector_index": "XKMYA",
+      "all_sector_indexes": [
+        "XKMYA",
+        "XUSIN"
+      ]
+    },
+    "TUREX": {
+      "sector": "ULAŞTIRMA VE DEPOLAMA",
+      "sector_index": "XULAS",
+      "all_sector_indexes": [
+        "XULAS",
+        "XUHIZ"
+      ]
+    },
+    "TURGG": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "TURSG": {
+      "sector": "SİGORTA ŞİRKETLERİ",
+      "sector_index": "XSGRT",
+      "all_sector_indexes": [
+        "XSGRT",
+        "XUMAL"
+      ]
+    },
+    "UCAYM": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "UFUK": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "ULAS": {
+      "sector": "KONAKLAMA",
+      "sector_index": "XTRZM",
+      "all_sector_indexes": [
+        "XTRZM",
+        "XUHIZ"
+      ]
+    },
+    "ULKER": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ULUFA": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "ULUSE": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "ULUUN": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "UMPAS": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "UNLU": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "USAK": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": "XTAST",
+      "all_sector_indexes": [
+        "XTAST",
+        "XUSIN"
+      ]
+    },
+    "VAKBN": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "VAKFA": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "VAKFN": {
+      "sector": "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+      "sector_index": "XFINK",
+      "all_sector_indexes": [
+        "XFINK",
+        "XUMAL"
+      ]
+    },
+    "VAKKO": {
+      "sector": "PERAKENDE TİCARET",
+      "sector_index": "XTCRT",
+      "all_sector_indexes": [
+        "XTCRT",
+        "XUHIZ"
+      ]
+    },
+    "VANGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "VBTYZ": {
+      "sector": "BİLİŞİM",
+      "sector_index": "XBLSM",
+      "all_sector_indexes": [
+        "XBLSM",
+        "XUTEK"
+      ]
+    },
+    "VERTU": {
+      "sector": "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "VERUS": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "VESBE": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "VESTL": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "VKFYO": {
+      "sector": "MENKUL KIYMET YATIRIM ORTAKLIKLARI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "VKGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "VKING": {
+      "sector": "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM",
+      "sector_index": "XKAGT",
+      "all_sector_indexes": [
+        "XKAGT",
+        "XUSIN"
+      ]
+    },
+    "VRGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "VSNMD": {
+      "sector": "DİĞER MADENCİLİK VE TAŞ OCAKÇILIĞI",
+      "sector_index": "XMADN",
+      "all_sector_indexes": [
+        "XMADN",
+        "XUSIN"
+      ]
+    },
+    "YAPRK": {
+      "sector": "TARIM VE HAYVANCILIK AVCILIK VE İLGİLİ HİZMET FAALİYETLERİ",
+      "sector_index": "XUSIN",
+      "all_sector_indexes": [
+        "XUSIN"
+      ]
+    },
+    "YATAS": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "YAYLA": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": "XINSA",
+      "all_sector_indexes": [
+        "XINSA",
+        "XUHIZ"
+      ]
+    },
+    "YBTAS": {
+      "sector": "TAŞ VE TOPRAĞA DAYALI",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "YEOTK": {
+      "sector": "MİMARLIK VE MÜHENDİSLİK FAALİYETLERİ; TEKNİK MUAYENE VE ANALİZ",
+      "sector_index": "XUHIZ",
+      "all_sector_indexes": [
+        "XUHIZ"
+      ]
+    },
+    "YESIL": {
+      "sector": "HOLDİNGLER VE YATIRIM ŞİRKETLERİ",
+      "sector_index": "XHOLD",
+      "all_sector_indexes": [
+        "XHOLD",
+        "XUMAL"
+      ]
+    },
+    "YGGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "YIGIT": {
+      "sector": "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI",
+      "sector_index": "XMESY",
+      "all_sector_indexes": [
+        "XMESY",
+        "XUSIN"
+      ]
+    },
+    "YKBNK": {
+      "sector": null,
+      "sector_index": "XBANK",
+      "all_sector_indexes": [
+        "XBANK",
+        "XUMAL"
+      ]
+    },
+    "YKSLN": {
+      "sector": "ANA METAL SANAYİ",
+      "sector_index": "XMANA",
+      "all_sector_indexes": [
+        "XMANA",
+        "XUSIN"
+      ]
+    },
+    "YONGA": {
+      "sector": "ORMAN ÜRÜNLERİ VE MOBİLYA",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "YUNSA": {
+      "sector": "TEKSTİL, GİYİM EŞYASI VE DERİ",
+      "sector_index": "XTEKS",
+      "all_sector_indexes": [
+        "XTEKS",
+        "XUSIN"
+      ]
+    },
+    "YYAPI": {
+      "sector": "İNŞAAT VE BAYINDIRLIK İŞLERİ",
+      "sector_index": null,
+      "all_sector_indexes": []
+    },
+    "YYLGD": {
+      "sector": "GIDA, İÇECEK VE TÜTÜN",
+      "sector_index": "XGIDA",
+      "all_sector_indexes": [
+        "XGIDA",
+        "XUSIN"
+      ]
+    },
+    "ZEDUR": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ZERGY": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "ZGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    },
+    "ZOREN": {
+      "sector": "ELEKTRİK GAZ VE BUHAR",
+      "sector_index": "XELKT",
+      "all_sector_indexes": [
+        "XELKT",
+        "XUHIZ"
+      ]
+    },
+    "ZRGYO": {
+      "sector": "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+      "sector_index": "XGMYO",
+      "all_sector_indexes": [
+        "XGMYO",
+        "XUMAL"
+      ]
+    }
+  },
+  "index_members": {
+    "XUSIN": [
+      "ACSEL",
+      "ADEL",
+      "AEFES",
+      "AFYON",
+      "AGROT",
+      "AKCNS",
+      "AKHAN",
+      "AKSA",
+      "ALCAR",
+      "ALKA",
+      "ALKIM",
+      "ALKLC",
+      "ALVES",
+      "ANGEN",
+      "ARCLK",
+      "ARMGD",
+      "ARTMS",
+      "ASTOR",
+      "ASUZU",
+      "ATAKP",
+      "AVOD",
+      "AYGAZ",
+      "BAGFS",
+      "BAHKM",
+      "BAKAB",
+      "BALSU",
+      "BANVT",
+      "BARMA",
+      "BAYRK",
+      "BESLR",
+      "BFREN",
+      "BIENY",
+      "BLCYT",
+      "BLUME",
+      "BMSCH",
+      "BMSTL",
+      "BNTAS",
+      "BOBET",
+      "BORSK",
+      "BOSSA",
+      "BRISA",
+      "BRKSN",
+      "BRSAN",
+      "BSOKE",
+      "BTCIM",
+      "BUCIM",
+      "BURCE",
+      "BURVA",
+      "BVSAN",
+      "CCOLA",
+      "CELHA",
+      "CEMAS",
+      "CEMTS",
+      "CEMZY",
+      "CGCAM",
+      "CIMSA",
+      "CMBTN",
+      "CUSAN",
+      "CVKMD",
+      "DAGI",
+      "DARDL",
+      "DERIM",
+      "DESA",
+      "DEVA",
+      "DGNMO",
+      "DITAS",
+      "DMRGD",
+      "DMSAS",
+      "DNISI",
+      "DOFER",
+      "DOGUB",
+      "DOKTA",
+      "DURDO",
+      "DURKN",
+      "DYOBY",
+      "EFOR",
+      "EGEEN",
+      "EGGUB",
+      "EGPRO",
+      "EGSER",
+      "EKOS",
+      "EKSUN",
+      "ELITE",
+      "EMKEL",
+      "ENSRI",
+      "EPLAS",
+      "ERBOS",
+      "ERCB",
+      "EREGL",
+      "ERSU",
+      "EUPWR",
+      "EUREN",
+      "FADE",
+      "FMIZP",
+      "FORMT",
+      "FRIGO",
+      "FRMPL",
+      "FROTO",
+      "GEDZA",
+      "GENKM",
+      "GENTS",
+      "GEREL",
+      "GIPTA",
+      "GOKNR",
+      "GOLTS",
+      "GOODY",
+      "GUBRF",
+      "GUNDG",
+      "HATEK",
+      "HATSN",
+      "HEKTS",
+      "HKTM",
+      "IHEVA",
+      "IMASM",
+      "ISDMR",
+      "ISKPL",
+      "ISSEN",
+      "IZFAS",
+      "IZINV",
+      "IZMDC",
+      "JANTS",
+      "KAPLM",
+      "KARSN",
+      "KARTN",
+      "KATMR",
+      "KAYSE",
+      "KBORU",
+      "KCAER",
+      "KLKIM",
+      "KLMSN",
+      "KLSER",
+      "KLSYN",
+      "KMPUR",
+      "KNFRT",
+      "KOCMT",
+      "KONKA",
+      "KONYA",
+      "KOPOL",
+      "KORDS",
+      "KRDMA",
+      "KRDMB",
+      "KRDMD",
+      "KRPLS",
+      "KRSTL",
+      "KRTEK",
+      "KRVGD",
+      "KTSKR",
+      "KUTPO",
+      "LILAK",
+      "LMKDC",
+      "LUKSK",
+      "MAKIM",
+      "MAKTK",
+      "MARBL",
+      "MARMR",
+      "MEDTR",
+      "MEGMT",
+      "MEKAG",
+      "MERCN",
+      "MERKO",
+      "MEYSU",
+      "MNDRS",
+      "MNDTR",
+      "MRSHL",
+      "NIBAS",
+      "NUHCM",
+      "OBAMS",
+      "OFSYM",
+      "ONCSM",
+      "ORCAY",
+      "OTKAR",
+      "OYAKC",
+      "OYLUM",
+      "OZATD",
+      "OZRDN",
+      "OZSUB",
+      "OZYSR",
+      "PARSN",
+      "PENGD",
+      "PETKM",
+      "PETUN",
+      "PINSU",
+      "PNLSN",
+      "PNSUT",
+      "POLTK",
+      "PRKAB",
+      "PRKME",
+      "PRZMA",
+      "QUAGR",
+      "RNPOL",
+      "RODRG",
+      "RTALB",
+      "RUBNS",
+      "RUZYE",
+      "SAFKR",
+      "SAMAT",
+      "SANFM",
+      "SARKY",
+      "SASA",
+      "SAYAS",
+      "SEGMN",
+      "SEKUR",
+      "SELVA",
+      "SERNT",
+      "SEYKM",
+      "SILVR",
+      "SKTAS",
+      "SNICA",
+      "SOKE",
+      "SUNTK",
+      "TARKM",
+      "TATGD",
+      "TBORG",
+      "TCKRC",
+      "TEZOL",
+      "TMPOL",
+      "TMSN",
+      "TOASO",
+      "TRALT",
+      "TRENJ",
+      "TRILC",
+      "TRMET",
+      "TTRAK",
+      "TUCLK",
+      "TUKAS",
+      "TUPRS",
+      "ULKER",
+      "ULUSE",
+      "ULUUN",
+      "USAK",
+      "VANGD",
+      "VESBE",
+      "VESTL",
+      "VKING",
+      "VSNMD",
+      "YAPRK",
+      "YATAS",
+      "YIGIT",
+      "YKSLN",
+      "YUNSA",
+      "YYLGD"
+    ],
+    "XGIDA": [
+      "AEFES",
+      "AKHAN",
+      "ALKLC",
+      "ARMGD",
+      "ATAKP",
+      "AVOD",
+      "BALSU",
+      "BANVT",
+      "BESLR",
+      "BORSK",
+      "CCOLA",
+      "CEMZY",
+      "DARDL",
+      "DMRGD",
+      "DURKN",
+      "EFOR",
+      "EKSUN",
+      "ELITE",
+      "ERSU",
+      "FADE",
+      "FRIGO",
+      "GOKNR",
+      "GUNDG",
+      "KAYSE",
+      "KRSTL",
+      "KRVGD",
+      "KTSKR",
+      "MERKO",
+      "MEYSU",
+      "OBAMS",
+      "OFSYM",
+      "ORCAY",
+      "OYLUM",
+      "PENGD",
+      "PETUN",
+      "PINSU",
+      "PNSUT",
+      "SEGMN",
+      "SELVA",
+      "SOKE",
+      "TATGD",
+      "TBORG",
+      "TUKAS",
+      "ULKER",
+      "ULUUN",
+      "VANGD",
+      "YYLGD"
+    ],
+    "XKMYA": [
+      "ACSEL",
+      "AKSA",
+      "ALKIM",
+      "ANGEN",
+      "AYGAZ",
+      "BAGFS",
+      "BAHKM",
+      "BAYRK",
+      "BRISA",
+      "BRKSN",
+      "DEVA",
+      "DNISI",
+      "DYOBY",
+      "EGGUB",
+      "EGPRO",
+      "EPLAS",
+      "EUREN",
+      "FRMPL",
+      "GEDZA",
+      "GENKM",
+      "GOODY",
+      "GUBRF",
+      "HEKTS",
+      "ISKPL",
+      "IZFAS",
+      "KBORU",
+      "KMPUR",
+      "KOPOL",
+      "KRPLS",
+      "MARMR",
+      "MEDTR",
+      "MERCN",
+      "MRSHL",
+      "ONCSM",
+      "OZRDN",
+      "PETKM",
+      "POLTK",
+      "RNPOL",
+      "RTALB",
+      "SANFM",
+      "SASA",
+      "SEKUR",
+      "SEYKM",
+      "TARKM",
+      "TMPOL",
+      "TRILC",
+      "TUPRS"
+    ],
+    "XMADN": [
+      "CVKMD",
+      "PRKME",
+      "RUZYE",
+      "TRALT",
+      "TRENJ",
+      "TRMET",
+      "VSNMD"
+    ],
+    "XMANA": [
+      "BLUME",
+      "BMSCH",
+      "BMSTL",
+      "BRSAN",
+      "BURCE",
+      "BURVA",
+      "CELHA",
+      "CEMAS",
+      "CEMTS",
+      "CUSAN",
+      "DMSAS",
+      "DOFER",
+      "DOKTA",
+      "ERBOS",
+      "ERCB",
+      "EREGL",
+      "ISDMR",
+      "IZMDC",
+      "KCAER",
+      "KOCMT",
+      "KRDMA",
+      "KRDMB",
+      "KRDMD",
+      "MEGMT",
+      "OZYSR",
+      "PNLSN",
+      "SARKY",
+      "TCKRC",
+      "TUCLK",
+      "YKSLN"
+    ],
+    "XMESY": [
+      "ALCAR",
+      "ALVES",
+      "ARCLK",
+      "ASTOR",
+      "ASUZU",
+      "BFREN",
+      "BNTAS",
+      "BVSAN",
+      "DITAS",
+      "EGEEN",
+      "EKOS",
+      "EMKEL",
+      "EUPWR",
+      "FMIZP",
+      "FORMT",
+      "FROTO",
+      "GEREL",
+      "HATSN",
+      "HKTM",
+      "IHEVA",
+      "IMASM",
+      "JANTS",
+      "KARSN",
+      "KATMR",
+      "KLMSN",
+      "MAKIM",
+      "MAKTK",
+      "MEKAG",
+      "OTKAR",
+      "OZATD",
+      "PARSN",
+      "PRKAB",
+      "SAFKR",
+      "SAYAS",
+      "SILVR",
+      "SNICA",
+      "TMSN",
+      "TOASO",
+      "TTRAK",
+      "ULUSE",
+      "VESBE",
+      "VESTL",
+      "YIGIT"
+    ],
+    "XKAGT": [
+      "ALKA",
+      "BAKAB",
+      "BARMA",
+      "DGNMO",
+      "DURDO",
+      "GENTS",
+      "GIPTA",
+      "KAPLM",
+      "KARTN",
+      "KLSYN",
+      "KONKA",
+      "LILAK",
+      "MNDTR",
+      "PRZMA",
+      "SAMAT",
+      "TEZOL",
+      "VKING"
+    ],
+    "XTAST": [
+      "AFYON",
+      "AKCNS",
+      "BIENY",
+      "BOBET",
+      "BSOKE",
+      "BTCIM",
+      "BUCIM",
+      "CGCAM",
+      "CIMSA",
+      "CMBTN",
+      "DOGUB",
+      "EGSER",
+      "GOLTS",
+      "KLKIM",
+      "KLSER",
+      "KONYA",
+      "KUTPO",
+      "LMKDC",
+      "MARBL",
+      "NIBAS",
+      "NUHCM",
+      "OYAKC",
+      "QUAGR",
+      "SERNT",
+      "USAK"
+    ],
+    "XTEKS": [
+      "ARTMS",
+      "BLCYT",
+      "BOSSA",
+      "DAGI",
+      "DERIM",
+      "DESA",
+      "ENSRI",
+      "HATEK",
+      "ISSEN",
+      "KORDS",
+      "KRTEK",
+      "LUKSK",
+      "MNDRS",
+      "RODRG",
+      "RUBNS",
+      "SKTAS",
+      "SUNTK",
+      "YATAS",
+      "YUNSA"
+    ],
+    "XUHIZ": [
+      "A1YEN",
+      "ADESE",
+      "AHGAZ",
+      "AKENR",
+      "AKFIS",
+      "AKFYE",
+      "AKSEN",
+      "AKSUE",
+      "ALFAS",
+      "ANELE",
+      "ARASE",
+      "ARFYE",
+      "ARZUM",
+      "ATATR",
+      "AVTUR",
+      "AYCES",
+      "AYDEM",
+      "AYEN",
+      "BESTE",
+      "BEYAZ",
+      "BIGCH",
+      "BIGEN",
+      "BIGTK",
+      "BIMAS",
+      "BIOEN",
+      "BIZIM",
+      "BJKAS",
+      "BORLS",
+      "BRLSM",
+      "BYDNR",
+      "CANTE",
+      "CATES",
+      "CEOEM",
+      "CLEBI",
+      "CONSE",
+      "CRFSA",
+      "CWENE",
+      "DAPGM",
+      "DCTTR",
+      "DOAS",
+      "DOCO",
+      "EBEBK",
+      "ECOGR",
+      "EDIP",
+      "EGEPO",
+      "ENDAE",
+      "ENERY",
+      "ENJSA",
+      "ENKAI",
+      "ENTRA",
+      "ESCAR",
+      "ESEN",
+      "ETILR",
+      "FENER",
+      "FLAP",
+      "GENIL",
+      "GESAN",
+      "GLRMK",
+      "GMTAS",
+      "GRSEL",
+      "GSDDE",
+      "GSRAY",
+      "GWIND",
+      "GZNMI",
+      "HOROZ",
+      "HRKET",
+      "HUNER",
+      "HURGZ",
+      "IHAAS",
+      "IHGZT",
+      "IHLGM",
+      "INTEM",
+      "IZENR",
+      "KIMMR",
+      "KLYPV",
+      "KONTR",
+      "KOTON",
+      "KUVVA",
+      "KUYAS",
+      "LIDER",
+      "LKMNH",
+      "LYDYE",
+      "MAALT",
+      "MACKO",
+      "MAGEN",
+      "MARTI",
+      "MAVI",
+      "MEPET",
+      "MERIT",
+      "MGROS",
+      "MOGAN",
+      "MOPAS",
+      "MPARK",
+      "NATEN",
+      "NTGAZ",
+      "ODAS",
+      "ORGE",
+      "PAMEL",
+      "PASEU",
+      "PCILT",
+      "PGSUS",
+      "PKENT",
+      "PLTUR",
+      "PSDTC",
+      "RGYAS",
+      "RYSAS",
+      "SANEL",
+      "SANKO",
+      "SELEC",
+      "SKYLP",
+      "SMRTG",
+      "SOKM",
+      "SONME",
+      "SUWEN",
+      "TABGD",
+      "TATEN",
+      "TCELL",
+      "TEKTU",
+      "TGSAS",
+      "THYAO",
+      "TKNSA",
+      "TLMAN",
+      "TNZTP",
+      "TSPOR",
+      "TTKOM",
+      "TUREX",
+      "TURGG",
+      "UCAYM",
+      "ULAS",
+      "VAKKO",
+      "YAYLA",
+      "YEOTK",
+      "ZEDUR",
+      "ZOREN"
+    ],
+    "XELKT": [
+      "A1YEN",
+      "AHGAZ",
+      "AKENR",
+      "AKFYE",
+      "AKSEN",
+      "AKSUE",
+      "ALFAS",
+      "ARASE",
+      "ARFYE",
+      "AYDEM",
+      "AYEN",
+      "BESTE",
+      "BIGEN",
+      "BIOEN",
+      "CANTE",
+      "CATES",
+      "CONSE",
+      "CWENE",
+      "ECOGR",
+      "ENDAE",
+      "ENERY",
+      "ENJSA",
+      "ENTRA",
+      "ESEN",
+      "GWIND",
+      "HUNER",
+      "IZENR",
+      "KLYPV",
+      "LYDYE",
+      "MAGEN",
+      "MOGAN",
+      "NATEN",
+      "NTGAZ",
+      "ODAS",
+      "PAMEL",
+      "SMRTG",
+      "TATEN",
+      "ZEDUR",
+      "ZOREN"
+    ],
+    "XINSA": [
+      "AKFIS",
+      "ANELE",
+      "BRLSM",
+      "DAPGM",
+      "EDIP",
+      "ENKAI",
+      "GESAN",
+      "GLRMK",
+      "KUYAS",
+      "ORGE",
+      "SANEL",
+      "TURGG",
+      "UCAYM",
+      "YAYLA"
+    ],
+    "XSPOR": [
+      "BJKAS",
+      "FENER",
+      "GSRAY",
+      "TSPOR"
+    ],
+    "XTCRT": [
+      "ARZUM",
+      "BIMAS",
+      "BIZIM",
+      "CRFSA",
+      "DCTTR",
+      "DOAS",
+      "EBEBK",
+      "GENIL",
+      "GMTAS",
+      "INTEM",
+      "KIMMR",
+      "KOTON",
+      "KUVVA",
+      "MAVI",
+      "MEPET",
+      "MGROS",
+      "MOPAS",
+      "PSDTC",
+      "SANKO",
+      "SELEC",
+      "SOKM",
+      "SUWEN",
+      "TGSAS",
+      "TKNSA",
+      "VAKKO"
+    ],
+    "XTRZM": [
+      "ATATR",
+      "AVTUR",
+      "AYCES",
+      "BIGCH",
+      "BYDNR",
+      "DOCO",
+      "ETILR",
+      "MAALT",
+      "MARTI",
+      "MERIT",
+      "PKENT",
+      "TABGD",
+      "TEKTU",
+      "ULAS"
+    ],
+    "XULAS": [
+      "BEYAZ",
+      "CLEBI",
+      "GRSEL",
+      "GSDDE",
+      "HOROZ",
+      "HRKET",
+      "PASEU",
+      "PGSUS",
+      "RYSAS",
+      "THYAO",
+      "TLMAN",
+      "TUREX"
+    ],
+    "XUMAL": [
+      "A1CAP",
+      "ADGYO",
+      "AGESA",
+      "AGHOL",
+      "AGYO",
+      "AHSGY",
+      "AKBNK",
+      "AKFGY",
+      "AKGRT",
+      "AKMGY",
+      "AKSGY",
+      "AKYHO",
+      "ALARK",
+      "ALBRK",
+      "ALGYO",
+      "ANHYT",
+      "ANSGR",
+      "ARSAN",
+      "ASGYO",
+      "ATAGY",
+      "AVGYO",
+      "AVHOL",
+      "AVPGY",
+      "BASGZ",
+      "BEGYO",
+      "BERA",
+      "BINHO",
+      "BRKVY",
+      "BRYAT",
+      "BULGS",
+      "COSMO",
+      "CRDFA",
+      "DENGE",
+      "DERHL",
+      "DGGYO",
+      "DOHOL",
+      "DSTKF",
+      "DUNYH",
+      "DZGYO",
+      "ECILC",
+      "ECZYT",
+      "EGEGY",
+      "EKGYO",
+      "EYGYO",
+      "FZLGY",
+      "GARAN",
+      "GARFA",
+      "GEDIK",
+      "GLBMD",
+      "GLCVY",
+      "GLRYH",
+      "GLYHO",
+      "GOZDE",
+      "GRTHO",
+      "GSDHO",
+      "HALKB",
+      "HDFGS",
+      "HEDEF",
+      "HLGYO",
+      "HUBVC",
+      "ICBCT",
+      "ICUGS",
+      "IDGYO",
+      "IEYHO",
+      "IHLAS",
+      "IHYAY",
+      "INFO",
+      "INVEO",
+      "INVES",
+      "ISATR",
+      "ISBTR",
+      "ISCTR",
+      "ISFIN",
+      "ISGSY",
+      "ISGYO",
+      "ISMEN",
+      "KCHOL",
+      "KGYO",
+      "KLGYO",
+      "KLRHO",
+      "KRGYO",
+      "KTLEV",
+      "KZBGY",
+      "KZGYO",
+      "LIDFA",
+      "LRSHO",
+      "LXGYO",
+      "LYDHO",
+      "MARKA",
+      "METRO",
+      "MHRGY",
+      "MRGYO",
+      "MSGYO",
+      "MZHLD",
+      "NTHOL",
+      "NUGYO",
+      "OSMEN",
+      "OSTIM",
+      "OTTO",
+      "OYYAT",
+      "OZGYO",
+      "OZKGY",
+      "PAGYO",
+      "PAHOL",
+      "PEKGY",
+      "POLHO",
+      "PRDGS",
+      "PSGYO",
+      "RALYH",
+      "RAYSG",
+      "RYGYO",
+      "SAHOL",
+      "SEGYO",
+      "SEKFK",
+      "SISE",
+      "SKBNK",
+      "SKYMD",
+      "SMRVA",
+      "SNGYO",
+      "SRVGY",
+      "SURGY",
+      "SVGYO",
+      "TAVHL",
+      "TDGYO",
+      "TEHOL",
+      "TERA",
+      "TKFEN",
+      "TRCAS",
+      "TRGYO",
+      "TRHOL",
+      "TSGYO",
+      "TSKB",
+      "TURSG",
+      "UFUK",
+      "ULUFA",
+      "UNLU",
+      "VAKBN",
+      "VAKFA",
+      "VAKFN",
+      "VERTU",
+      "VERUS",
+      "VKGYO",
+      "VRGYO",
+      "YESIL",
+      "YGGYO",
+      "YKBNK",
+      "ZERGY",
+      "ZGYO",
+      "ZRGYO"
+    ],
+    "XBANK": [
+      "AKBNK",
+      "ALBRK",
+      "GARAN",
+      "HALKB",
+      "ICBCT",
+      "ISATR",
+      "ISBTR",
+      "ISCTR",
+      "SKBNK",
+      "TSKB",
+      "VAKBN",
+      "YKBNK"
+    ],
+    "XSGRT": [
+      "AGESA",
+      "AKGRT",
+      "ANHYT",
+      "ANSGR",
+      "RAYSG",
+      "TURSG"
+    ],
+    "XFINK": [
+      "CRDFA",
+      "DSTKF",
+      "GARFA",
+      "ISFIN",
+      "LIDFA",
+      "SEKFK",
+      "ULUFA",
+      "VAKFA",
+      "VAKFN"
+    ],
+    "XHOLD": [
+      "AGHOL",
+      "AKYHO",
+      "ALARK",
+      "ARSAN",
+      "AVHOL",
+      "BERA",
+      "BINHO",
+      "BRYAT",
+      "BULGS",
+      "COSMO",
+      "DENGE",
+      "DERHL",
+      "DOHOL",
+      "DUNYH",
+      "ECILC",
+      "ECZYT",
+      "GLRYH",
+      "GLYHO",
+      "GOZDE",
+      "GRTHO",
+      "GSDHO",
+      "HDFGS",
+      "HEDEF",
+      "HUBVC",
+      "ICUGS",
+      "IEYHO",
+      "IHLAS",
+      "IHYAY",
+      "INVEO",
+      "INVES",
+      "ISGSY",
+      "KCHOL",
+      "KLRHO",
+      "LRSHO",
+      "LYDHO",
+      "MARKA",
+      "METRO",
+      "MZHLD",
+      "NTHOL",
+      "OSTIM",
+      "OTTO",
+      "PAHOL",
+      "POLHO",
+      "PRDGS",
+      "RALYH",
+      "SAHOL",
+      "SISE",
+      "TAVHL",
+      "TEHOL",
+      "TKFEN",
+      "TRCAS",
+      "TRHOL",
+      "UFUK",
+      "UNLU",
+      "VERTU",
+      "VERUS",
+      "YESIL"
+    ],
+    "XGMYO": [
+      "ADGYO",
+      "AGYO",
+      "AHSGY",
+      "AKFGY",
+      "AKMGY",
+      "AKSGY",
+      "ALGYO",
+      "ASGYO",
+      "ATAGY",
+      "AVGYO",
+      "AVPGY",
+      "BASGZ",
+      "BEGYO",
+      "DGGYO",
+      "DZGYO",
+      "EGEGY",
+      "EKGYO",
+      "EYGYO",
+      "FZLGY",
+      "HLGYO",
+      "IDGYO",
+      "ISGYO",
+      "KGYO",
+      "KLGYO",
+      "KRGYO",
+      "KZBGY",
+      "KZGYO",
+      "LXGYO",
+      "MHRGY",
+      "MRGYO",
+      "MSGYO",
+      "NUGYO",
+      "OZGYO",
+      "OZKGY",
+      "PAGYO",
+      "PEKGY",
+      "PSGYO",
+      "RYGYO",
+      "SEGYO",
+      "SNGYO",
+      "SRVGY",
+      "SURGY",
+      "SVGYO",
+      "TDGYO",
+      "TRGYO",
+      "TSGYO",
+      "VKGYO",
+      "VRGYO",
+      "YGGYO",
+      "ZERGY",
+      "ZGYO",
+      "ZRGYO"
+    ],
+    "XUTEK": [
+      "ALCTL",
+      "ALTNY",
+      "ARDYZ",
+      "ARENA",
+      "ASELS",
+      "ATATP",
+      "AZTEK",
+      "BINBN",
+      "DESPC",
+      "DGATE",
+      "DOFRB",
+      "EDATA",
+      "EMPAE",
+      "ESCOM",
+      "FONET",
+      "FORTE",
+      "HTTBT",
+      "INDES",
+      "INGRM",
+      "KAREL",
+      "KFEIN",
+      "KRONT",
+      "LINK",
+      "LOGO",
+      "MANAS",
+      "MCARD",
+      "MIATK",
+      "MOBTL",
+      "MTRKS",
+      "NETAS",
+      "NETCD",
+      "OBASE",
+      "ODINE",
+      "ONRYT",
+      "PAPIL",
+      "PATEK",
+      "PENTA",
+      "PKART",
+      "REEDR",
+      "SDTTR",
+      "SMART",
+      "VBTYZ"
+    ],
+    "XBLSM": [
+      "ALCTL",
+      "ARDYZ",
+      "ARENA",
+      "ATATP",
+      "AZTEK",
+      "BINBN",
+      "DESPC",
+      "DGATE",
+      "DOFRB",
+      "EDATA",
+      "EMPAE",
+      "ESCOM",
+      "FONET",
+      "FORTE",
+      "HTTBT",
+      "INDES",
+      "INGRM",
+      "KAREL",
+      "KFEIN",
+      "KRONT",
+      "LINK",
+      "LOGO",
+      "MANAS",
+      "MCARD",
+      "MIATK",
+      "MOBTL",
+      "MTRKS",
+      "NETAS",
+      "NETCD",
+      "OBASE",
+      "ODINE",
+      "PAPIL",
+      "PATEK",
+      "PENTA",
+      "PKART",
+      "REEDR",
+      "SMART",
+      "VBTYZ"
+    ]
+  },
+  "sectors": {
+    "TARIM VE HAYVANCILIK AVCILIK VE İLGİLİ HİZMET FAALİYETLERİ": [
+      "AGROT",
+      "IZINV",
+      "KNFRT",
+      "YAPRK"
+    ],
+    "BALIKÇILIK VE SU ÜRÜNLERİ": [
+      "OZSUB"
+    ],
+    "KÖMÜR VE LİNYİT MADENCİLİĞİ": [
+      "PRKME",
+      "RUZYE"
+    ],
+    "HAM PETROL VE DOĞAL GAZ ÇIKARTILMASI": [
+      "TRENJ"
+    ],
+    "METAL CEVHERİ MADENCİLİĞİ": [
+      "CVKMD",
+      "TRALT",
+      "TRMET"
+    ],
+    "DİĞER MADENCİLİK VE TAŞ OCAKÇILIĞI": [
+      "VSNMD"
+    ],
+    "GIDA, İÇECEK VE TÜTÜN": [
+      "AEFES",
+      "AKHAN",
+      "ALKLC",
+      "ARMGD",
+      "ATAKP",
+      "AVOD",
+      "BALSU",
+      "BANVT",
+      "BESLR",
+      "BORSK",
+      "CCOLA",
+      "CEMZY",
+      "DARDL",
+      "DMRGD",
+      "DURKN",
+      "EFOR",
+      "EKIZ",
+      "EKSUN",
+      "ELITE",
+      "ERSU",
+      "FADE",
+      "FRIGO",
+      "GOKNR",
+      "GUNDG",
+      "KAYSE",
+      "KENT",
+      "KRSTL",
+      "KRVGD",
+      "KTSKR",
+      "MERKO",
+      "MEYSU",
+      "OBAMS",
+      "OFSYM",
+      "ORCAY",
+      "OYLUM",
+      "PENGD",
+      "PETUN",
+      "PINSU",
+      "PNSUT",
+      "SEGMN",
+      "SELVA",
+      "SOKE",
+      "TATGD",
+      "TBORG",
+      "TUKAS",
+      "ULKER",
+      "ULUUN",
+      "VANGD",
+      "YYLGD"
+    ],
+    "TEKSTİL, GİYİM EŞYASI VE DERİ": [
+      "ARTMS",
+      "ATEKS",
+      "BLCYT",
+      "BOSSA",
+      "BRKO",
+      "BRMEN",
+      "DAGI",
+      "DERIM",
+      "DESA",
+      "DIRIT",
+      "ENSRI",
+      "HATEK",
+      "ISSEN",
+      "KORDS",
+      "KRTEK",
+      "LUKSK",
+      "MEGAP",
+      "MNDRS",
+      "RODRG",
+      "ROYAL",
+      "RUBNS",
+      "SKTAS",
+      "SNPAM",
+      "SUNTK",
+      "YATAS",
+      "YUNSA"
+    ],
+    "ORMAN ÜRÜNLERİ VE MOBİLYA": [
+      "DGNMO",
+      "GENTS",
+      "KLSYN",
+      "ORMA",
+      "SUMAS",
+      "YONGA"
+    ],
+    "KAĞIT VE KAĞIT ÜRÜNLERİ BASIM": [
+      "ALKA",
+      "BAKAB",
+      "BARMA",
+      "DURDO",
+      "GIPTA",
+      "KAPLM",
+      "KARTN",
+      "KONKA",
+      "LILAK",
+      "MNDTR",
+      "PRZMA",
+      "SAMAT",
+      "TEZOL",
+      "VKING"
+    ],
+    "KİMYA İLAÇ PETROL LASTİK VE PLASTİK ÜRÜNLER": [
+      "ACSEL",
+      "AKSA",
+      "ALKIM",
+      "ANGEN",
+      "AYGAZ",
+      "BAGFS",
+      "BAHKM",
+      "BAYRK",
+      "BRISA",
+      "BRKSN",
+      "DEVA",
+      "DNISI",
+      "DYOBY",
+      "EGGUB",
+      "EGPRO",
+      "EMNIS",
+      "EPLAS",
+      "EUREN",
+      "FRMPL",
+      "GEDZA",
+      "GENKM",
+      "GOODY",
+      "GUBRF",
+      "HEKTS",
+      "ISKPL",
+      "IZFAS",
+      "KBORU",
+      "KMPUR",
+      "KOPOL",
+      "KRPLS",
+      "MARMR",
+      "MEDTR",
+      "MERCN",
+      "MRSHL",
+      "ONCSM",
+      "OZRDN",
+      "PETKM",
+      "POLTK",
+      "RNPOL",
+      "RTALB",
+      "SANFM",
+      "SASA",
+      "SEKUR",
+      "SEYKM",
+      "SODSN",
+      "TARKM",
+      "TMPOL",
+      "TRILC",
+      "TUPRS"
+    ],
+    "TAŞ VE TOPRAĞA DAYALI": [
+      "AFYON",
+      "AKCNS",
+      "BASCM",
+      "BIENY",
+      "BOBET",
+      "BSOKE",
+      "BTCIM",
+      "BUCIM",
+      "CGCAM",
+      "CIMSA",
+      "CMBTN",
+      "CMENT",
+      "DOGUB",
+      "EGSER",
+      "GOLTS",
+      "KLKIM",
+      "KLSER",
+      "KONYA",
+      "KUTPO",
+      "LMKDC",
+      "MARBL",
+      "NIBAS",
+      "NUHCM",
+      "OYAKC",
+      "QUAGR",
+      "SERNT",
+      "USAK",
+      "YBTAS"
+    ],
+    "ANA METAL SANAYİ": [
+      "AYES",
+      "BLUME",
+      "BMSCH",
+      "BMSTL",
+      "BRSAN",
+      "BURCE",
+      "BURVA",
+      "CELHA",
+      "CEMAS",
+      "CEMTS",
+      "CUSAN",
+      "DMSAS",
+      "DOFER",
+      "DOKTA",
+      "ERBOS",
+      "ERCB",
+      "EREGL",
+      "ISDMR",
+      "IZMDC",
+      "KCAER",
+      "KOCMT",
+      "MEGMT",
+      "OZYSR",
+      "PNLSN",
+      "SARKY",
+      "TCKRC",
+      "TUCLK",
+      "YKSLN"
+    ],
+    "METAL EŞYA MAKİNE ELEKTRİKLİ CİHAZLAR VE ULAŞIM ARAÇLARI": [
+      "ALCAR",
+      "ALVES",
+      "ARCLK",
+      "ASTOR",
+      "ASUZU",
+      "BALAT",
+      "BFREN",
+      "BNTAS",
+      "BVSAN",
+      "DITAS",
+      "EGEEN",
+      "EKOS",
+      "EMKEL",
+      "EUPWR",
+      "FMIZP",
+      "FORMT",
+      "FROTO",
+      "GEREL",
+      "HATSN",
+      "HKTM",
+      "IHEVA",
+      "IMASM",
+      "JANTS",
+      "KARSN",
+      "KATMR",
+      "KLMSN",
+      "MAKIM",
+      "MAKTK",
+      "MEKAG",
+      "OTKAR",
+      "OZATD",
+      "PARSN",
+      "PRKAB",
+      "SAFKR",
+      "SAYAS",
+      "SILVR",
+      "SNICA",
+      "TMSN",
+      "TOASO",
+      "TTRAK",
+      "ULUSE",
+      "VESBE",
+      "VESTL",
+      "YIGIT"
+    ],
+    "DİĞER İMALAT SANAYİİ": [
+      "ADEL"
+    ],
+    "ELEKTRİK GAZ VE BUHAR": [
+      "A1YEN",
+      "AHGAZ",
+      "AKENR",
+      "AKFYE",
+      "AKSEN",
+      "AKSUE",
+      "ALFAS",
+      "ARASE",
+      "ARFYE",
+      "AYDEM",
+      "AYEN",
+      "BESTE",
+      "BIGEN",
+      "BIOEN",
+      "CANTE",
+      "CATES",
+      "CONSE",
+      "CWENE",
+      "ECOGR",
+      "ENDAE",
+      "ENERY",
+      "ENJSA",
+      "ENTRA",
+      "ESEN",
+      "GWIND",
+      "HUNER",
+      "IZENR",
+      "KLYPV",
+      "LYDYE",
+      "MAGEN",
+      "MOGAN",
+      "NATEN",
+      "NTGAZ",
+      "ODAS",
+      "PAMEL",
+      "SMRTG",
+      "TATEN",
+      "ZEDUR",
+      "ZOREN"
+    ],
+    "İNŞAAT VE BAYINDIRLIK İŞLERİ": [
+      "AKFIS",
+      "ANELE",
+      "BRLSM",
+      "DAPGM",
+      "EDIP",
+      "ENKAI",
+      "GESAN",
+      "GLRMK",
+      "KUYAS",
+      "ORGE",
+      "SANEL",
+      "TURGG",
+      "UCAYM",
+      "YAYLA",
+      "YYAPI"
+    ],
+    "TOPTAN TİCARET": [
+      "ARZUM",
+      "DCTTR",
+      "DOAS",
+      "GENIL",
+      "INTEM",
+      "KUVVA",
+      "PSDTC",
+      "SANKO",
+      "SELEC",
+      "TGSAS"
+    ],
+    "PERAKENDE TİCARET": [
+      "BIMAS",
+      "BIZIM",
+      "CASA",
+      "CRFSA",
+      "EBEBK",
+      "GMTAS",
+      "KIMMR",
+      "KOTON",
+      "MAVI",
+      "MEPET",
+      "MGROS",
+      "MOPAS",
+      "SOKM",
+      "SUWEN",
+      "TKNSA",
+      "VAKKO"
+    ],
+    "ULAŞTIRMA VE DEPOLAMA": [
+      "BEYAZ",
+      "CLEBI",
+      "GRSEL",
+      "GSDDE",
+      "HOROZ",
+      "HRKET",
+      "PASEU",
+      "PGSUS",
+      "RYSAS",
+      "THYAO",
+      "TLMAN",
+      "TUREX"
+    ],
+    "FİNANSMAN ŞİRKETLERİ": [
+      "KTLEV"
+    ],
+    "VARLIK YÖNETİM ŞİRKETLERİ": [
+      "BRKVY",
+      "GLCVY",
+      "SMRVA"
+    ],
+    "BANKALAR": [
+      "AGESA",
+      "AKBNK"
+    ],
+    "SİGORTA ŞİRKETLERİ": [
+      "AKGRT",
+      "ANHYT",
+      "ANSGR",
+      "RAYSG",
+      "TURSG"
+    ],
+    "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ": [
+      "CRDFA",
+      "DSTKF",
+      "GARFA",
+      "ISFIN",
+      "LIDFA",
+      "QNBFK",
+      "SEKFK",
+      "ULUFA",
+      "VAKFA",
+      "VAKFN"
+    ],
+    "HOLDİNGLER VE YATIRIM ŞİRKETLERİ": [
+      "AGHOL",
+      "AKYHO",
+      "ALARK",
+      "ARSAN",
+      "ATSYH",
+      "AVHOL",
+      "BERA",
+      "BINHO",
+      "BRYAT",
+      "COSMO",
+      "DENGE",
+      "DERHL",
+      "DOHOL",
+      "DUNYH",
+      "ECILC",
+      "ECZYT",
+      "EUHOL",
+      "GLRYH",
+      "GLYHO",
+      "GRTHO",
+      "GSDHO",
+      "HEDEF",
+      "IEYHO",
+      "IHLAS",
+      "IHYAY",
+      "INVEO",
+      "INVES",
+      "ISBIR",
+      "KCHOL",
+      "KERVN",
+      "KLRHO",
+      "LRSHO",
+      "LYDHO",
+      "MARKA",
+      "METRO",
+      "MMCAS",
+      "MZHLD",
+      "NTHOL",
+      "OSTIM",
+      "OTTO",
+      "PAHOL",
+      "POLHO",
+      "RALYH",
+      "SAHOL",
+      "SISE",
+      "TAVHL",
+      "TEHOL",
+      "TKFEN",
+      "TRCAS",
+      "TRHOL",
+      "UFUK",
+      "UMPAS",
+      "UNLU",
+      "VERUS",
+      "YESIL"
+    ],
+    "ARACI KURUMLAR": [
+      "ADGYO",
+      "GEDIK"
+    ],
+    "GAYRİMENKUL YATIRIM ORTAKLIKLARI": [
+      "AGYO",
+      "AHSGY",
+      "AKFGY",
+      "AKMGY",
+      "AKSGY",
+      "ALGYO",
+      "ASGYO",
+      "ATAGY",
+      "AVGYO",
+      "AVPGY",
+      "BASGZ",
+      "BEGYO",
+      "DGGYO",
+      "DZGYO",
+      "EGEGY",
+      "EKGYO",
+      "EYGYO",
+      "FZLGY",
+      "HLGYO",
+      "IDGYO",
+      "ISGYO",
+      "KGYO",
+      "KLGYO",
+      "KRGYO",
+      "KZBGY",
+      "KZGYO",
+      "LXGYO",
+      "MHRGY",
+      "MRGYO",
+      "MSGYO",
+      "NUGYO",
+      "OZGYO",
+      "OZKGY",
+      "PAGYO",
+      "PEKGY",
+      "PSGYO",
+      "RYGYO",
+      "SEGYO",
+      "SNGYO",
+      "SRVGY",
+      "SURGY",
+      "SVGYO",
+      "TDGYO",
+      "TRGYO",
+      "TSGYO",
+      "VKGYO",
+      "VRGYO",
+      "YGGYO",
+      "ZERGY",
+      "ZGYO",
+      "ZRGYO"
+    ],
+    "MENKUL KIYMET YATIRIM ORTAKLIKLARI": [
+      "ATLAS",
+      "ETYAT",
+      "EUKYO",
+      "EUYO",
+      "GRNYO",
+      "ISYAT",
+      "MTRYO",
+      "OYAYO",
+      "VKFYO"
+    ],
+    "GİRİŞİM SERMAYESİ YATIRIM ORTAKLIKLARI": [
+      "BULGS",
+      "GOZDE",
+      "HDFGS",
+      "HUBVC",
+      "ICUGS",
+      "ISGSY",
+      "PRDGS",
+      "VERTU"
+    ],
+    "SPOR EĞLENCE BOŞ ZAMANLARI DEĞERLENDİRME HİZMETLERİ": [
+      "MACKO"
+    ],
+    "İNSAN SAĞLIĞI VE SOSYAL HİZMETLER": [
+      "EGEPO",
+      "LKMNH",
+      "MPARK",
+      "TNZTP"
+    ],
+    "YARATICI SANATLAR GÖSTERİ SANATLARI VE EĞLENCE FAALİYETLERİ": [
+      "GATEG"
+    ],
+    "SPOR FAALİYETLERİ EĞLENCE VE OYUN FAALİYETLERİ": [
+      "BJKAS",
+      "FENER",
+      "GSRAY",
+      "TSPOR"
+    ],
+    "BİLİŞİM": [
+      "ALCTL",
+      "ARDYZ",
+      "ARENA",
+      "ATATP",
+      "AZTEK",
+      "BINBN",
+      "DESPC",
+      "DGATE",
+      "DOFRB",
+      "EDATA",
+      "EMPAE",
+      "ESCOM",
+      "FONET",
+      "FORTE",
+      "HTTBT",
+      "INDES",
+      "INGRM",
+      "INTEK",
+      "KAREL",
+      "KFEIN",
+      "KRONT",
+      "LINK",
+      "LOGO",
+      "MANAS",
+      "MCARD",
+      "MIATK",
+      "MOBTL",
+      "MTRKS",
+      "NETAS",
+      "NETCD",
+      "OBASE",
+      "ODINE",
+      "PAPIL",
+      "PATEK",
+      "PENTA",
+      "PKART",
+      "REEDR",
+      "SMART",
+      "VBTYZ"
+    ],
+    "SAVUNMA": [
+      "ALTNY",
+      "ASELS",
+      "ONRYT",
+      "SDTTR"
+    ],
+    "HUKUK VE MUHASEBE FAALİYETLERİ": [
+      "SKYLP"
+    ],
+    "MİMARLIK VE MÜHENDİSLİK FAALİYETLERİ; TEKNİK MUAYENE VE ANALİZ": [
+      "KONTR",
+      "YEOTK"
+    ],
+    "REKLAMCILIK VE PAZAR ARAŞTIRMASI": [
+      "PCILT"
+    ],
+    "KİRALAMA VE LEASING FAALİYETLERİ": [
+      "BORLS",
+      "ESCAR",
+      "LIDER",
+      "PLTUR"
+    ],
+    "SEYAHAT ACENTESİ, TUR OPERATÖRÜ VE DİĞER REZERVASYON HİZMETLERİ İLE İLGİLİ FAALİYETLER": [
+      "GZNMI"
+    ],
+    "BÜRO YÖNETİMİ, BÜRO DESTEĞİ VE DİĞER ŞİRKET DESTEK FAALİYETLERİ": [
+      "CEOEM",
+      "FLAP"
+    ],
+    "GAYRİMENKUL FAALİYETLERİ": [
+      "ADESE",
+      "IHLGM",
+      "RGYAS",
+      "SONME"
+    ],
+    "KONAKLAMA": [
+      "ATATR",
+      "AVTUR",
+      "AYCES",
+      "KSTUR",
+      "MAALT",
+      "MARTI",
+      "MERIT",
+      "PKENT",
+      "TEKTU",
+      "ULAS"
+    ],
+    "YİYECEK VE İÇECEK HİZMETLERİ": [
+      "BIGCH",
+      "BYDNR",
+      "DOCO",
+      "ETILR",
+      "TABGD"
+    ],
+    "BİLGİ HİZMET FAALİYETLERİ": [
+      "IHAAS"
+    ],
+    "YAYIMCILIK": [
+      "BIGTK",
+      "HURGZ",
+      "IHGZT"
+    ],
+    "TELEKOMÜNİKASYON": [
+      "TCELL",
+      "TTKOM"
+    ]
+  }
+}
