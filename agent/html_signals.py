@@ -668,8 +668,10 @@ def fetch_sbt_signals(base_url=None):
             continue
         if not any(k in trade_status.upper() for k in ('OPEN', 'WIN_TRAIL', 'ACIK')):
             continue
-        if bucket in ('X', '?', ''):
+        if bucket == 'X':
             continue
+        if bucket == '?':
+            bucket = ''
 
         signals.append({
             'screener': 'sbt',
@@ -721,8 +723,10 @@ def _parse_sbt_json(d):
             continue
         if not any(k in trade_status.upper() for k in ('OPEN', 'WIN_TRAIL', 'ACIK')):
             continue
-        if bucket in ('X', '?', ''):
+        if bucket == 'X':
             continue
+        if bucket == '?':
+            bucket = ''
 
         ml_prob = row.get('ml_prob', row.get('prob', 0))
         ml_prob = float(ml_prob) if ml_prob else 0.0

@@ -1058,15 +1058,20 @@ def _compute_4_lists(latest_signals, confluence_results=None):
     for s in latest_signals:
         if s.get('screener') != 'sbt':
             continue
-        bucket = s.get('sbt_bucket', '')
-        if bucket in ('X', '?', ''):
+        bucket = s.get('sbt_bucket', '') or ''
+        if bucket == 'X':
             continue
+        if bucket == '?':
+            bucket = ''  # ML modeli yokken — bucket bilinmiyor
         strength = s.get('quality', 0) or 0
         ml_prob = s.get('sbt_ml_prob', 0) or 0
 
         score = _BUCKET_SCORE.get(bucket, 50) + strength * 20 + int(ml_prob * 100)
         prob_pct = int(ml_prob * 100)
-        reasons = ['⚡1G', f'SBT:{bucket}', f'💪{strength}/4', f'ML%{prob_pct}']
+        reasons = ['⚡1G']
+        if bucket:
+            reasons.append(f'SBT:{bucket}')
+        reasons += [f'💪{strength}/4', f'ML%{prob_pct}']
 
         sbt_items.append((s['ticker'], score, reasons, s))
 
