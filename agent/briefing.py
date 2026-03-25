@@ -982,11 +982,14 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         if window not in ('TAZE', '2.DALGA'):
             continue  # Sadece TAZE ve 2.DALGA — YAKIN/BEKLE/GEÇ dahil değil
         badge = s.get('badge', '')
-        if not badge:
-            continue  # no_badge RT zayıf — backtest: 1G med -0.34 (session_20260321)
         entry_score = int(s.get('quality', 0) or 0)
-        if entry_score < 3:
-            continue  # Giriş 3/4 veya 4/4 olmalı
+        # Badge varsa entry_score ≥ 2 yeterli, yoksa ≥ 3 gerekli
+        if badge:
+            if entry_score < 2:
+                continue  # Badge var ama çok zayıf giriş
+        else:
+            if entry_score < 3:
+                continue  # Badge yok → güçlü giriş şart (FIRSAT 3/4+)
         cmf = s.get('cmf', 0) or 0
         adx = s.get('adx', 0) or 0
         oe = int(s.get('oe', 0) or 0)
@@ -1351,15 +1354,20 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         if ticker not in strong_tickers:
             continue  # Güçlü karşı sinyal yok
         badge = s.get('badge', '')
-        if not badge:
-            continue  # Badge zorunlu
+        entry_score = int(s.get('quality', 0) or 0)
+        # Badge varsa entry_score ≥ 2 yeterli, yoksa ≥ 3 gerekli (çakışma gevşek)
+        if badge:
+            if entry_score < 2:
+                continue
+        else:
+            if entry_score < 3:
+                continue
         window = s.get('entry_window', '')
         if window not in ('TAZE', '2.DALGA'):
             continue  # Window hala gerekli
         oe = int(s.get('oe', 0) or 0)
         if oe > 3:
             continue  # OE≤3 (gevşetilmiş)
-        entry_score = int(s.get('quality', 0) or 0)
         cmf = s.get('cmf', 0) or 0
 
         # Saf AS+RT gevşek çakışma → Tier 1'e ekleme (WR %37-48)
