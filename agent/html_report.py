@@ -882,6 +882,93 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     <div class="category-grid" id="categoryGrid"></div>
     <div class="macro-grid" id="macroGrid"></div>
 
+    <!-- BACKTEST SONUÇLARI -->
+    <details style="margin-bottom:1.5rem">
+        <summary class="section-title" style="cursor:pointer;user-select:none">📊 Backtest Sonuçları <span style="font-size:0.7rem;color:var(--text-muted)">(tıkla)</span></summary>
+        <div style="margin-top:0.75rem">
+
+        <h3 style="color:var(--nox-cyan);font-size:0.9rem;margin:1rem 0 0.5rem">Özet Sıralama (5G WR)</h3>
+        <div style="overflow-x:auto">
+        <table class="confluence-table" style="font-size:0.75rem">
+            <thead><tr><th>#</th><th>Strateji</th><th>N</th><th>5G WR</th><th>5G ORT</th><th>5G MED</th></tr></thead>
+            <tbody>
+            <tr><td>1</td><td>OL rt+tavan</td><td>26</td><td style="color:#4ade80;font-weight:600">71.4%</td><td>+9.04%</td><td>+8.82%</td></tr>
+            <tr><td>2</td><td>Rejim (RT)</td><td>102</td><td style="color:#4ade80;font-weight:600">66.7%</td><td>+4.55%</td><td>+2.63%</td></tr>
+            <tr><td>3</td><td>ML≥0.50</td><td>200</td><td style="color:#4ade80;font-weight:600">64.5%</td><td>+4.04%</td><td>+2.92%</td></tr>
+            <tr><td>4</td><td>ML≥0.55</td><td>103</td><td style="color:#4ade80;font-weight:600">63.1%</td><td>+4.11%</td><td>+3.20%</td></tr>
+            <tr><td>5</td><td>OL nw+tavan</td><td>16</td><td style="color:#4ade80">61.5%</td><td>+5.93%</td><td>+4.14%</td></tr>
+            <tr><td>6</td><td>OL 3+ liste</td><td>5</td><td style="color:#4ade80">60.0%</td><td>+5.34%</td><td>+4.14%</td></tr>
+            <tr><td>7</td><td>NW Elmas</td><td>1140</td><td style="color:#eab308">59.6%</td><td>+2.16%</td><td>+1.05%</td></tr>
+            <tr><td>8</td><td>AL/SAT</td><td>29</td><td style="color:#eab308">58.6%</td><td>+4.74%</td><td>+2.60%</td></tr>
+            <tr><td>9</td><td>Tier2</td><td>180</td><td style="color:#eab308">58.5%</td><td>+3.71%</td><td>+2.20%</td></tr>
+            <tr><td>10</td><td>T+Y (Taze+Yeni)</td><td>63</td><td style="color:#eab308">58.2%</td><td>+4.50%</td><td>+5.62%</td></tr>
+            </tbody>
+        </table>
+        </div>
+
+        <details style="margin-top:1rem">
+            <summary style="color:var(--text-secondary);font-size:0.8rem;cursor:pointer">Shortlist Backtest Detay (20 gün, N=733)</summary>
+            <div style="overflow-x:auto;margin-top:0.5rem">
+            <table class="confluence-table" style="font-size:0.7rem">
+                <thead><tr><th>Strateji</th><th>N</th><th>1G ORT</th><th>1G WR</th><th>3G ORT</th><th>3G WR</th><th>5G ORT</th><th>5G WR</th></tr></thead>
+                <tbody>
+                <tr><td>OL rt+tavan</td><td>26</td><td>4.57</td><td>70.8</td><td>8.32</td><td>77.3</td><td>9.04</td><td style="color:#4ade80">71.4</td></tr>
+                <tr><td>OL 3+ liste</td><td>5</td><td>4.76</td><td>100.0</td><td>6.29</td><td>80.0</td><td>5.34</td><td>60.0</td></tr>
+                <tr><td>T+Y (Taze+Yeni)</td><td>63</td><td>3.36</td><td>62.3</td><td>6.81</td><td>68.4</td><td>4.50</td><td>58.2</td></tr>
+                <tr><td>OL nw+tavan</td><td>16</td><td>3.19</td><td>68.8</td><td>5.50</td><td>71.4</td><td>5.93</td><td>61.5</td></tr>
+                <tr><td>Tier1</td><td>80</td><td>2.73</td><td>61.5</td><td>5.62</td><td>64.4</td><td>3.78</td><td>53.6</td></tr>
+                <tr><td>Rejim (RT)</td><td>102</td><td>0.68</td><td>55.4</td><td>3.75</td><td>58.3</td><td>4.55</td><td style="color:#4ade80">66.7</td></tr>
+                <tr><td>Tier2</td><td>180</td><td>1.69</td><td>58.1</td><td>2.76</td><td>54.4</td><td>3.71</td><td>58.5</td></tr>
+                <tr><td>AL/SAT</td><td>29</td><td>0.54</td><td>44.8</td><td>2.65</td><td>55.2</td><td>4.74</td><td>58.6</td></tr>
+                <tr><td>Tavan</td><td>180</td><td>0.72</td><td>44.0</td><td>0.90</td><td>48.9</td><td>1.88</td><td>54.2</td></tr>
+                <tr><td>NW Pivot</td><td>162</td><td>0.27</td><td>55.8</td><td>0.52</td><td>50.0</td><td>0.15</td><td style="color:#f87171">45.1</td></tr>
+                <tr style="font-weight:600;border-top:2px solid var(--border-dim)"><td>GENEL</td><td>733</td><td>1.07</td><td>53.5</td><td>2.15</td><td>53.5</td><td>2.50</td><td>54.1</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </details>
+
+        <details style="margin-top:0.75rem">
+            <summary style="color:var(--text-secondary);font-size:0.8rem;cursor:pointer">ML Filtreli (Shortlist üzeri)</summary>
+            <div style="overflow-x:auto;margin-top:0.5rem">
+            <table class="confluence-table" style="font-size:0.7rem">
+                <thead><tr><th>ML Eşik</th><th>N</th><th>1G ORT</th><th>1G WR</th><th>3G ORT</th><th>3G WR</th><th>5G ORT</th><th>5G WR</th></tr></thead>
+                <tbody>
+                <tr><td>Baseline</td><td>505-649</td><td>1.07</td><td>53.5</td><td>2.15</td><td>53.5</td><td>2.50</td><td>54.1</td></tr>
+                <tr><td>ML≥0.45</td><td>378-481</td><td>1.57</td><td>56.3</td><td>2.50</td><td>54.4</td><td>2.98</td><td>56.6</td></tr>
+                <tr><td style="color:var(--nox-cyan)">ML≥0.50</td><td>200-254</td><td>2.32</td><td>63.0</td><td>3.52</td><td>61.0</td><td>4.04</td><td style="color:#4ade80;font-weight:600">64.5</td></tr>
+                <tr><td>ML≥0.55</td><td>103-129</td><td>3.43</td><td>63.6</td><td>4.65</td><td>63.1</td><td>4.11</td><td style="color:#4ade80">63.1</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </details>
+
+        <details style="margin-top:0.75rem">
+            <summary style="color:var(--text-secondary);font-size:0.8rem;cursor:pointer">Uzun Vadeli Backtestler (Tüm BIST, 2-3 yıl)</summary>
+            <div style="overflow-x:auto;margin-top:0.5rem">
+            <table class="confluence-table" style="font-size:0.7rem">
+                <thead><tr><th>Strateji</th><th>N</th><th>1G ORT</th><th>1G WR</th><th>3G ORT</th><th>3G WR</th><th>5G ORT</th><th>5G WR</th></tr></thead>
+                <tbody>
+                <tr><td>NW Elmas</td><td>1140</td><td>0.41</td><td>51.1</td><td>1.17</td><td>53.5</td><td>2.16</td><td style="color:#eab308">59.6</td></tr>
+                <tr><td>RT Volume (sıçrama)</td><td>4793</td><td>0.49</td><td>50.3</td><td>1.13</td><td>51.6</td><td>1.58</td><td>52.7</td></tr>
+                <tr><td>RT Volume (tümü)</td><td>6953</td><td>0.50</td><td>49.9</td><td>1.03</td><td>50.8</td><td>1.53</td><td>52.4</td></tr>
+                <tr><td>SBT Breakout</td><td>2061</td><td>0.39</td><td>50.9</td><td>0.48</td><td>50.1</td><td>0.65</td><td>50.3</td></tr>
+                <tr><td>AL/SAT Dönüş</td><td>8897</td><td>0.15</td><td>46.5</td><td>0.34</td><td>45.7</td><td>0.51</td><td style="color:#f87171">46.8</td></tr>
+                <tr><td>Divergence BUY</td><td>27125</td><td>0.14</td><td>47.3</td><td>0.77</td><td>47.6</td><td>0.69</td><td style="color:#f87171">48.8</td></tr>
+                </tbody>
+            </table>
+            </div>
+        </details>
+
+        <div style="margin-top:0.75rem;font-size:0.7rem;color:var(--text-muted);line-height:1.5">
+            <b>Çıkarımlar:</b> OL rt+tavan en iyi getiri/risk (medyan +8.82%) |
+            ML≥0.50 en iyi N/WR dengesi (N=200, %64.5) |
+            1G momentum: ML≥0.55 (ORT %3.43) |
+            Medyan negatif = tehlike: AL/SAT Dönüş, Divergence
+        </div>
+        </div>
+    </details>
+
     <!-- NEWS -->
     <h2 class="section-title">📰 Piyasa Haberleri</h2>
     <div id="newsContainer"></div>
