@@ -1026,7 +1026,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 <span style="color:var(--text-muted);font-size:0.75rem">${{list.total}} hisse</span>
             </div>`;
         list.items.forEach((item, i) => {{
-            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !r.startsWith('⚠️')).slice(0, 3).join(' ');
+            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !(r.startsWith('⚠️') && !r.startsWith('⚠️taban'))).slice(0, 3).join(' ');
             const listsTag = (item.in_lists || []).map(l => ({{alsat:'AS',tavan:'TVN',nw:'NW',rt:'RT',sbt:'SBT'}})[l] || l).join('+');
             // ML badge
             let mlBadge = '';
@@ -1112,7 +1112,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
         }}
         list.items.forEach((item, i) => {{
             // Filter out ML/SBT/sector badges from reasons (rendered separately)
-            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !r.startsWith('⚠️')).slice(0, 4).join(' ');
+            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !(r.startsWith('⚠️') && !r.startsWith('⚠️taban'))).slice(0, 4).join(' ');
             // Dual ML badge
             let mlBadge = '';
             if (item.ml_score_short != null || item.ml_score_swing != null) {{
@@ -1194,7 +1194,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
             }}).join('+');
             const relaxed = item.relaxed ? ' [RT↓]' : '';
             const reason0 = item.reasons && item.reasons.length > 0
-                ? item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !r.startsWith('⚠️'))[0] || ''
+                ? item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !(r.startsWith('⚠️') && !r.startsWith('⚠️taban')))[0] || ''
                 : '';
             // Dual ML badge
             let mlBadge = '';
