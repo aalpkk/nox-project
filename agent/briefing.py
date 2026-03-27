@@ -877,45 +877,62 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         if rt_sig:
             cmf = rt_sig.get('cmf')
 
-        # Skor hesaplama
-        score = skor * 10
-        if is_kandidat:
-            # Kandidat: hacim yüksek olabilir, öncelik skor + CMF
-            if cmf is not None and cmf > 0:
-                score += int(cmf * 100)  # CMF bonus
-        else:
-            # Kilitli tavan: skor>=50 (deep analysis: WR %62+, session_20260321)
-            if skor >= 50:
-                score += 30
-            # Düşük hacim secondary bonus
-            if vol < 1.0:
-                score += 10
-            elif vol < 1.5:
-                score += 5
-            # CMF pozitif bonus
-            if cmf is not None and cmf > 0:
-                score += int(cmf * 100)
+        # Skor hesaplama — data-driven (5Y backtest, N=23763)
+        score = skor * 5  # Base yarıya (skor prediktif değil, streak önemli)
 
-        # Vol cezası — 1G odaklı, yüksek hacim = el değiştirme riski
-        if vol > 20:
-            score -= 200  # Premium dışı — kovalanmaz
-        elif vol > 10:
-            score -= 100  # Sert ceza — sert el değiştirme
-        elif vol > 5:
-            score -= 30   # Orta ceza
+        # A) Streak (en güçlü prediktör — 1G WR +18pp)
+        if seri >= 3:
+            score += 150   # 77.2% 1G, 71.0% 3G
+        elif seri >= 2:
+            score += 80    # 66.0% 1G, 59.5% 3G
+
+        # B) Skor zone (counter-intuitive ama 5Y data-driven)
+        if skor <= 49:
+            score += 40    # Non-kilitli: 75.3% 1G — EN İYİ
+        elif 60 <= skor <= 79:
+            score -= 60    # Yarı-kilitli: 44.2% 1G — EN KÖTÜ
+        elif 50 <= skor <= 59:
+            score -= 30    # 50.0% 1G — baseline altı
+        # skor >= 80: +0 (59.5% 1G — genel baseline)
+
+        # C) Volume (güçlendirilmiş — düşük vol = kaliteli tavan)
+        if vol < 1.0:
+            score += 50
+        elif vol < 1.5:
+            score += 30
+        elif vol < 2.0:
+            pass           # baseline
+        elif vol < 3.0:
+            score -= 20
+        elif vol < 5.0:
+            score -= 50
+        elif vol < 10:
+            score -= 80
+        elif vol < 20:
+            score -= 120
+        else:
+            score -= 200   # Premium dışı — kovalanmaz
+
+        # D) CMF (küçültülmüş, tüm sinyallere uygula)
+        if cmf is not None and cmf > 0:
+            score += int(cmf * 50)
 
         reasons = ['⚡1G']  # Tavan = fast decay (intraday çıkış şart)
-        if is_kandidat:
-            reasons.append(f"KND skor:{skor}")
-        elif skor >= 50:
-            reasons.append(f"🔒skor:{skor}")
+        if seri >= 3:
+            reasons.append(f"🔥seri:{seri}")
+        elif seri >= 2:
+            reasons.append(f"seri:{seri}")
+        if skor <= 49:
+            reasons.append(f"▲skor:{skor}")      # Momentum
+        elif 60 <= skor <= 79:
+            reasons.append(f"⚠️Y-KLT:{skor}")   # Yarı-kilitli uyarı
+        elif skor >= 80:
+            reasons.append(f"🔒skor:{skor}")     # Kilitli (bilgi)
         else:
             reasons.append(f"skor:{skor}")
         reasons.append(f"vol:{vol:.1f}x")
         if vol > 10:
             reasons.append("⚠️KOVALANMAZ")
-        if seri > 1:
-            reasons.append(f"seri:{seri}")
         if rs != 0:
             reasons.append(f"RS{rs:+.0f}%")
         if cmf is not None:
@@ -1177,23 +1194,24 @@ def _compute_4_lists(latest_signals, confluence_results=None):
                 elif list_name == 'tavan':
                     skor = sig.get('skor', 0) or 0
                     vol = sig.get('volume_ratio', 0) or 0
-                    if skor >= 50:
-                        quality += 30  # Kilitli tavan (skor-based, session_20260321)
-                    elif skor >= 40:
-                        quality += 15
+                    seri = sig.get('streak', 0) or 0
+                    # Streak-dominant quality (5Y data-driven)
+                    if seri >= 3:
+                        quality += 40
+                    elif seri >= 2:
+                        quality += 25
                     else:
-                        quality += 8
-                    # Vol cezası overlap kalitesine de yansısın
-                    if vol > 20:
-                        quality -= 20  # Aşırı hacim — kovalanmaz
-                    elif vol > 10:
-                        quality -= 10  # Sert el değiştirme
-                    # CMF cross-ref (tavan sinyalinde RT CMF varsa)
-                    rt_s = rt_map.get(ticker)
-                    if rt_s:
-                        cmf_t = rt_s.get('cmf', 0) or 0
-                        if cmf_t > 0.1:
-                            quality += 5
+                        quality += 10
+                    # Skor zone
+                    if skor <= 49:
+                        quality += 15   # Non-kilitli momentum
+                    elif 60 <= skor <= 79:
+                        quality -= 15   # Yarı-kilitli en kötü zone
+                    # Volume
+                    if vol < 1.5:
+                        quality += 10
+                    elif vol > 3.0:
+                        quality -= 10
                 break
         # Çakışma çeşitliliği bonusu
         if len(in_lists) >= 3:
@@ -1326,11 +1344,12 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         st = sig.get('signal_type', '')
         if st in ('GUCLU', 'GÜÇLÜ', 'CMB', 'CMB+', 'BILESEN', 'BİLEŞEN'):
             strong_tickers[t] = ('alsat', reas, sig)
-    # Kilitli tavan
+    # Streak/momentum tavan (5Y data-driven)
     for t, sc, reas, sig in tavan_items:
+        seri = sig.get('streak', 0) or 0
         skor = sig.get('skor', 0) or 0
         vol = sig.get('volume_ratio', 0) or 0
-        if skor >= 50:  # Kilitli = yüksek skor (session_20260321)
+        if seri >= 2 or (skor <= 49 and vol < 2.0):
             strong_tickers.setdefault(t, ('tavan', reas, sig))
     # NW D+W
     for t, sc, reas, sig in nw_items:

@@ -260,12 +260,18 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
         sources.add('tavan')
         skor = s.get('skor', 0)
         vol_ratio = s.get('volume_ratio', 1.0)
+        seri = s.get('streak', 0) or 0
 
-        if skor >= 50 and vol_ratio < 3.0:
-            _add(2, 'tavan', f"+2 Tavan skor={skor} vol={vol_ratio:.1f}x (kilitli)")
-        elif skor >= 50:
-            _add(1, 'tavan', f"+1 Tavan skor={skor} vol={vol_ratio:.1f}x")
-        # skor<50 → 0 puan
+        # Streak-dominant confluence (5Y data-driven)
+        if seri >= 3:
+            _add(3, 'tavan', f"+3 Tavan seri:{seri} (streak momentum)")
+        elif seri >= 2 and vol_ratio < 2.0:
+            _add(2, 'tavan', f"+2 Tavan seri:{seri} vol:{vol_ratio:.1f}x")
+        elif skor <= 49 and vol_ratio < 2.0:
+            _add(2, 'tavan', f"+2 Tavan skor:{skor} vol:{vol_ratio:.1f}x (momentum)")
+        elif skor >= 80 and vol_ratio < 2.0:
+            _add(1, 'tavan', f"+1 Tavan kilitli skor:{skor}")
+        # skor 60-79: 0 puan (en kötü zone)
 
     # ── 6. Kademe S/A (taktik) ──
     kademe_signals = [s for s in ticker_signals if s['screener'] == 'kademe']
