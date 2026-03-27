@@ -925,6 +925,78 @@ def _compute_4_lists_backtest(latest_signals, date_str, tier2_min_score=100):
 
 
 # =============================================================================
+# 3b. TABAN RİSKİ HESAPLAMA (backtest mirror)
+# =============================================================================
+
+def _calc_taban_risk_bt(df, sig_date=None):
+    """Backtest OHLCV'den taban riski hesapla.
+
+    sig_date verilirse sadece o tarihe kadarki veriyi kullanır (look-ahead yok).
+    Returns: dict with taban_days, atr_pct, max_drop_60d, risk (0-7)
+    """
+    if sig_date is not None:
+        df = df.loc[:sig_date]
+    if len(df) < 60:
+        return {'taban_days': 0, 'atr_pct': 0.0, 'max_drop_60d': 0.0, 'risk': 0}
+
+    returns = df['Close'].pct_change()
+
+    # 1) Geçmiş taban sayısı (günlük düşüş >= 9% ≈ taban)
+    taban_days = int((returns <= -0.09).sum())
+
+    # 2) ATR% (son 14 günlük)
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    atr14 = tr.rolling(14).mean().iloc[-1]
+    atr_pct = (atr14 / close.iloc[-1]) * 100 if close.iloc[-1] > 0 else 0.0
+
+    # 3) Son 60 günde en sert tek gün düşüş
+    recent = returns.tail(60)
+    max_drop = float(recent.min()) * 100 if len(recent) > 0 else 0.0
+
+    # 4) Risk skoru (0-7)
+    risk = 0
+    if taban_days >= 3:   risk += 3
+    elif taban_days >= 1: risk += 1
+    if atr_pct > 8:       risk += 2
+    elif atr_pct > 5:     risk += 1
+    if max_drop < -7:     risk += 2
+    elif max_drop < -5:   risk += 1
+
+    return {
+        'taban_days': taban_days,
+        'atr_pct': round(atr_pct, 1),
+        'max_drop_60d': round(max_drop, 1),
+        'risk': risk,
+    }
+
+
+def _enrich_trades_taban_risk(results, all_data):
+    """Trade listesine taban_risk bilgisi ekle (in-place)."""
+    for trade in results:
+        ticker = trade.get('ticker')
+        df = all_data.get(ticker)
+        if df is None or df.empty:
+            trade['taban_risk'] = 0
+            continue
+        try:
+            sig_date = pd.Timestamp(trade['signal_date'])
+            tr = _calc_taban_risk_bt(df, sig_date=sig_date)
+            trade['taban_risk'] = tr['risk']
+            trade['taban_days'] = tr['taban_days']
+            trade['taban_atr_pct'] = tr['atr_pct']
+            trade['taban_max_drop'] = tr['max_drop_60d']
+        except Exception:
+            trade['taban_risk'] = 0
+
+
+# =============================================================================
 # 4. FORWARD GETİRİ HESAPLAMA
 # =============================================================================
 
@@ -1224,6 +1296,14 @@ def compute_all_analysis(all_trades):
         if sub:
             feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
 
+    # Taban risk buckets
+    for lo, hi, label in [(4, 7, 'taban_risk_high'), (2, 3, 'taban_risk_med'),
+                          (0, 1, 'taban_risk_low')]:
+        sub = [t for t in all_trades
+               if lo <= (t.get('taban_risk') or 0) <= hi]
+        if sub:
+            feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
+
     analysis['features'] = feature_stats
 
     # ── Günlük performans ──
@@ -1394,6 +1474,9 @@ def run_phase1():
     n_tamam = sum(1 for r in results if r['status'] == 'tamam')
     n_kismi = sum(1 for r in results if r['status'] == 'kısmi')
     print(f"  {len(results)} trade: {n_tamam} tamam, {n_kismi} kısmi")
+
+    # 5. Taban risk enrichment
+    _enrich_trades_taban_risk(results, all_data)
 
     return results, daily_stats, history, all_data, xu_df
 
@@ -1963,6 +2046,9 @@ def run_phase2(period='5y', years=5.0):
     n_tamam = sum(1 for r in results if r.get('status') == 'tamam')
     print(f"  {len(results)} trade: {n_tamam} tamam")
 
+    # Taban risk enrichment
+    _enrich_trades_taban_risk(results, all_data)
+
     # Trade-level parquet kaydet
     try:
         import pandas as _pd
@@ -2244,6 +2330,7 @@ def generate_html_report(results, analysis, phase='phase1'):
             ('NW Gate', ['nw_gate_open', 'nw_gate_closed']),
             ('NW Delta%', ['nw_delta_0_3', 'nw_delta_3_6', 'nw_delta_6_10', 'nw_delta_10+']),
             ('AL/SAT RS Score', ['as_rs_1.5+', 'as_rs_1_1.5', 'as_rs_0.5_1', 'as_rs_<0.5']),
+            ('Taban Riski', ['taban_risk_high', 'taban_risk_med', 'taban_risk_low']),
         ]
         for title, keys in feat_sections:
             has_data = any(features.get(k) for k in keys)
