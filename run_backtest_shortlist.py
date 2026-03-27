@@ -929,56 +929,56 @@ def _compute_4_lists_backtest(latest_signals, date_str, tier2_min_score=100):
 # =============================================================================
 
 def _calc_taban_risk_bt(df, sig_date=None):
-    """Backtest OHLCV'den taban riski hesapla.
+    """Backtest OHLCV'den likidite-bazlı taban riski hesapla.
 
     sig_date verilirse sadece o tarihe kadarki veriyi kullanır (look-ahead yok).
-    Returns: dict with taban_days, atr_pct, max_drop_60d, risk (0-7)
+    Returns: dict with liquidity/structural taban risk metrics
     """
     if sig_date is not None:
         df = df.loc[:sig_date]
-    if len(df) < 60:
-        return {'taban_days': 0, 'atr_pct': 0.0, 'max_drop_60d': 0.0, 'risk': 0}
+    if len(df) < 30:
+        return {
+            'avg_tl_volume': 0, 'price': 0, 'consec_taban_max': 0,
+            'taban_days': 0, 'risk': 0,
+        }
 
-    returns = df['Close'].pct_change()
-
-    # 1) Geçmiş taban sayısı (günlük düşüş >= 9% ≈ taban)
-    taban_days = int((returns <= -0.09).sum())
-
-    # 2) ATR% (son 14 günlük)
-    high = df['High']
-    low = df['Low']
     close = df['Close']
-    tr = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs()
-    ], axis=1).max(axis=1)
-    atr14 = tr.rolling(14).mean().iloc[-1]
-    atr_pct = (atr14 / close.iloc[-1]) * 100 if close.iloc[-1] > 0 else 0.0
+    volume = df['Volume']
+    returns = close.pct_change()
+    last_price = float(close.iloc[-1])
 
-    # 3) Son 60 günde en sert tek gün düşüş
-    recent = returns.tail(60)
-    max_drop = float(recent.min()) * 100 if len(recent) > 0 else 0.0
+    # 1) Ortalama günlük TL hacim (son 20 gün)
+    tl_volume = (close * volume).tail(20)
+    avg_tl_vol = float(tl_volume.mean()) if len(tl_volume) > 0 else 0
 
-    # 4) Risk skoru (0-7)
-    risk = 0
-    if taban_days >= 3:   risk += 3
-    elif taban_days >= 1: risk += 1
-    if atr_pct > 8:       risk += 2
-    elif atr_pct > 5:     risk += 1
-    if max_drop < -7:     risk += 2
-    elif max_drop < -5:   risk += 1
+    # 2) Fiyat seviyesi
+    price = last_price
+
+    # 3) Ardışık taban günleri (en uzun seri) — gerçek taban tuzağı
+    taban_mask = (returns <= -0.09)
+    consec_max = 0
+    consec_cur = 0
+    for is_taban in taban_mask:
+        if is_taban:
+            consec_cur += 1
+            consec_max = max(consec_max, consec_cur)
+        else:
+            consec_cur = 0
+
+    # 4) Toplam taban günü sayısı
+    taban_days = int(taban_mask.sum())
 
     return {
+        'avg_tl_volume': round(avg_tl_vol, 0),
+        'price': round(price, 2),
+        'consec_taban_max': consec_max,
         'taban_days': taban_days,
-        'atr_pct': round(atr_pct, 1),
-        'max_drop_60d': round(max_drop, 1),
-        'risk': risk,
+        'risk': 0,  # placeholder — analiz sonrası belirlenecek
     }
 
 
 def _enrich_trades_taban_risk(results, all_data):
-    """Trade listesine taban_risk bilgisi ekle (in-place)."""
+    """Trade listesine likidite-bazlı taban risk metrikleri ekle (in-place)."""
     for trade in results:
         ticker = trade.get('ticker')
         df = all_data.get(ticker)
@@ -990,8 +990,9 @@ def _enrich_trades_taban_risk(results, all_data):
             tr = _calc_taban_risk_bt(df, sig_date=sig_date)
             trade['taban_risk'] = tr['risk']
             trade['taban_days'] = tr['taban_days']
-            trade['taban_atr_pct'] = tr['atr_pct']
-            trade['taban_max_drop'] = tr['max_drop_60d']
+            trade['taban_consec'] = tr['consec_taban_max']
+            trade['taban_avg_tl_vol'] = tr['avg_tl_volume']
+            trade['taban_price'] = tr['price']
         except Exception:
             trade['taban_risk'] = 0
 
@@ -1296,11 +1297,38 @@ def compute_all_analysis(all_trades):
         if sub:
             feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
 
-    # Taban risk buckets
-    for lo, hi, label in [(4, 7, 'taban_risk_high'), (2, 3, 'taban_risk_med'),
-                          (0, 1, 'taban_risk_low')]:
+    # Taban risk: TL hacim buckets (likidite)
+    for lo, hi, label in [(0, 1e6, 'tl_vol_<1M'), (1e6, 5e6, 'tl_vol_1M_5M'),
+                          (5e6, 20e6, 'tl_vol_5M_20M'), (20e6, 1e12, 'tl_vol_20M+')]:
         sub = [t for t in all_trades
-               if lo <= (t.get('taban_risk') or 0) <= hi]
+               if t.get('taban_avg_tl_vol') is not None
+               and lo <= (t.get('taban_avg_tl_vol') or 0) < hi]
+        if sub:
+            feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
+
+    # Taban risk: fiyat seviyesi buckets
+    for lo, hi, label in [(0, 2, 'price_<2'), (2, 5, 'price_2_5'),
+                          (5, 20, 'price_5_20'), (20, 100, 'price_20_100'),
+                          (100, 1e6, 'price_100+')]:
+        sub = [t for t in all_trades
+               if t.get('taban_price') is not None
+               and lo <= (t.get('taban_price') or 0) < hi]
+        if sub:
+            feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
+
+    # Taban risk: ardışık taban geçmişi
+    for lo, hi, label in [(0, 0, 'consec_taban_0'), (1, 1, 'consec_taban_1'),
+                          (2, 99, 'consec_taban_2+')]:
+        sub = [t for t in all_trades
+               if lo <= (t.get('taban_consec') or 0) <= hi]
+        if sub:
+            feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
+
+    # Taban risk: toplam taban günü
+    for lo, hi, label in [(0, 0, 'taban_days_0'), (1, 2, 'taban_days_1_2'),
+                          (3, 99, 'taban_days_3+')]:
+        sub = [t for t in all_trades
+               if lo <= (t.get('taban_days') or 0) <= hi]
         if sub:
             feature_stats[label] = {'n': len(sub), **_calc_stats(sub)}
 
@@ -2330,7 +2358,10 @@ def generate_html_report(results, analysis, phase='phase1'):
             ('NW Gate', ['nw_gate_open', 'nw_gate_closed']),
             ('NW Delta%', ['nw_delta_0_3', 'nw_delta_3_6', 'nw_delta_6_10', 'nw_delta_10+']),
             ('AL/SAT RS Score', ['as_rs_1.5+', 'as_rs_1_1.5', 'as_rs_0.5_1', 'as_rs_<0.5']),
-            ('Taban Riski', ['taban_risk_high', 'taban_risk_med', 'taban_risk_low']),
+            ('TL Hacim (Likidite)', ['tl_vol_<1M', 'tl_vol_1M_5M', 'tl_vol_5M_20M', 'tl_vol_20M+']),
+            ('Fiyat Seviyesi', ['price_<2', 'price_2_5', 'price_5_20', 'price_20_100', 'price_100+']),
+            ('Ardisik Taban', ['consec_taban_0', 'consec_taban_1', 'consec_taban_2+']),
+            ('Taban Gun Sayisi', ['taban_days_0', 'taban_days_1_2', 'taban_days_3+']),
         ]
         for title, keys in feat_sections:
             has_data = any(features.get(k) for k in keys)

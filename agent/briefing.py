@@ -119,50 +119,51 @@ def _fetch_yf_price_data(tickers):
 
 
 def _calc_taban_risk(df):
-    """1Y OHLCV'den taban riski hesapla.
+    """1Y OHLCV'den likidite-bazlı taban riski hesapla.
 
-    Returns: dict with taban_days, atr_pct, max_drop_60d, risk (0-7)
+    Returns: dict with consec_max, taban_days, avg_tl_vol, price
     """
     returns = df['Close'].pct_change()
-
-    # 1) Geçmiş taban sayısı (günlük düşüş >= 9% ≈ taban)
-    taban_days = int((returns <= -0.09).sum())
-
-    # 2) ATR% (son 14 günlük)
-    high = df['High']
-    low = df['Low']
     close = df['Close']
-    tr = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs()
-    ], axis=1).max(axis=1)
-    atr14 = tr.rolling(14).mean().iloc[-1]
-    atr_pct = (atr14 / close.iloc[-1]) * 100
+    volume = df['Volume']
 
-    # 3) Son 60 günde en sert tek gün düşüş
-    recent = returns.tail(60)
-    max_drop = float(recent.min()) * 100  # negatif %
+    # 1) Ardışık taban günleri (en uzun seri)
+    taban_mask = (returns <= -0.09)
+    consec_max = 0
+    consec_cur = 0
+    for is_taban in taban_mask:
+        if is_taban:
+            consec_cur += 1
+            consec_max = max(consec_max, consec_cur)
+        else:
+            consec_cur = 0
 
-    # 4) Risk skoru (0-7)
-    risk = 0
-    if taban_days >= 3:   risk += 3   # Sık taban = çok tehlikeli
-    elif taban_days >= 1: risk += 1   # En az 1 taban geçmişi
-    if atr_pct > 8:       risk += 2   # Çok volatil
-    elif atr_pct > 5:     risk += 1   # Orta volatil
-    if max_drop < -7:     risk += 2   # Yakın zamanda sert düşüş
-    elif max_drop < -5:   risk += 1   # Orta düşüş
+    # 2) Toplam taban günü sayısı
+    taban_days = int(taban_mask.sum())
+
+    # 3) Ortalama günlük TL hacim (son 20 gün)
+    tl_vol = (close * volume).tail(20)
+    avg_tl_vol = float(tl_vol.mean()) if len(tl_vol) > 0 else 0
+
+    # 4) Son fiyat
+    price = float(close.iloc[-1])
 
     return {
+        'consec_max': consec_max,
         'taban_days': taban_days,
-        'atr_pct': round(atr_pct, 1),
-        'max_drop_60d': round(max_drop, 1),
-        'risk': risk,
+        'avg_tl_vol': avg_tl_vol,
+        'price': price,
     }
 
 
 def _taban_risk_overlay(lists_dict):
-    """Tüm listelere taban riski cezası + uyarı label ekle."""
+    """Tüm listelere taban riski bilgi label'ı ekle (skor cezası yok).
+
+    Backtest verisi taban risk metriklerinin WR'ı düşürmediğini gösterdi.
+    Bu overlay sadece bilgilendirme amaçlı: ardışık taban geçmişi veya
+    düşük likidite olan hisselere ⚠️ notu ekler (pozisyon boyutu kararı
+    kullanıcıda).
+    """
     # 1) Ticker toplama
     all_tickers = set()
     for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
@@ -185,24 +186,29 @@ def _taban_risk_overlay(lists_dict):
     if not taban_risks:
         return
 
-    print(f"  🔻 Taban risk: {len(taban_risks)} hisse analiz edildi")
+    warned = 0
 
-    # 4) Her listeye uygula
+    # 4) Her listeye bilgi label'ı ekle (skor değişmez, sıralama değişmez)
     for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
         items = lists_dict.get(key, [])
-        new_items = []
         for (ticker, score, reasons, sig) in items:
             tr = taban_risks.get(ticker)
-            if tr and tr['risk'] >= 4:
-                score -= 100
-                reasons.append(f"🔴TABAN({tr['taban_days']}x,{tr['max_drop_60d']:+.0f}%)")
-            elif tr and tr['risk'] >= 2:
-                score -= 50
-                reasons.append(f"⚠️taban({tr['taban_days']}x,ATR{tr['atr_pct']:.0f}%)")
-            new_items.append((ticker, score, reasons, sig))
-        if new_items:
-            new_items.sort(key=lambda x: -x[1])
-            lists_dict[key] = new_items
+            if not tr:
+                continue
+            labels = []
+            if tr['consec_max'] >= 2:
+                labels.append(f"ardışık{tr['consec_max']}x")
+            elif tr['taban_days'] >= 3:
+                labels.append(f"{tr['taban_days']}gün")
+            if tr['avg_tl_vol'] < 1_000_000:
+                vol_k = tr['avg_tl_vol'] / 1000
+                labels.append(f"hacim{vol_k:.0f}K")
+            if labels:
+                reasons.append(f"⚠️taban({','.join(labels)})")
+                warned += 1
+
+    if warned:
+        print(f"  ⚠️ Taban uyarı: {warned} hisse (bilgi notu, skor cezası yok)")
 
 
 def _fetch_sbt_data():
