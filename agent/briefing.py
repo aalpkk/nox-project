@@ -195,19 +195,9 @@ def _taban_risk_overlay(lists_dict):
             tr = taban_risks.get(ticker)
             if not tr:
                 continue
-            labels = []
-            # Ardışık taban geçmişi (en tehlikeli — çıkış yok)
+            # Sadece ardışık taban ≥ 2 (gerçek tuzak: çıkış yok)
             if tr['consec_max'] >= 2:
-                labels.append(f"ardışık{tr['consec_max']}x")
-            # Herhangi bir taban geçmişi
-            if tr['taban_days'] >= 1:
-                labels.append(f"{tr['taban_days']}gün")
-            # Düşük likidite (günlük TL hacim < 5M)
-            if tr['avg_tl_vol'] < 5_000_000:
-                vol_m = tr['avg_tl_vol'] / 1_000_000
-                labels.append(f"hacim{vol_m:.1f}M")
-            if labels:
-                reasons.append(f"⚠️taban({','.join(labels)})")
+                reasons.append(f"⚠️taban(ardışık{tr['consec_max']}x,{tr['taban_days']}gün)")
                 warned += 1
 
     if warned:
