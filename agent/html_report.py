@@ -96,6 +96,13 @@ def _prepare_lists_json(lists_dict, max_per_list=15):
                 if sig.get('sector_index'):
                     entry['sector_index'] = sig['sector_index']
                     entry['sector_regime'] = sig.get('sector_regime', '')
+                # Breakout ML
+                if sig.get('breakout_master') is not None:
+                    entry['breakout_master'] = sig['breakout_master']
+                if sig.get('breakout_fusion') is not None:
+                    entry['breakout_fusion'] = sig['breakout_fusion']
+                if sig.get('breakout_tier'):
+                    entry['breakout_tier'] = sig['breakout_tier']
             entries.append(entry)
         result[key] = {
             'label': _LIST_LABELS.get(key, key),
@@ -142,6 +149,17 @@ def _prepare_overlap_json(lists_dict, max_per_group=15):
             if meta.get('sector_index'):
                 entry['sector_index'] = meta['sector_index']
                 entry['sector_regime'] = meta.get('sector_regime', '')
+            # Breakout ML
+            if meta.get('breakout_master') is not None:
+                entry['breakout_master'] = meta['breakout_master']
+            if meta.get('breakout_fusion') is not None:
+                entry['breakout_fusion'] = meta['breakout_fusion']
+            if meta.get('breakout_tier'):
+                entry['breakout_tier'] = meta['breakout_tier']
+            if meta.get('brk_ml_s') is not None:
+                entry['brk_ml_s'] = meta['brk_ml_s']
+            if meta.get('brk_avoid'):
+                entry['brk_avoid'] = True
         groups.setdefault(oc, []).append(entry)
     # Her grubun ilk max_per_group'unu al, buyuk overlap_count once
     result = []
@@ -195,6 +213,17 @@ def _prepare_shortlist_json(lists_dict, max_items=15):
                 if meta.get('sector_index'):
                     entry['sector_index'] = meta['sector_index']
                     entry['sector_regime'] = meta.get('sector_regime', '')
+                # Breakout ML
+                if meta.get('breakout_master') is not None:
+                    entry['breakout_master'] = meta['breakout_master']
+                if meta.get('breakout_fusion') is not None:
+                    entry['breakout_fusion'] = meta['breakout_fusion']
+                if meta.get('breakout_tier'):
+                    entry['breakout_tier'] = meta['breakout_tier']
+                if meta.get('brk_ml_s') is not None:
+                    entry['brk_ml_s'] = meta['brk_ml_s']
+                if meta.get('brk_avoid'):
+                    entry['brk_avoid'] = True
             entries.append(entry)
         result[key] = {
             'label': label,
@@ -349,6 +378,26 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
                     })
         ml_strong_items.sort(key=lambda x: -x['best'])
     ml_strong_json = json.dumps(_sanitize(ml_strong_items), ensure_ascii=False)
+
+    # Breakout ML alerts
+    breakout_alerts = lists_dict.get('_breakout_alerts', []) if lists_dict else []
+    breakout_ml_items = []
+    for ba in breakout_alerts[:15]:
+        breakout_ml_items.append({
+            'ticker': ba.get('ticker', ''),
+            'tavan_prob': round(ba.get('tavan_prob', 0) * 100) if ba.get('tavan_prob') else 0,
+            'rally_prob': round(ba.get('rally_prob', 0) * 100) if ba.get('rally_prob') else 0,
+            'master': round(ba.get('breakout_master', 0) * 100) if ba.get('breakout_master') else 0,
+            'fusion': round(ba.get('fusion_score', 0) * 100) if ba.get('fusion_score') else 0,
+            'ml_s': round(ba.get('ml_s_score', 0) * 100) if ba.get('ml_s_score') else 0,
+            'tier': ba.get('tier', ''),
+            'in_shortlist': ba.get('in_shortlist', ''),
+        })
+    breakout_ml_json = json.dumps(_sanitize(breakout_ml_items), ensure_ascii=False)
+
+    # Limit Order TP sinyalleri
+    limit_tp_items = lists_dict.get('_limit_tp', []) if lists_dict else []
+    limit_tp_json = json.dumps(_sanitize(limit_tp_items), ensure_ascii=False)
 
     # Limit order AI metnini HTML'e çevir
     limit_order_html = ""
@@ -544,6 +593,16 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     border-radius: 3px;
     background: rgba(248,113,113,0.12);
     color: #f87171;
+    white-space: nowrap;
+}}
+.brk-avoid {{
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    background: rgba(239,68,68,0.18);
+    color: #ef4444;
+    font-weight: 600;
     white-space: nowrap;
 }}
 
@@ -872,6 +931,14 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     <h2 class="section-title">🤖 ML Güçlü (skor≥50)</h2>
     <div id="mlStrongContainer"></div>
 
+    <!-- BİRİKİM→BREAKOUT ML -->
+    <h2 class="section-title">🎯 Birikim→Breakout Tahmini (ML)</h2>
+    <div id="breakoutMLContainer"></div>
+
+    <!-- LIMIT ORDER TP -->
+    <h2 class="section-title">🎯 Limit Order TP</h2>
+    <div id="limitTPContainer"></div>
+
     <!-- LIMIT ORDER STRATEGY (AI) -->
     <h2 class="section-title">💰 Giriş Stratejisi</h2>
     <div id="limitOrderContainer" class="briefing-text">{limit_order_html if limit_order_html else '<p style="color:var(--text-muted)">AI giriş stratejisi üretilmedi (--no-ai)</p>'}</div>
@@ -1004,6 +1071,8 @@ const SAT_SET = new Set({sat_set_json});
 const RERANK_DATA = {rerank_json};
 const FILTERED_DATA = {filtered_json};
 const ML_STRONG = {ml_strong_json};
+const BREAKOUT_ML = {breakout_ml_json};
+const LIMIT_TP = {limit_tp_json};
 const SHORTLIST = {shortlist_json};
 const SECTOR_SUMMARY = {sector_summary_json};
 
@@ -1054,12 +1123,23 @@ const SECTOR_SUMMARY = {sector_summary_json};
                     sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
                 }}
             }}
+            // BRK badge
+            let brkBadge = '';
+            if (item.brk_avoid) {{
+                brkBadge = `<span class="brk-avoid">⛔ALMA</span>`;
+            }} else if (item.breakout_tier === 'top5') {{
+                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
+                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{fPct ? '·F'+fPct : ''}}</span>`;
+            }} else if (item.breakout_tier === 'top10') {{
+                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
+                brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
+            }}
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 ${{listsTag ? `<span class="lists-tag">${{listsTag}}</span>` : ''}}
                 <span class="reasons">${{reasons}}</span>
-                ${{sectorBadge}}${{sbtBadge}}${{mlBadge}}
+                ${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -1141,6 +1221,20 @@ const SECTOR_SUMMARY = {sector_summary_json};
             }} else if (item.gate_penalty >= 1) {{
                 gateTag = '<span class="gate-tag">soft</span>';
             }}
+            // Breakout ML badge + avoid
+            let brkBadge = '';
+            if (item.brk_avoid) {{
+                brkBadge = `<span class="brk-avoid">⛔ALMA</span>`;
+            }} else if (item.breakout_tier === 'top5') {{
+                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
+                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{fPct ? '·F'+fPct : ''}}</span>`;
+            }} else if (item.breakout_tier === 'top10') {{
+                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
+                brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
+            }} else if (item.breakout_master && item.breakout_master >= 0.10) {{
+                const brkPct = Math.round(item.breakout_master * 100);
+                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK${{brkPct}}%</span>`;
+            }}
             // Vol tier badge (RT hacim-donus)
             let volBadge = '';
             if (item.vol_tier && item.vol_tier !== 'NORMAL') {{
@@ -1161,7 +1255,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{gateTag}}
+                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{gateTag}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -1233,11 +1327,22 @@ const SECTOR_SUMMARY = {sector_summary_json};
                     sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
                 }}
             }}
+            // BRK badge
+            let brkBadge = '';
+            if (item.brk_avoid) {{
+                brkBadge = `<span class="brk-avoid">⛔ALMA</span>`;
+            }} else if (item.breakout_tier === 'top5') {{
+                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
+                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{fPct ? '·F'+fPct : ''}}</span>`;
+            }} else if (item.breakout_tier === 'top10') {{
+                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
+                brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
+            }}
             html += `<div class="overlap-item">
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="lists-tag">${{listsTag}}${{relaxed}}</span>
                 <span class="reasons-text">${{reason0}}</span>
-                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}
+                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}
                 <span class="quality">${{item.quality}}p</span>
             </div>`;
         }});
@@ -1327,6 +1432,80 @@ const SECTOR_SUMMARY = {sector_summary_json};
             <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
             <span style="font-family:var(--font-mono);font-size:0.8rem">S<span style="color:${{sColor}}">${{item.ml_short}}</span>·W<span style="color:${{wColor}}">${{item.ml_swing}}</span></span>
             <span class="lists-tag">${{srcStr}}</span>
+        </div>`;
+    }});
+    sec.innerHTML = html;
+    container.appendChild(sec);
+}})();
+
+// ── Birikim→Breakout ML ──
+(function() {{
+    const container = document.getElementById('breakoutMLContainer');
+    if (!BREAKOUT_ML || BREAKOUT_ML.length === 0) {{
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Breakout ML verisi yok (BREAKOUT_ML_ENABLED=1 ile etkinleştir)</div>';
+        return;
+    }}
+    const sec = document.createElement('div');
+    sec.className = 'overlap-section';
+    const top5 = BREAKOUT_ML.filter(x => x.tier === 'top5');
+    const top10 = BREAKOUT_ML.filter(x => x.tier === 'top10');
+    let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Birikim→Breakout — Fusion skor (0.40×Master + 0.60×ML_S)</div>`;
+    const renderItem = (item, idx) => {{
+        const fColor = item.fusion >= 80 ? 'var(--nox-green)' : item.fusion >= 60 ? '#eab308' : 'var(--text-secondary)';
+        const xref = item.in_shortlist ? `<span style="color:var(--nox-cyan);font-size:0.7rem;margin-left:0.3rem">★SL</span>` : '';
+        return `<div class="filtered-item">
+            <span style="color:var(--text-muted);font-size:0.75rem;min-width:1.2rem">${{idx}}.</span>
+            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
+            <span style="font-family:var(--font-mono);font-size:0.85rem;font-weight:600;color:${{fColor}}">F${{item.fusion}}</span>
+            <span style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">TVN:${{item.tavan_prob}} RLI:${{item.rally_prob}} S:${{item.ml_s}}</span>
+            ${{xref}}
+        </div>`;
+    }};
+    if (top5.length > 0) {{
+        html += '<div style="font-size:0.8rem;font-weight:600;color:var(--nox-green);margin:0.3rem 0">🎯 Yüksek Güven (Top 5)</div>';
+        top5.forEach((item, i) => {{ html += renderItem(item, i + 1); }});
+    }}
+    if (top10.length > 0) {{
+        html += '<div style="font-size:0.8rem;font-weight:600;color:#eab308;margin:0.5rem 0 0.3rem">⚡ İzle (Top 6-10)</div>';
+        top10.forEach((item, i) => {{ html += renderItem(item, i + 6); }});
+    }}
+    sec.innerHTML = html;
+    container.appendChild(sec);
+}})();
+
+// ── Limit Order TP ──
+(function() {{
+    const container = document.getElementById('limitTPContainer');
+    if (!LIMIT_TP || LIMIT_TP.length === 0) {{
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Filtre koşullarını karşılayan sinyal yok (score≥400 · streak≥2 · ML S≥58)</div>';
+        return;
+    }}
+    const sec = document.createElement('div');
+    sec.className = 'overlap-section';
+    let html = `<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem">
+        <div style="background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.2);border-radius:0.5rem;padding:0.5rem 0.8rem;font-size:0.8rem">
+            <span style="color:var(--text-muted)">Backtest</span><br>
+            <span style="color:var(--nox-green);font-weight:600">WR %93</span> · <span style="color:var(--nox-green)">PF 9.3</span> · <span style="color:var(--text-secondary)">Ort +%3.26</span>
+        </div>
+        <div style="background:rgba(161,161,170,0.08);border:1px solid rgba(161,161,170,0.2);border-radius:0.5rem;padding:0.5rem 0.8rem;font-size:0.8rem">
+            <span style="color:var(--text-muted)">Strateji</span><br>
+            <span style="color:var(--text-secondary)">-%1.5 limit giriş → %4 TP → 1g hold</span>
+        </div>
+    </div>`;
+    LIMIT_TP.forEach((item, idx) => {{
+        const streakColor = item.streak >= 3 ? 'var(--nox-green)' : '#eab308';
+        const mlColor = item.ml_s >= 65 ? 'var(--nox-green)' : '#eab308';
+        html += `<div class="filtered-item">
+            <span style="color:var(--text-muted);font-size:0.75rem;min-width:1.2rem">${{idx+1}}.</span>
+            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
+            <span style="font-family:var(--font-mono);font-size:0.8rem">
+                Limit:<span style="color:var(--nox-cyan)">${{item.limit_price.toFixed(2)}}</span>
+                TP:<span style="color:var(--nox-green)">${{item.tp_price.toFixed(2)}}</span>
+                <span style="color:var(--nox-green);font-weight:600">+%${{item.net_pct.toFixed(2)}}</span>
+            </span>
+            <span style="background:${{streakColor}}22;color:${{streakColor}};padding:0.1rem 0.4rem;border-radius:0.25rem;font-size:0.72rem;font-weight:600">streak=${{item.streak}}</span>
+            <span style="background:${{mlColor}}22;color:${{mlColor}};padding:0.1rem 0.4rem;border-radius:0.25rem;font-size:0.72rem;font-weight:600">S${{item.ml_s}}</span>
+            <span class="lists-tag">${{item.list_source}}</span>
         </div>`;
     }});
     sec.innerHTML = html;

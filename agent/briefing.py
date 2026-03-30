@@ -429,6 +429,48 @@ def _ml_overlay_v2(lists_dict, latest_signals):
         else:
             print("  [ML] ML skorlama başarısız veya model yok — composite SBT-only")
 
+        # ── Step 4b: Breakout ML (tüm BIST evreni, opsiyonel) ──
+        from ml.scorer import is_breakout_ml_enabled
+        breakout_scores = {}
+        if is_breakout_ml_enabled():
+            try:
+                # Tüm BIST evrenini tara (shortlist değil)
+                from markets.bist.data import get_all_bist_tickers
+                all_bist = get_all_bist_tickers()
+                # Mevcut price_data'yı genişlet (eksik hisseleri indir)
+                missing = [t for t in all_bist if t not in price_data]
+                if missing:
+                    print(f"  [BRK] {len(missing)} ek hisse indiriliyor...")
+                    extra_price, _ = _fetch_yf_price_data(missing)
+                    price_data.update(extra_price)
+                    print(f"  [BRK] Toplam: {len(price_data)} hisse")
+                breakout_scores = scorer.score_breakout(all_bist, price_data, xu_df)
+                if breakout_scores:
+                    print(f"  [BRK] {len(breakout_scores)}/{len(all_bist)} breakout skorlandı")
+                    # Shortlist ticker'ları ile çapraz referans
+                    shortlist_tickers = set()
+                    for key in ('tier1', 'tier2a', 'tier2b'):
+                        for item in lists_dict.get(key, []):
+                            shortlist_tickers.add(item[0])
+                    # Top 5 (yüksek güven) + Top 10 (izle) — fusion_score ile sıralı
+                    alerts = []
+                    for t, bdata in sorted(breakout_scores.items(),
+                                            key=lambda x: x[1].get('fusion_score', 0),
+                                            reverse=True):
+                        if bdata.get('alert'):
+                            alert = dict(bdata)
+                            alert['ticker'] = t
+                            if t in shortlist_tickers:
+                                alert['in_shortlist'] = 'Shortlist\'te mevcut'
+                            alerts.append(alert)
+                    if alerts:
+                        lists_dict['_breakout_alerts'] = alerts[:10]
+                        n_top5 = sum(1 for a in alerts if a.get('tier') == 'top5')
+                        n_top10 = sum(1 for a in alerts if a.get('tier') == 'top10')
+                        print(f"  [BRK] {len(alerts)} alert (top5={n_top5}, top10={n_top10})")
+            except Exception as e:
+                print(f"  [BRK] Breakout skorlama hatası: {e}")
+
         # ── Step 5: SBT verisi (opportunistic, hata={}) ──
         print("  [ML] SBT verisi çekiliyor...")
         sbt_data = _fetch_sbt_data()
@@ -483,6 +525,26 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                         sig_or_meta['ml_score'] = round(ml_short, 3) if ml_short is not None else None
                         sig_or_meta['ml_score_short'] = round(ml_short, 3) if ml_short is not None else None
                         sig_or_meta['ml_score_swing'] = round(ml_swing, 3) if ml_swing is not None else None
+
+                # Breakout ML skorunu enjekte et
+                if isinstance(sig_or_meta, dict) and breakout_scores:
+                    brk = breakout_scores.get(ticker)
+                    if brk:
+                        sig_or_meta['breakout_master'] = round(brk.get('breakout_master', 0), 3)
+                        sig_or_meta['breakout_fusion'] = round(brk.get('fusion_score', 0), 3)
+                        sig_or_meta['breakout_tier'] = brk.get('tier')
+                        # BRK detay skorları
+                        if brk.get('ml_s_score') is not None:
+                            sig_or_meta['brk_ml_s'] = round(brk['ml_s_score'], 3)
+                        if brk.get('tavan_prob') is not None:
+                            sig_or_meta['brk_tavan_prob'] = round(brk['tavan_prob'], 3)
+                        if brk.get('rally_prob') is not None:
+                            sig_or_meta['brk_rally_prob'] = round(brk['rally_prob'], 3)
+                        # ALMA flag: breakout potansiyeli yok + kısa momentum zayıf
+                        bm = brk.get('breakout_master', 0)
+                        ms = brk.get('ml_s_score')
+                        if bm < 0.08 and (ms is not None and ms < 0.43):
+                            sig_or_meta['brk_avoid'] = True
 
                 # SBT verisi enjekte et
                 sbt_info = sbt_data.get(ticker, {})
@@ -1744,7 +1806,7 @@ def _build_shortlist_message(lists_dict,
     ]
 
     def _sig_line(ticker, reasons, sig):
-        """Sinyal satırını formatla — SBT + dual ML + gate + sektör bilgisi."""
+        """Sinyal satırını formatla — SBT + dual ML + gate + BRK + sektör bilgisi."""
         # Kaynak tag'leri topla
         source_tags = []
         sbt_bucket = ''
@@ -1767,6 +1829,16 @@ def _build_shortlist_message(lists_dict,
             else:
                 other_reasons.append(r)
 
+        # BRK badge (sig dict'ten)
+        brk_badge = ''
+        if isinstance(sig, dict):
+            if sig.get('brk_avoid'):
+                brk_badge = '⛔ALMA'
+            elif sig.get('breakout_tier') == 'top5':
+                brk_badge = 'BRK🎯T5'
+            elif sig.get('breakout_tier') == 'top10':
+                brk_badge = 'BRK⚡T10'
+
         # Kaynak bilgisi
         parts = [f"<b>{ticker}</b>"]
         reason_compact = " ".join(other_reasons[:4])
@@ -1778,6 +1850,8 @@ def _build_shortlist_message(lists_dict,
             parts.append(f"| {ml_badge}")
         if gate_tag:
             parts.append(f"| {gate_tag}")
+        if brk_badge:
+            parts.append(f"| {brk_badge}")
         if sector_badge:
             parts.append(sector_badge)
 
@@ -2339,6 +2413,56 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
             lines.append(f"  {f['ticker']}[{tag}] rule:{f['rule_score']}p — {f['reason']}")
         lines.append("")
 
+    # ── Birikim→Breakout Tahmini ──
+    breakout_alerts = lists_dict.get('_breakout_alerts', [])
+    if breakout_alerts:
+        top5 = [a for a in breakout_alerts if a.get('tier') == 'top5']
+        top10 = [a for a in breakout_alerts if a.get('tier') == 'top10']
+
+        lines.append("🎯 <b>Birikim→Breakout (ML)</b>")
+
+        if top5:
+            lines.append("  <b>▸ Yüksek Güven</b> (Top 5)")
+            for i, ba in enumerate(top5, 1):
+                ticker = ba['ticker']
+                fusion = int(ba.get('fusion_score', 0) * 100)
+                tvn_pct = int(ba.get('tavan_prob', 0) * 100) if ba.get('tavan_prob') else 0
+                ralli_pct = int(ba.get('rally_prob', 0) * 100) if ba.get('rally_prob') else 0
+                ml_s = int(ba.get('ml_s_score', 0) * 100) if ba.get('ml_s_score') else 0
+                xref = f" ★SL" if ba.get('in_shortlist') else ""
+                lines.append(f"  {i}. <b>{ticker}</b> F{fusion} "
+                             f"(TVN:{tvn_pct} RLI:{ralli_pct} S:{ml_s}){xref}")
+
+        if top10:
+            lines.append("  <b>▸ İzle</b> (Top 6-10)")
+            for i, ba in enumerate(top10, 6):
+                ticker = ba['ticker']
+                fusion = int(ba.get('fusion_score', 0) * 100)
+                tvn_pct = int(ba.get('tavan_prob', 0) * 100) if ba.get('tavan_prob') else 0
+                ralli_pct = int(ba.get('rally_prob', 0) * 100) if ba.get('rally_prob') else 0
+                xref = f" ★SL" if ba.get('in_shortlist') else ""
+                lines.append(f"  {i}. {ticker} F{fusion} "
+                             f"(TVN:{tvn_pct} RLI:{ralli_pct}){xref}")
+        lines.append("")
+
+    # ── Limit Order TP ──
+    limit_tp = _compute_limit_tp_signals(lists_dict)
+    if limit_tp:
+        lines.append(f"🎯 <b>Limit Order TP</b> ({len(limit_tp)} adet)")
+        lines.append("  Filtre: score≥400 · streak≥2 · ML S≥58")
+        lines.append("  Strateji: -%1.5 limit giriş → %4 TP → 1g hold")
+        lines.append("  Backtest: WR %93 · PF 9.3 · Ort +%3.26/trade")
+        lines.append("")
+        for i, sig in enumerate(limit_tp, 1):
+            lines.append(
+                f"  {i}. <b>{sig['ticker']}</b> — "
+                f"Limit: {sig['limit_price']:.2f} TL | "
+                f"TP: {sig['tp_price']:.2f} TL | "
+                f"+%{sig['net_pct']:.2f} net | "
+                f"streak={sig['streak']} | S{sig['ml_s']}"
+            )
+        lines.append("")
+
     # ── 6. STRATEJİ ──
     if macro_result:
         regime = macro_result.get('regime', 'NÖTR')
@@ -2361,6 +2485,57 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
             lines.append(f"  • {title}")
 
     return "\n".join(lines)
+
+
+def _compute_limit_tp_signals(lists_dict):
+    """Tavan sinyallerinden limit order TP adaylarını hesapla.
+
+    Backtest'te kanıtlanmış strateji: score≥400 + streak≥2 + ML S≥0.58
+    → kapanıştan -%1.5 limit giriş → +%4 TP → 1 gün hold.
+    1 yıl backtest: 148 trade, WR %93.2, PF 9.3, ort +%3.26/trade.
+    """
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+    candidates = []
+    seen = set()
+
+    # Tavan öncelikli, sonra diğer listeler
+    for list_key in ('tavan', 'alsat', 'nw', 'rt', 'sbt'):
+        for ticker, score, reasons, sig in lists_dict.get(list_key, []):
+            if ticker in seen or not isinstance(sig, dict):
+                continue
+            # Filtre: score≥400 AND streak≥2 AND ml_score_short≥0.58
+            if score < 400:
+                continue
+            streak = sig.get('streak', 0) or 0
+            if streak < 2:
+                continue
+            ml_s = sig.get('ml_score_short')
+            if ml_s is None or ml_s < 0.58:
+                continue
+            entry_price = sig.get('entry_price', 0)
+            if not entry_price or entry_price <= 0:
+                continue
+
+            seen.add(ticker)
+            limit_price = round(entry_price * 0.985, 2)
+            tp_price = round(limit_price * 1.04, 2)
+            net_pct = round(((tp_price / entry_price) - 1) * 100, 2)
+
+            candidates.append({
+                'ticker': ticker,
+                'entry_close': entry_price,
+                'limit_price': limit_price,
+                'tp_price': tp_price,
+                'net_pct': net_pct,
+                'streak': streak,
+                'ml_s': round(ml_s * 100),
+                'score': score,
+                'list_source': _LIST_SHORT.get(list_key, list_key),
+            })
+
+    # En yüksek streak'e göre sırala, eşitlikte score'a bak
+    candidates.sort(key=lambda x: (-x['streak'], -x['score']))
+    return candidates
 
 
 def _generate_limit_order_ai(lists_dict):
@@ -2657,6 +2832,12 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     # Sektör regime overlay (soft gate + badge)
     _sector_regime_overlay(lists_dict)
+
+    # Limit Order TP sinyalleri hesapla
+    limit_tp = _compute_limit_tp_signals(lists_dict)
+    lists_dict['_limit_tp'] = limit_tp
+    if limit_tp:
+        print(f"  🎯 Limit TP: {len(limit_tp)} sinyal")
 
     news_items = fetch_market_news()
     if news_items:
