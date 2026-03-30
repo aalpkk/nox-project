@@ -9,7 +9,8 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 
-from ml.features import compute_all_features, compute_targets, compute_macro_features
+from ml.features import (compute_all_features, compute_targets,
+                         compute_breakout_targets, compute_macro_features)
 
 
 # ═══════════════════════════════════════════
@@ -201,9 +202,13 @@ def fetch_macro_data(period="2y"):
 # DATASET OLUŞTURMA
 # ═══════════════════════════════════════════
 
-def build_dataset(all_data, xu_df, macro_dfs=None, min_days=80):
+def build_dataset(all_data, xu_df, macro_dfs=None, min_days=80,
+                   include_breakout_targets=False):
     """
     Tüm hisseler için feature + target hesapla, tek DataFrame'e birleştir.
+
+    Args:
+        include_breakout_targets: True ise tavan/rally target'ları da eklenir.
 
     Returns:
         DataFrame — MultiIndex (ticker, date), feature + target kolonları
@@ -224,6 +229,11 @@ def build_dataset(all_data, xu_df, macro_dfs=None, min_days=80):
                 continue
 
             combined = feats.join(targets)
+
+            # Breakout target'ları (opsiyonel)
+            if include_breakout_targets:
+                brk_targets = compute_breakout_targets(df)
+                combined = combined.join(brk_targets)
 
             # Macro features join
             if not macro_feats.empty:
@@ -248,8 +258,8 @@ def build_dataset(all_data, xu_df, macro_dfs=None, min_days=80):
     result = result.sort_index()
 
     # Auto-cleanup: drop columns that are 100% NaN
-    feat_cols = [c for c in result.columns
-                 if c not in {'ret_1g', 'ret_3g', 'up_1g', 'up_3g'}]
+    _target_cols = _ALL_TARGET_COLS
+    feat_cols = [c for c in result.columns if c not in _target_cols]
     nan_pct = result[feat_cols].isna().mean()
     all_nan_cols = nan_pct[nan_pct >= 0.99].index.tolist()
     if all_nan_cols:
@@ -258,6 +268,13 @@ def build_dataset(all_data, xu_df, macro_dfs=None, min_days=80):
 
     print(f"✅ Dataset: {len(result)} satır, {len(result.columns)} kolon")
     return result
+
+
+_ALL_TARGET_COLS = {
+    'ret_1g', 'ret_3g', 'up_1g', 'up_3g',
+    'tavan_1d', 'tavan_3d', 'tavan_5d', 'tavan_series',
+    'rally_3d', 'rally_5d', 'rally_any',
+}
 
 
 # ═══════════════════════════════════════════
@@ -313,7 +330,7 @@ def time_split(df, train_end='2025-06-30', val_end='2025-12-31'):
 
 def get_feature_columns(df):
     """Feature kolon listesi (target ve meta hariç)."""
-    exclude = {'ret_1g', 'ret_3g', 'up_1g', 'up_3g', 'close'}
+    exclude = _ALL_TARGET_COLS | {'close'}
     return [c for c in df.columns if c not in exclude]
 
 
@@ -361,6 +378,18 @@ def dataset_summary(df):
         'Tavan': ['is_tavan', 'tavan_streak', 'close_to_high', 'tavan_locked',
                    'hit_tavan_intraday', 'recent_tavan_10d'],
         'RS': ['rs_10', 'rs_60', 'rs_composite'],
+        'Pre-Breakout': [
+            'range_contraction_5_20', 'range_contraction_5_40',
+            'atr_contraction_5_20', 'bb_width_pctile_20',
+            'vol_dryup_ratio', 'vol_surge_today', 'vol_acceleration',
+            'tl_volume_20d_avg', 'vol_pattern_score',
+            'rsi_momentum_5d', 'macd_hist_accel',
+            'consecutive_higher_close', 'close_vs_20d_high_pct',
+            'dist_to_52w_high_pct', 'dist_to_20d_high_pct',
+            'near_52w_high', 'price_range_position_20',
+            'near_tavan_miss', 'recent_near_tavan_5d', 'max_daily_ret_5d',
+            'rs_acceleration', 'market_tavan_count_10d',
+        ],
         'Makro': ['xu100_above_ema21', 'xu100_ret_5d', 'vix', 'vix_chg_5d',
                    'dxy_trend', 'usdtry_chg_1d', 'spy_trend', 'macro_risk_score'],
     }
@@ -383,7 +412,10 @@ def dataset_summary(df):
             print(f"    {col}: {pct:.1%}")
 
     # Target dağılımı
-    for target in ['up_1g', 'up_3g']:
+    all_targets = ['up_1g', 'up_3g',
+                   'tavan_1d', 'tavan_3d', 'tavan_5d', 'tavan_series',
+                   'rally_3d', 'rally_5d', 'rally_any']
+    for target in all_targets:
         if target in df.columns:
             valid = df[target].dropna()
             print(f"\n  {target}: N={len(valid):,}, pozitif={valid.mean():.1%}")

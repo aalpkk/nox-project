@@ -52,12 +52,41 @@ _SCREENER_DERIVED_COLS = [
     'rs_10', 'rs_60', 'rs_composite',
 ]
 
-# 4-model dosya adları
+# 4-model dosya adları (shortlist)
 _MODEL_SLOTS = {
     'universe_1g': 'universe_up_1g.txt',
     'universe_3g': 'universe_up_3g.txt',
     'reranker_1g': 'reranker_up_1g.txt',
     'reranker_3g': 'reranker_up_3g.txt',
+}
+
+# Breakout model dosya adları
+_BREAKOUT_MODEL_SLOTS = {
+    'tavan_3d': 'breakout_tavan_3d.txt',
+    'tavan_1d': 'breakout_tavan_1d.txt',
+    'rally_3d': 'breakout_rally_3d.txt',
+    'rally_5d': 'breakout_rally_5d.txt',
+}
+
+# Breakout model dizini alternatifleri (sırayla denenir)
+_BREAKOUT_ALT_DIRS = [
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), 'output', 'ml_breakout_v3'),
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), 'output', 'ml_breakout_v2'),
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), 'output', 'ml_breakout'),
+]
+
+# Breakout modelin kullandığı feature'lardan çıkartılacaklar (leakage, v3: 17 feature)
+_BREAKOUT_LEAKAGE_FEATURES = {
+    # Orijinal 4 — tavan durumu
+    'is_tavan', 'tavan_streak', 'tavan_locked', 'hit_tavan_intraday',
+    # +13 yeni — bugünkü fiyat/hareket sızdıran feature'lar
+    'returns_1d', 'close_position', 'gap_pct',
+    'close_to_high', 'recent_tavan_10d',
+    'consecutive_green', 'consecutive_higher_close',
+    'daily_move_atr',
+    'near_tavan_miss', 'recent_near_tavan_5d',
+    'max_daily_ret_5d',
+    'vol_surge_today', 'vol_pattern_score',
 }
 
 
@@ -69,6 +98,11 @@ def _get_screener_derived_columns():
 def is_ml_scoring_enabled():
     """ML_SCORING_ENABLED env var kontrolü."""
     return os.getenv('ML_SCORING_ENABLED', '').lower() in ('1', 'true', 'yes')
+
+
+def is_breakout_ml_enabled():
+    """BREAKOUT_ML_ENABLED env var kontrolü."""
+    return os.getenv('BREAKOUT_ML_ENABLED', '').lower() in ('1', 'true', 'yes')
 
 
 # ═══════════════════════════════════════════
@@ -465,3 +499,285 @@ class MLScorer:
             return f'🤖{score_100}🔵'
         else:
             return f'🤖{score_100}🔴'
+
+    # ═══════════════════════════════════════
+    # BREAKOUT SCORING
+    # ═══════════════════════════════════════
+
+    def _load_breakout_models(self):
+        """Breakout modellerini yükle (lazy, tek seferlik)."""
+        if hasattr(self, '_breakout_load_attempted') and self._breakout_load_attempted:
+            return
+        self._breakout_load_attempted = True
+        self._breakout_models = {}
+        self._breakout_feat_cols = None
+        self.breakout_loaded = False
+
+        try:
+            import lightgbm as lgb
+        except ImportError:
+            return
+
+        # Arama sırası: ml/models/ → output/ml_breakout_v2/ → output/ml_breakout/
+        search_dirs = [self.model_dir] + _BREAKOUT_ALT_DIRS
+
+        loaded = 0
+        model_dir_used = None
+        for slot, filename in _BREAKOUT_MODEL_SLOTS.items():
+            path = None
+            for d in search_dirs:
+                candidate = os.path.join(d, filename)
+                if os.path.exists(candidate):
+                    path = candidate
+                    break
+            if path is None:
+                continue
+            try:
+                booster = lgb.Booster(model_file=path)
+                self._breakout_models[slot] = booster
+                loaded += 1
+                if model_dir_used is None:
+                    model_dir_used = os.path.dirname(path)
+            except Exception as e:
+                print(f"  [BRK] Model yükleme hatası ({filename}): {e}")
+
+        if loaded == 0:
+            return
+
+        # Feature kolon listesi yükle (model yanında veya alt dizinlerde)
+        import json
+        for d in ([model_dir_used] if model_dir_used else []) + search_dirs:
+            feat_path = os.path.join(d, 'feature_columns.json')
+            if os.path.exists(feat_path):
+                try:
+                    with open(feat_path) as f:
+                        self._breakout_feat_cols = json.load(f)
+                    print(f"  [BRK] Feature listesi: {len(self._breakout_feat_cols)} kolon ({feat_path})")
+                    break
+                except Exception:
+                    pass
+
+        self.breakout_loaded = True
+        print(f"  [BRK] {loaded} breakout model yüklendi ({model_dir_used})")
+
+    def score_breakout(self, tickers, price_data, xu_df, threshold=0.10):
+        """Tüm BIST evreni için breakout olasılığı hesapla.
+
+        Fusion skor: 0.40 × master_pctile + 0.60 × ml_s_pctile
+        ML S = universe_1g (kısa dönem getiri modeli) — zamanlama ekler.
+        Backtest: Top 5 → %44 ≥%5 getiri, %31 tavan, medyan +%2.8
+
+        Args:
+            tickers: list of ticker strings
+            price_data: {ticker: DataFrame (OHLCV, Uppercase)}
+            xu_df: XU100 DataFrame
+            threshold: alert eşiği (fusion_score pctile >= threshold)
+
+        Returns:
+            {ticker: {
+                'tavan_prob': float,    # tavan composite
+                'rally_prob': float,    # rally composite
+                'breakout_master': float,  # 0.5*tavan + 0.5*rally (raw)
+                'ml_s_score': float,    # kısa dönem ML skoru
+                'fusion_score': float,  # 0.40*master_pctile + 0.60*ml_s_pctile
+                'tier': str,            # 'top5' | 'top10' | None
+                'alert': bool,
+            }}
+        """
+        self._load_breakout_models()
+        if not self.breakout_loaded:
+            return {}
+
+        # ML S modeli de yükle (shortlist universe_1g)
+        self._load_models()
+
+        from ml.features import compute_all_features
+
+        # Faz 1: tüm ticker'ları skorla (raw skorlar)
+        raw_results = {}
+        already_moved = 0
+        for ticker in tickers:
+            df = price_data.get(ticker)
+            if df is None or len(df) < 80:
+                continue
+
+            try:
+                # Zaten hareket etmiş hisseleri ele — son 3 günde herhangi gün ≥%7
+                close_col = 'Close' if 'Close' in df.columns else 'close'
+                if close_col in df.columns and len(df) >= 4:
+                    recent_rets = df[close_col].pct_change().iloc[-3:] * 100
+                    if recent_rets.max() >= 7.0:
+                        already_moved += 1
+                        continue
+
+                feats = compute_all_features(df, xu_df=xu_df)
+                if feats.empty:
+                    continue
+
+                row = feats.iloc[-1]
+                # Breakout feature vector — sabit eğitim sırasıyla
+                brk_cols = self._breakout_feat_cols
+                if brk_cols is None:
+                    # Fallback: dinamik kolon listesi (leakage+close hariç)
+                    brk_cols = [c for c in feats.columns
+                               if c not in _BREAKOUT_LEAKAGE_FEATURES
+                               and c != 'close']
+                vec = np.full(len(brk_cols), np.nan)
+                for i, col in enumerate(brk_cols):
+                    if col in row.index:
+                        val = row[col]
+                        if pd.notna(val):
+                            vec[i] = float(val)
+
+                valid_pct = np.sum(~np.isnan(vec)) / len(vec)
+                if valid_pct < 0.5:
+                    continue
+
+                x = vec.reshape(1, -1)
+
+                # Breakout modelleri
+                preds = {}
+                for slot, booster in self._breakout_models.items():
+                    if booster.num_feature() == len(brk_cols):
+                        preds[slot] = float(booster.predict(x)[0])
+
+                # Composite skorlar
+                tavan_3d = preds.get('tavan_3d')
+                tavan_1d = preds.get('tavan_1d')
+                rally_3d = preds.get('rally_3d')
+                rally_5d = preds.get('rally_5d')
+
+                tavan_comp = None
+                if tavan_3d is not None and tavan_1d is not None:
+                    tavan_comp = 0.6 * tavan_3d + 0.4 * tavan_1d
+                elif tavan_3d is not None:
+                    tavan_comp = tavan_3d
+
+                rally_comp = None
+                if rally_3d is not None and rally_5d is not None:
+                    rally_comp = 0.6 * rally_3d + 0.4 * rally_5d
+                elif rally_3d is not None:
+                    rally_comp = rally_3d
+
+                master = None
+                if tavan_comp is not None and rally_comp is not None:
+                    master = 0.5 * tavan_comp + 0.5 * rally_comp
+                elif tavan_comp is not None:
+                    master = tavan_comp
+                elif rally_comp is not None:
+                    master = rally_comp
+
+                if master is None:
+                    continue
+
+                # ML S skoru (universe_1g — kısa dönem getiri)
+                ml_s = None
+                if self.loaded and self._universe_1g is not None:
+                    s_cols = _get_screener_derived_columns()
+                    s_vec = np.full(len(s_cols), np.nan)
+                    for i, col in enumerate(s_cols):
+                        if col in row.index:
+                            val = row[col]
+                            if pd.notna(val):
+                                s_vec[i] = float(val)
+                    s_valid = np.sum(~np.isnan(s_vec)) / len(s_vec)
+                    if s_valid >= 0.5:
+                        ml_s = float(self._universe_1g.predict(
+                            s_vec.reshape(1, -1))[0])
+
+                raw_results[ticker] = {
+                    'tavan_prob': tavan_comp,
+                    'rally_prob': rally_comp,
+                    'breakout_master': master,
+                    'ml_s_score': ml_s,
+                    'tavan_3d': tavan_3d,
+                    'tavan_1d': tavan_1d,
+                    'rally_3d': rally_3d,
+                    'rally_5d': rally_5d,
+                }
+            except Exception:
+                continue
+
+        if not raw_results:
+            return {}
+
+        if already_moved > 0:
+            print(f"  [BRK] {already_moved} hisse elendi (son 3G ≥%7 hareket)")
+
+        # Faz 2: percentile hesapla + fusion skor
+        masters = {t: d['breakout_master'] for t, d in raw_results.items()}
+        ml_s_scores = {t: d['ml_s_score'] for t, d in raw_results.items()
+                       if d['ml_s_score'] is not None}
+
+        # Percentile rank (0-1)
+        sorted_masters = sorted(masters.values())
+        sorted_ml_s = sorted(ml_s_scores.values()) if ml_s_scores else []
+        n_m = len(sorted_masters)
+        n_s = len(sorted_ml_s)
+
+        def _pctile(val, sorted_vals, n):
+            if n == 0:
+                return 0.5
+            rank = sum(1 for v in sorted_vals if v <= val)
+            return rank / n
+
+        results = {}
+        for ticker, data in raw_results.items():
+            m_pct = _pctile(data['breakout_master'], sorted_masters, n_m)
+            s_pct = _pctile(data['ml_s_score'], sorted_ml_s, n_s) \
+                if data['ml_s_score'] is not None else 0.5
+
+            # Fusion: 0.40 × master + 0.60 × ML S
+            fusion = 0.40 * m_pct + 0.60 * s_pct
+
+            data['fusion_score'] = fusion
+            data['master_pctile'] = m_pct
+            data['ml_s_pctile'] = s_pct
+            data['tier'] = None
+            data['alert'] = False
+            results[ticker] = data
+
+        # Faz 3: Top 5 / Top 10 tier ataması
+        sorted_by_fusion = sorted(results.items(),
+                                   key=lambda x: x[1]['fusion_score'],
+                                   reverse=True)
+        for i, (ticker, data) in enumerate(sorted_by_fusion):
+            if i < 5:
+                data['tier'] = 'top5'
+                data['alert'] = True
+            elif i < 10:
+                data['tier'] = 'top10'
+                data['alert'] = True
+
+        return results
+
+
+def breakout_badge(breakout_data):
+    """Breakout tier için badge string.
+
+    Args:
+        breakout_data: dict with 'tier', 'fusion_score' keys
+                       OR float (backward compat — breakout_master raw value)
+
+    Returns: str — örn. 'BRK🎯T5' veya 'BRK⚡T10'
+    """
+    if breakout_data is None:
+        return ''
+
+    # Backward compat: eski kod float gönderebilir
+    if isinstance(breakout_data, (int, float)):
+        pct = int(breakout_data * 100)
+        if breakout_data >= 0.20:
+            return f'BRK🎯{pct}%'
+        elif breakout_data >= 0.10:
+            return f'BRK⚡{pct}%'
+        return ''
+
+    tier = breakout_data.get('tier')
+    fusion = breakout_data.get('fusion_score', 0)
+    f_pct = int(fusion * 100)
+    if tier == 'top5':
+        return f'BRK🎯T5·F{f_pct}'
+    elif tier == 'top10':
+        return f'BRK⚡T10·F{f_pct}'
+    return ''

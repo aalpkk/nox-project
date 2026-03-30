@@ -640,6 +640,75 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
         feats['rs_60'] = np.nan
         feats['rs_composite'] = np.nan
 
+    # ═══════════════════════════════════════
+    # O. PRE-BREAKOUT / BİRİKİM→BREAKOUT (22)
+    # 20 gün birikim penceresine dayalı feature'lar
+    # ═══════════════════════════════════════
+
+    # O1. Range Sıkışması (4)
+    range_5 = h.rolling(5).max() - l.rolling(5).min()
+    range_20 = h.rolling(20).max() - l.rolling(20).min()
+    range_40 = h.rolling(40).max() - l.rolling(40).min()
+    feats['range_contraction_5_20'] = range_5 / range_20.replace(0, np.nan)
+    feats['range_contraction_5_40'] = range_5 / range_40.replace(0, np.nan)
+    atr_5 = _rma(_true_range(df), 5)
+    feats['atr_contraction_5_20'] = atr_5 / atr_val.replace(0, np.nan)
+    bb_width_raw = bb_range / bb_mid.replace(0, np.nan)
+    feats['bb_width_pctile_20'] = bb_width_raw.rolling(60, min_periods=20).rank(pct=True)
+
+    # O2. Hacim Birikim Paterni (5)
+    vol_sma5 = _sma(v, 5)
+    feats['vol_dryup_ratio'] = vol_sma5 / vol_sma20.replace(0, np.nan)
+    feats['vol_surge_today'] = v / vol_sma5.replace(0, np.nan)
+    feats['vol_acceleration'] = (vol_sma5 - vol_sma5.shift(5)) / vol_sma5.shift(5).replace(0, np.nan)
+    feats['tl_volume_20d_avg'] = _sma(c * v, 20)
+    vol_dryup = feats['vol_dryup_ratio'].clip(upper=2)
+    vol_spike = feats['vol_surge_today'].clip(upper=5)
+    feats['vol_pattern_score'] = (2 - vol_dryup) * 2 + np.where(vol_spike > 2, vol_spike * 3, 0)
+
+    # O3. Momentum Oluşumu (4)
+    feats['rsi_momentum_5d'] = rsi14 - rsi14.shift(5)
+    feats['macd_hist_accel'] = macd_hist - macd_hist.shift(3)
+    higher_close_mask = c > c.shift(1)
+    feats['consecutive_higher_close'] = _consecutive_count(higher_close_mask)
+    high_20d = h.rolling(20).max()
+    feats['close_vs_20d_high_pct'] = (c - high_20d) / high_20d.replace(0, np.nan) * 100
+
+    # O4. Yapısal Yakınlık (4)
+    high_52w = h.rolling(252, min_periods=60).max()
+    feats['dist_to_52w_high_pct'] = (c - high_52w) / high_52w.replace(0, np.nan) * 100
+    feats['dist_to_20d_high_pct'] = feats['close_vs_20d_high_pct']  # same calc
+    feats['near_52w_high'] = (c >= high_52w * 0.95).astype(int)
+    low_20d = l.rolling(20).min()
+    feats['price_range_position_20'] = (c - low_20d) / (high_20d - low_20d).replace(0, np.nan)
+
+    # O5. Yakın Iskalama / Öncü Sinyal (3)
+    daily_ret_pct = (c / c.shift(1) - 1) * 100
+    feats['near_tavan_miss'] = ((daily_ret_pct >= 7) & (daily_ret_pct < 9.5)).astype(int)
+    feats['recent_near_tavan_5d'] = feats['near_tavan_miss'].rolling(5, min_periods=1).sum()
+    feats['max_daily_ret_5d'] = daily_ret_pct.rolling(5, min_periods=1).max()
+
+    # O6. Relatif Güç İvmesi (2)
+    if xu_df is not None and 'Close' in xu_df.columns and len(xu_df) >= 65:
+        feats['rs_acceleration'] = feats['rs_10'] - feats['rs_10'].shift(5)
+    else:
+        feats['rs_acceleration'] = np.nan
+    # market_tavan_count_10d: piyasa geneli, dışarıdan verilmeli — NaN olarak bırak
+    feats['market_tavan_count_10d'] = np.nan
+
+    # O7. Lag-1 Güvenli Feature'lar (8) — leakage-free versiyonlar
+    feats['returns_1d_lag1'] = feats['returns_1d'].shift(1)
+    feats['close_position_lag1'] = feats['close_position'].shift(1)
+    feats['close_to_high_lag1'] = feats['close_to_high'].shift(1)
+    daily_ret_pct_lag = daily_ret_pct.shift(1)
+    feats['max_daily_ret_5d_lag1'] = daily_ret_pct_lag.rolling(5, min_periods=1).max()
+    near_miss_lag = feats['near_tavan_miss'].shift(1)
+    feats['recent_near_tavan_5d_lag1'] = near_miss_lag.rolling(5, min_periods=1).sum()
+    feats['vol_surge_yesterday'] = v.shift(1) / _sma(v, 5).shift(1).replace(0, np.nan)
+    feats['consecutive_green_lag1'] = feats['consecutive_green'].shift(1)
+    is_tavan_lag = feats['is_tavan'].shift(1)
+    feats['recent_tavan_10d_lag1'] = is_tavan_lag.rolling(10, min_periods=1).sum()
+
     return feats
 
 
@@ -787,4 +856,61 @@ def compute_targets(df):
     targets['ret_3g'] = (c.shift(-3) / c - 1) * 100
     targets['up_1g'] = (targets['ret_1g'] > 0).astype(int)
     targets['up_3g'] = (targets['ret_3g'] > 0).astype(int)
+    return targets
+
+
+def compute_breakout_targets(df):
+    """
+    Tavan + Sert Yükseliş target'ları hesapla.
+    Leakage-free: tüm target'lar shift(-N) ile future data kullanır.
+
+    Returns:
+        DataFrame — tavan_1d, tavan_3d, tavan_5d, tavan_series,
+                     rally_3d, rally_5d, rally_any
+    """
+    c = df['Close']
+    n = len(df)
+    targets = pd.DataFrame(index=df.index)
+
+    # Günlük getiriler (T+1, T+2, ... T+5)
+    daily_ret = c.pct_change().shift(-1) * 100  # T+1 günlük getiri
+
+    # Tavan target'ları (günlük getiri ≥ %9.5)
+    # tavan_1d: yarın günlük getiri ≥ %9.5
+    targets['tavan_1d'] = (daily_ret >= 9.5).astype(int)
+
+    # tavan_3d: 3 gün içinde herhangi bir gün ≥ %9.5
+    tavan_mask = pd.Series(0, index=df.index)
+    for offset in range(1, 4):
+        ret_d = (c.shift(-offset) / c.shift(-offset + 1).where(
+            c.shift(-offset + 1) > 0, np.nan) - 1) * 100
+        tavan_mask = tavan_mask | (ret_d >= 9.5)
+    targets['tavan_3d'] = tavan_mask.astype(int)
+
+    # tavan_5d: 5 gün içinde herhangi bir gün ≥ %9.5
+    tavan_5_mask = pd.Series(0, index=df.index)
+    for offset in range(1, 6):
+        ret_d = (c.shift(-offset) / c.shift(-offset + 1).where(
+            c.shift(-offset + 1) > 0, np.nan) - 1) * 100
+        tavan_5_mask = tavan_5_mask | (ret_d >= 9.5)
+    targets['tavan_5d'] = tavan_5_mask.astype(int)
+
+    # tavan_series: yarın tavan VE ertesi gün de tavan
+    ret_t1 = (c.shift(-1) / c - 1) * 100
+    ret_t2 = (c.shift(-2) / c.shift(-1).where(c.shift(-1) > 0, np.nan) - 1) * 100
+    targets['tavan_series'] = ((ret_t1 >= 9.5) & (ret_t2 >= 9.5)).astype(int)
+
+    # Sert Yükseliş target'ları
+    # rally_3d: 3 günlük kümülatif getiri ≥ %15
+    cum_ret_3d = (c.shift(-3) / c - 1) * 100
+    targets['rally_3d'] = (cum_ret_3d >= 15).astype(int)
+
+    # rally_5d: 5 günlük kümülatif getiri ≥ %20
+    cum_ret_5d = (c.shift(-5) / c - 1) * 100
+    targets['rally_5d'] = (cum_ret_5d >= 20).astype(int)
+
+    # rally_any: rally_3d OR tavan_3d (union)
+    targets['rally_any'] = ((targets['rally_3d'] == 1) |
+                            (targets['tavan_3d'] == 1)).astype(int)
+
     return targets

@@ -283,6 +283,144 @@ def calibration_analysis(y_true, y_pred_proba, n_bins=10):
 
 
 # ═══════════════════════════════════════════
+# BREAKOUT TRADING METRİKLERİ
+# ═══════════════════════════════════════════
+
+def breakout_trading_metrics(y_true, y_pred_proba, ret_1d, ret_3d, top_k=20):
+    """
+    Breakout modelleri için trading-spesifik metrikler.
+
+    Args:
+        y_true: binary target (0/1) — tavan veya rally
+        y_pred_proba: predicted breakout probability
+        ret_1d: gerçek 1G forward return (%)
+        ret_3d: gerçek 3G forward return (%)
+        top_k: günlük alert sayısı (top K hisse)
+
+    Returns:
+        dict — precision@K, lift, avg return, daily alert sim
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred_proba = np.asarray(y_pred_proba, dtype=float)
+    ret_1d = np.asarray(ret_1d, dtype=float)
+    ret_3d = np.asarray(ret_3d, dtype=float)
+
+    valid = ~(np.isnan(y_true) | np.isnan(y_pred_proba) |
+              np.isnan(ret_1d) | np.isnan(ret_3d))
+    y_t = y_true[valid]
+    y_p = y_pred_proba[valid]
+    r1 = ret_1d[valid]
+    r3 = ret_3d[valid]
+
+    n = len(y_t)
+    if n < 100:
+        return {'error': 'insufficient_data', 'n': n}
+
+    base_rate = float(y_t.mean())
+
+    # Precision @ top_k (absolute)
+    top_k_idx = np.argsort(y_p)[-top_k:]
+    precision_at_k = float(y_t[top_k_idx].mean()) if len(top_k_idx) > 0 else 0.0
+    lift_at_k = precision_at_k / base_rate if base_rate > 0 else 0.0
+    avg_ret_1d_top_k = float(r1[top_k_idx].mean()) if len(top_k_idx) > 0 else 0.0
+    avg_ret_3d_top_k = float(r3[top_k_idx].mean()) if len(top_k_idx) > 0 else 0.0
+
+    # Precision @ top 5%, 10%
+    for pct_label, pct in [('5pct', 0.05), ('10pct', 0.10)]:
+        threshold = np.quantile(y_p, 1 - pct)
+        top_mask = y_p >= threshold
+        top_n = top_mask.sum()
+        locals()[f'precision_top_{pct_label}'] = float(y_t[top_mask].mean()) if top_n > 0 else 0.0
+        locals()[f'lift_top_{pct_label}'] = (
+            locals()[f'precision_top_{pct_label}'] / base_rate if base_rate > 0 else 0.0
+        )
+        locals()[f'avg_ret_3d_top_{pct_label}'] = float(r3[top_mask].mean()) if top_n > 0 else 0.0
+        locals()[f'n_top_{pct_label}'] = int(top_n)
+
+    # PR-AUC
+    try:
+        pr_auc = average_precision_score(y_t, y_p)
+    except ValueError:
+        pr_auc = 0.0
+
+    # Daily alert simulation: her unique gün için top_k seç
+    # (MultiIndex olmadan — basit implementasyon)
+    # Alert'lerin ortalaması
+    thresholds_metrics = {}
+    for thr in [0.05, 0.10, 0.15, 0.20]:
+        mask = y_p >= thr
+        cnt = mask.sum()
+        if cnt > 0:
+            thresholds_metrics[f'thr_{int(thr*100):02d}_n'] = int(cnt)
+            thresholds_metrics[f'thr_{int(thr*100):02d}_precision'] = float(y_t[mask].mean())
+            thresholds_metrics[f'thr_{int(thr*100):02d}_avg_ret_3d'] = float(r3[mask].mean())
+            thresholds_metrics[f'thr_{int(thr*100):02d}_lift'] = (
+                float(y_t[mask].mean()) / base_rate if base_rate > 0 else 0
+            )
+
+    return {
+        'n': n,
+        'base_rate': base_rate,
+        'pr_auc': float(pr_auc),
+        'pr_auc_vs_base': float(pr_auc / base_rate) if base_rate > 0 else 0.0,
+        f'precision_at_{top_k}': precision_at_k,
+        f'lift_at_{top_k}': lift_at_k,
+        f'avg_ret_1d_top_{top_k}': avg_ret_1d_top_k,
+        f'avg_ret_3d_top_{top_k}': avg_ret_3d_top_k,
+        'precision_top_5pct': locals().get('precision_top_5pct', 0),
+        'lift_top_5pct': locals().get('lift_top_5pct', 0),
+        'avg_ret_3d_top_5pct': locals().get('avg_ret_3d_top_5pct', 0),
+        'n_top_5pct': locals().get('n_top_5pct', 0),
+        'precision_top_10pct': locals().get('precision_top_10pct', 0),
+        'lift_top_10pct': locals().get('lift_top_10pct', 0),
+        'avg_ret_3d_top_10pct': locals().get('avg_ret_3d_top_10pct', 0),
+        'n_top_10pct': locals().get('n_top_10pct', 0),
+        **thresholds_metrics,
+    }
+
+
+def print_breakout_metrics(metrics, label="Breakout Model"):
+    """Breakout trading metriklerini yazdır."""
+    if 'error' in metrics:
+        print(f"  {label}: yetersiz veri (N={metrics.get('n', 0)})")
+        return
+
+    print(f"\n  {label} (N={metrics['n']:,}, base_rate={metrics['base_rate']:.2%})")
+    print(f"    PR-AUC:          {metrics['pr_auc']:.4f} ({metrics['pr_auc_vs_base']:.1f}x base)")
+
+    # Top-K precision
+    for key in metrics:
+        if key.startswith('precision_at_'):
+            k = key.replace('precision_at_', '')
+            print(f"    Precision@{k}:    {metrics[key]:.1%} "
+                  f"(lift={metrics.get(f'lift_at_{k}', 0):.1f}x)")
+            print(f"    Avg Ret 1G Top{k}: {metrics.get(f'avg_ret_1d_top_{k}', 0):+.2f}%")
+            print(f"    Avg Ret 3G Top{k}: {metrics.get(f'avg_ret_3d_top_{k}', 0):+.2f}%")
+
+    # Top percentile
+    for pct_label in ['5pct', '10pct']:
+        n_key = f'n_top_{pct_label}'
+        if n_key in metrics and metrics[n_key] > 0:
+            print(f"    Top {pct_label}: P={metrics[f'precision_top_{pct_label}']:.1%} "
+                  f"Lift={metrics[f'lift_top_{pct_label}']:.1f}x "
+                  f"Ret3G={metrics[f'avg_ret_3d_top_{pct_label}']:+.2f}% "
+                  f"(N={metrics[n_key]})")
+
+    # Threshold analysis
+    thr_keys = sorted([k for k in metrics if k.startswith('thr_') and k.endswith('_n')])
+    if thr_keys:
+        print(f"    Threshold Analysis:")
+        print(f"    {'Thr':>5} {'N':>6} {'Prec':>6} {'Lift':>5} {'Ret3G':>7}")
+        for nk in thr_keys:
+            prefix = nk.replace('_n', '')
+            thr_val = int(prefix.replace('thr_', '')) / 100
+            print(f"    {thr_val:>4.0%} {metrics[nk]:>6} "
+                  f"{metrics.get(prefix + '_precision', 0):>5.1%} "
+                  f"{metrics.get(prefix + '_lift', 0):>4.1f}x "
+                  f"{metrics.get(prefix + '_avg_ret_3d', 0):>+6.2f}%")
+
+
+# ═══════════════════════════════════════════
 # FEATURE IMPORTANCE
 # ═══════════════════════════════════════════
 
