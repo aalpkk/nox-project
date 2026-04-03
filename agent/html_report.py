@@ -1165,7 +1165,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 let iceExtra = '';
                 if (item.streak_days >= 3) {{
                     const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
-                    iceExtra += ` str=${{item.streak_days}}g${{mIcon}}`;
+                    iceExtra += ` SM${{item.streak_days}}g${{mIcon}}`;
                 }}
                 if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
                     const sign = item.position_change_pct > 0 ? '+' : '';
@@ -1300,7 +1300,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 let iceExtra = '';
                 if (item.streak_days >= 3) {{
                     const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
-                    iceExtra += ` str=${{item.streak_days}}g${{mIcon}}`;
+                    iceExtra += ` SM${{item.streak_days}}g${{mIcon}}`;
                 }}
                 if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
                     const sign = item.position_change_pct > 0 ? '+' : '';
@@ -1405,7 +1405,7 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 let iceExtra = '';
                 if (item.streak_days >= 3) {{
                     const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
-                    iceExtra += ` str=${{item.streak_days}}g${{mIcon}}`;
+                    iceExtra += ` SM${{item.streak_days}}g${{mIcon}}`;
                 }}
                 if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
                     const sign = item.position_change_pct > 0 ? '+' : '';

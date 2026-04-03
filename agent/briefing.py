@@ -1737,7 +1737,7 @@ def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results=None)
             if streak >= 3:
                 mom = ice.metrics.get("streak_momentum", "")
                 mom_short = "💪" if mom == "GÜÇLÜ" else ""
-                extras.append(f"streak={streak}g{mom_short}")
+                extras.append(f"SM{streak}g{mom_short}")
             dpoz = ice.metrics.get("position_change_pct")
             if dpoz is not None and abs(dpoz) >= 0.5:
                 extras.append(f"Δpoz={dpoz:+.1f}%")
