@@ -432,9 +432,15 @@ def _label_maliyet_avantaji(cost_data=None):
     """Maliyet avantajı — Matriks settlement verisinden SM avg cost vs fiyat.
 
     cost_data: matriks_adapter.calc_cost_advantage() çıktısı
-        {value: "guclu"|"avantaj"|"notr"|"risk"|"yuksek_risk"|"veri_yok", detail: str}
+        {value, detail, streak_days, momentum, position_change_pct}
     """
     if not cost_data or cost_data.get("value") == "veri_yok":
+        # Trend bilgisi varsa detail'e ekle
+        streak = cost_data.get("streak_days", 0) if cost_data else 0
+        if streak > 0:
+            mom = cost_data.get("momentum", "")
+            return ICELabel("maliyet_avantaji", "veri_yok",
+                            f"maliyet yok — SM streak={streak}g {mom}")
         return ICELabel("maliyet_avantaji", "veri_yok", "maliyet verisi yok")
     return ICELabel("maliyet_avantaji", cost_data["value"], cost_data["detail"])
 
@@ -487,7 +493,7 @@ def _label_kisa_vade(takas_metrics, snapshot_metrics=None, mkk_metrics=None):
 # Çarpan + SMS Uyumluluk
 # ══════════════════════════════════════════════════════════════
 
-def _calc_multiplier(labels):
+def _calc_multiplier(labels, cost_data=None):
     """4 etiketten multiplier hesapla.
 
     guclu (1.20): teyit=var + birikim=guclu + kv=destekliyor
@@ -498,6 +504,7 @@ def _calc_multiplier(labels):
     red_flag (0.65): teyit=yok + kv=dagitim_riski
 
     + maliyet_avantaji ayarlaması (±0.05 max)
+    + SM ardışık birikim streak bonus (+0.02 per 3 gün, max +0.04)
     """
     teyit = labels.get("kurumsal_teyit")
     birikim = labels.get("tasinan_birikim")
@@ -531,6 +538,15 @@ def _calc_multiplier(labels):
         _MA_ADJUST = {"guclu": +0.05, "avantaj": +0.03, "risk": -0.03, "yuksek_risk": -0.05}
         adj = _MA_ADJUST.get(ma.value, 0)
         base_mult = max(0.65, min(1.20, base_mult + adj))
+
+    # SM ardışık birikim streak bonusu
+    # ≥3 gün → +0.02, ≥6 gün → +0.04 (max)
+    if cost_data:
+        streak = cost_data.get("streak_days", 0)
+        if streak >= 6:
+            base_mult = min(1.20, base_mult + 0.04)
+        elif streak >= 3:
+            base_mult = min(1.20, base_mult + 0.02)
 
     return base_mult
 
@@ -619,7 +635,7 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
     }
 
     # Multiplier
-    mult = _calc_multiplier(labels)
+    mult = _calc_multiplier(labels, cost_data=cost_data)
 
     # Metrikleri birleştir
     metrics = {}

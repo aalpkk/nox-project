@@ -11,6 +11,7 @@ beklediği veri formatlarına çevirir.
   - quarterly (60g) → 3 Aylık Fark
 
 Maliyet avantajı: settlement text parse → SM avg cost vs price
+Settlement trend: ardışık birikim günleri + pozisyon değişimi
 """
 import re
 from typing import Optional
@@ -266,20 +267,120 @@ def _classify_settlement_broker(code: str, flow_brokers: dict = None) -> str:
 
 
 # ══════════════════════════════════════════════════════════════
-# D. Maliyet Avantajı Hesaplama
+# D. Settlement Tarihsel Karşılaştırma Parse
+# ══════════════════════════════════════════════════════════════
+
+def parse_settlement_history(analysis_text: str) -> list:
+    """Settlement tarihsel karşılaştırma bölümünü parse et.
+
+    Metin formatı:
+        📊 TARİHSEL KARŞILAŞTIRMA:
+        2026-04-02:
+          Takas: 398.00mn lot
+          Değişim: +5.38mn lot (+1.35%)
+
+    Returns:
+        list[dict]: [{date, total_lot, change_lot, change_pct}]
+    """
+    if not analysis_text:
+        return []
+
+    entries = []
+    pattern = re.compile(
+        r'(\d{4}-\d{2}-\d{2}):\s*\n'
+        r'\s+Takas:\s+([\d.,]+)(mn|K)?\s+lot\s*\n'
+        r'\s+Değişim:\s*([+-]?[\d.,]+)(mn|K)?\s+lot\s+\(([+-]?[\d.,]+)%\)',
+        re.MULTILINE
+    )
+
+    for m in pattern.finditer(analysis_text):
+        date = m.group(1)
+        total_val = float(m.group(2).replace(",", "."))
+        total_unit = m.group(3) or ""
+        change_val = float(m.group(4).replace(",", "."))
+        change_unit = m.group(5) or ""
+        change_pct = float(m.group(6).replace(",", "."))
+
+        total_lot = _unit_to_lot(total_val, total_unit)
+        change_lot = _unit_to_lot(change_val, change_unit)
+
+        entries.append({
+            "date": date,
+            "total_lot": total_lot,
+            "change_lot": change_lot,
+            "change_pct": change_pct,
+        })
+
+    return entries
+
+
+def _unit_to_lot(val: float, unit: str) -> int:
+    """mn/K birimini lot'a çevir."""
+    if unit == "mn":
+        return int(val * 1_000_000)
+    elif unit == "K":
+        return int(val * 1_000)
+    return int(val)
+
+
+# ══════════════════════════════════════════════════════════════
+# E. SM Trend Parse (Ardışık Birikim Günleri)
+# ══════════════════════════════════════════════════════════════
+
+def parse_trend_text(analysis_text: str) -> dict:
+    """Settlement trend analiz metnini parse et.
+
+    Metin formatı:
+        1. YGGYO
+           • 9 gün üst üste artan
+           • Momentum: GÜÇLÜ
+
+    Returns:
+        dict: {SYMBOL: {streak_days: int, momentum: str}}
+    """
+    if not analysis_text:
+        return {}
+
+    result = {}
+    pattern = re.compile(
+        r'\d+\.\s+(\S+)\s*\n'
+        r'\s+•\s+(\d+)\s+gün\s+üst\s+üste\s+artan\s*\n'
+        r'\s+•\s+Momentum:\s+(\S+)',
+        re.MULTILINE
+    )
+
+    for m in pattern.finditer(analysis_text):
+        symbol = m.group(1)
+        days = int(m.group(2))
+        momentum = m.group(3)
+        result[symbol] = {
+            "streak_days": days,
+            "momentum": momentum,
+        }
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════
+# F. Maliyet Avantajı Hesaplama
 # ══════════════════════════════════════════════════════════════
 
 def calc_cost_advantage(settlement_brokers: list, current_price: float,
-                        flow_response: dict = None) -> dict:
+                        flow_response: dict = None,
+                        settlement_history: list = None,
+                        trend_info: dict = None) -> dict:
     """SM broker'ların pozisyon-ağırlıklı ortalama maliyetini hesapla.
 
     Args:
         settlement_brokers: parse_settlement_text() çıktısı
         current_price: Güncel fiyat
         flow_response: institutionalFlow yanıtı (broker code→name eşleşmesi için)
+        settlement_history: parse_settlement_history() çıktısı (pozisyon değişimi)
+        trend_info: {streak_days, momentum} — parse_trend_text() çıktısından ticker bazlı
 
     Returns:
-        dict: {value, detail, sm_avg_cost, cost_ratio, sm_brokers}
+        dict: {value, detail, sm_avg_cost, cost_ratio, sm_broker_count,
+               streak_days, momentum, position_change_pct}
 
     Eşikler:
         cost_ratio < 0.90 → guclu (SM %10+ kârda)
@@ -289,7 +390,12 @@ def calc_cost_advantage(settlement_brokers: list, current_price: float,
         > 1.15 → yuksek_risk (SM derin zararda)
     """
     if not settlement_brokers or not current_price or current_price <= 0:
-        return {"value": "veri_yok", "detail": "maliyet verisi yok"}
+        result = {"value": "veri_yok", "detail": "maliyet verisi yok"}
+        # Trend bilgisi cost verisi olmasa bile eklenebilir
+        if trend_info:
+            result["streak_days"] = trend_info.get("streak_days", 0)
+            result["momentum"] = trend_info.get("momentum", "")
+        return result
 
     # Flow'dan code→name haritası oluştur
     flow_brokers = {}
@@ -309,12 +415,20 @@ def calc_cost_advantage(settlement_brokers: list, current_price: float,
             sm_brokers.append({**b, "tip": tip})
 
     if not sm_brokers:
-        return {"value": "veri_yok", "detail": "SM broker maliyet verisi yok"}
+        result = {"value": "veri_yok", "detail": "SM broker maliyet verisi yok"}
+        if trend_info:
+            result["streak_days"] = trend_info.get("streak_days", 0)
+            result["momentum"] = trend_info.get("momentum", "")
+        return result
 
     # Pozisyon-ağırlıklı ortalama maliyet
     total_pos = sum(b["position_lot"] for b in sm_brokers)
     if total_pos <= 0:
-        return {"value": "veri_yok", "detail": "SM pozisyon verisi yok"}
+        result = {"value": "veri_yok", "detail": "SM pozisyon verisi yok"}
+        if trend_info:
+            result["streak_days"] = trend_info.get("streak_days", 0)
+            result["momentum"] = trend_info.get("momentum", "")
+        return result
 
     weighted_cost = sum(b["cost"] * b["position_lot"] for b in sm_brokers)
     sm_avg_cost = weighted_cost / total_pos
@@ -338,16 +452,47 @@ def calc_cost_advantage(settlement_brokers: list, current_price: float,
         desc = "SM derin zararda, satış baskısı riski"
 
     broker_names = ", ".join(b["code"] for b in sm_brokers[:3])
-    detail = (f"{desc} — SM maliyet {sm_avg_cost:.2f} vs fiyat {current_price:.2f} "
-              f"(r={cost_ratio:.2f}, {len(sm_brokers)} broker: {broker_names})")
 
-    return {
+    # Pozisyon değişimi (haftalık karşılaştırma)
+    pos_change_pct = None
+    if settlement_history:
+        # Son entry = en güncel tarihsel karşılaştırma noktası
+        latest = settlement_history[-1] if settlement_history else None
+        if latest:
+            pos_change_pct = latest.get("change_pct")
+
+    # Trend bilgisi (ardışık birikim günleri)
+    streak_days = 0
+    momentum = ""
+    if trend_info:
+        streak_days = trend_info.get("streak_days", 0)
+        momentum = trend_info.get("momentum", "")
+
+    # Detail string oluştur
+    parts = [f"{desc} — SM maliyet {sm_avg_cost:.2f} vs fiyat {current_price:.2f}",
+             f"(r={cost_ratio:.2f}, {len(sm_brokers)} broker: {broker_names})"]
+
+    if streak_days > 0:
+        parts.append(f"streak={streak_days}g {momentum}")
+    if pos_change_pct is not None:
+        parts.append(f"Δpoz={pos_change_pct:+.1f}%")
+
+    detail = " ".join(parts)
+
+    result = {
         "value": value,
         "detail": detail,
         "sm_avg_cost": round(sm_avg_cost, 2),
         "cost_ratio": round(cost_ratio, 4),
         "sm_broker_count": len(sm_brokers),
     }
+    if streak_days > 0:
+        result["streak_days"] = streak_days
+        result["momentum"] = momentum
+    if pos_change_pct is not None:
+        result["position_change_pct"] = pos_change_pct
+
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
@@ -359,18 +504,30 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
 
     Args:
         matriks_data: MatriksClient.fetch_batch() çıktısı
-            {TICKER: {flows: {daily, weekly, monthly, quarterly},
-                      settlement: {...}, price: {...}}}
+            {TICKER: {flows, settlement, price},
+             _trend: {analysis: str}}
 
     Returns:
         (takas_data_map, cost_data_map):
             takas_data_map: {TICKER: {kurumlar: [...]}} — SMS input (G/H/A/3A dolu)
-            cost_data_map: {TICKER: {value, detail, ...}} — ICE maliyet_avantaji input
+            cost_data_map: {TICKER: {value, detail, streak_days, ...}} — ICE maliyet_avantaji input
     """
     takas_data_map = {}
     cost_data_map = {}
 
+    # Trend verisini parse et (batch düzeyinde, _trend key'i altında)
+    trend_map = {}
+    trend_raw = matriks_data.pop("_trend", None)
+    if trend_raw:
+        analysis_text = trend_raw.get("analysis", "")
+        if isinstance(analysis_text, dict):
+            analysis_text = analysis_text.get("_raw_text", "")
+        trend_map = parse_trend_text(analysis_text)
+
     for ticker, data in matriks_data.items():
+        if ticker.startswith("_"):
+            continue
+
         flows = data.get("flows", {})
         settlement = data.get("settlement")
         price_data = data.get("price")
@@ -387,13 +544,31 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
             current_price = pd.get("price")
 
         daily_flow = flows.get("daily")
-        if settlement and current_price:
+
+        # Settlement parse — broker listesi + tarihsel karşılaştırma
+        analysis_text = ""
+        if settlement:
             analysis_text = settlement.get("analysis", "")
             if isinstance(analysis_text, dict):
                 analysis_text = analysis_text.get("_raw_text", "")
-            brokers = parse_settlement_text(analysis_text)
-            if brokers:
-                cost_data = calc_cost_advantage(brokers, current_price, daily_flow)
-                cost_data_map[ticker] = cost_data
+
+        brokers = parse_settlement_text(analysis_text) if analysis_text else []
+        settlement_hist = parse_settlement_history(analysis_text) if analysis_text else []
+        trend_info = trend_map.get(ticker)
+
+        if brokers and current_price:
+            cost_data = calc_cost_advantage(
+                brokers, current_price, daily_flow,
+                settlement_history=settlement_hist,
+                trend_info=trend_info)
+            cost_data_map[ticker] = cost_data
+        elif trend_info:
+            # Maliyet verisi yok ama trend bilgisi var
+            cost_data_map[ticker] = {
+                "value": "veri_yok",
+                "detail": f"maliyet yok — streak={trend_info['streak_days']}g {trend_info['momentum']}",
+                "streak_days": trend_info["streak_days"],
+                "momentum": trend_info["momentum"],
+            }
 
     return takas_data_map, cost_data_map

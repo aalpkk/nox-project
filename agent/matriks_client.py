@@ -193,16 +193,45 @@ class MatriksClient:
                 print(f"    ⚠️ {symbol} {key} flow hatası: {e}")
         return results
 
-    def get_settlement(self, symbol: str, top: int = 10) -> Optional[dict]:
+    def get_settlement(self, symbol: str, top: int = 10,
+                        dates: list = None) -> Optional[dict]:
         """Takas analizi — broker pozisyonları + maliyet.
+
+        Args:
+            symbol: Hisse kodu
+            top: En çok N kurum
+            dates: Tarih listesi (YYYY-MM-DD, max 6) — tarihsel karşılaştırma
 
         Returns:
             dict: {analysis: str} (metin formatında analiz)
         """
-        return self.call_tool("settlementAnalysis", {
+        args = {
             "symbol": symbol,
             "mode": "symbol",
             "top": top,
+        }
+        if dates:
+            args["dates"] = dates
+        return self.call_tool("settlementAnalysis", args)
+
+    def get_settlement_trend(self, agents: list,
+                              trend_type: str = "increasing") -> Optional[dict]:
+        """SM broker'ların ardışık pozisyon trendleri.
+
+        Batch başına 1 kez çağrılır — tüm hisseler için trend bilgisi döner.
+
+        Args:
+            agents: Broker kodları listesi (örn: ['CIY', 'MLB', 'YATFON'])
+            trend_type: 'increasing' (artan) veya 'decreasing' (azalan)
+
+        Returns:
+            dict: {analysis: str} (metin formatında trend analizi)
+        """
+        return self.call_tool("settlementAnalysis", {
+            "mode": "trend",
+            "agents": agents,
+            "trendType": trend_type,
+            "top": 50,
         })
 
     def get_market_price(self, symbol: str) -> Optional[dict]:
@@ -217,21 +246,44 @@ class MatriksClient:
             "includeDetails": True,
         })
 
+    # SM broker kodları — settlement trend çağrısı için
+    _SM_AGENTS = [
+        "CIY", "MLB", "DBY", "GSM", "JPM", "UBS", "MRL", "HSB",
+        "NOM", "MOR", "BAR", "BNP", "MAC", "WOD", "VIR", "CTD",
+        "YATFON", "EMKFON",
+    ]
+
     def fetch_batch(self, tickers: list, include_settlement: bool = True) -> dict:
         """Toplu veri çek — her ticker için 4 periyot flow + settlement + price.
 
-        Hisse başına: 4 flow (G/H/A/3A) + 1 settlement + 1 price = 6 çağrı.
-        50 hisse ≈ 150 saniye (0.5s rate limit).
+        Hisse başına: 4 flow (G/H/A/3A) + 1 settlement(+dates) + 1 price = 6 çağrı.
+        + batch başına 1 trend çağrısı (SM ardışık birikim).
+        50 hisse ≈ 155 saniye (0.5s rate limit).
 
         Args:
             tickers: Hisse kodu listesi
             include_settlement: Settlement analizi dahil et (maliyet avantajı için)
 
         Returns:
-            dict: {TICKER: {flows: {daily, weekly, monthly, quarterly},
-                            settlement, price}}
+            dict: {TICKER: {flows, settlement, price},
+                   _trend: {analysis: str}}
         """
         results = {}
+
+        # Batch başına 1 kez: SM ardışık birikim trendleri
+        try:
+            trend = self.get_settlement_trend(self._SM_AGENTS)
+            if trend:
+                results["_trend"] = trend
+                print("  Matriks: SM trend verisi alındı")
+        except Exception as e:
+            print(f"  ⚠️ Matriks trend hatası: {e}")
+
+        # Settlement tarih parametresi: bugün + 1 hafta önce
+        today = datetime.now(_TZ_TR).date()
+        week_ago = today - timedelta(days=9)  # ~5 iş günü + hafta sonu
+        settle_dates = [week_ago.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")]
+
         total = len(tickers)
         for i, ticker in enumerate(tickers, 1):
             try:
@@ -243,7 +295,7 @@ class MatriksClient:
                     data["flows"] = flows
 
                 if include_settlement:
-                    settlement = self.get_settlement(ticker)
+                    settlement = self.get_settlement(ticker, dates=settle_dates)
                     if settlement:
                         data["settlement"] = settlement
 
