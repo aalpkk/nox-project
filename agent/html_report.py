@@ -103,6 +103,18 @@ def _prepare_lists_json(lists_dict, max_per_list=15):
                     entry['breakout_fusion'] = sig['breakout_fusion']
                 if sig.get('breakout_tier'):
                     entry['breakout_tier'] = sig['breakout_tier']
+                # ICE kurumsal veriler
+                if sig.get('ice_mult') is not None:
+                    entry['ice_mult'] = sig['ice_mult']
+                    entry['ice_icon'] = sig.get('ice_icon', '')
+                if sig.get('cost_ratio'):
+                    entry['cost_ratio'] = sig['cost_ratio']
+                    entry['cost_value'] = sig.get('cost_value', '')
+                if sig.get('streak_days'):
+                    entry['streak_days'] = sig['streak_days']
+                    entry['streak_momentum'] = sig.get('streak_momentum', '')
+                if sig.get('position_change_pct') is not None:
+                    entry['position_change_pct'] = sig['position_change_pct']
             entries.append(entry)
         result[key] = {
             'label': _LIST_LABELS.get(key, key),
@@ -160,6 +172,18 @@ def _prepare_overlap_json(lists_dict, max_per_group=15):
                 entry['brk_ml_s'] = meta['brk_ml_s']
             if meta.get('brk_avoid'):
                 entry['brk_avoid'] = True
+            # ICE kurumsal veriler
+            if meta.get('ice_mult') is not None:
+                entry['ice_mult'] = meta['ice_mult']
+                entry['ice_icon'] = meta.get('ice_icon', '')
+            if meta.get('cost_ratio'):
+                entry['cost_ratio'] = meta['cost_ratio']
+                entry['cost_value'] = meta.get('cost_value', '')
+            if meta.get('streak_days'):
+                entry['streak_days'] = meta['streak_days']
+                entry['streak_momentum'] = meta.get('streak_momentum', '')
+            if meta.get('position_change_pct') is not None:
+                entry['position_change_pct'] = meta['position_change_pct']
         groups.setdefault(oc, []).append(entry)
     # Her grubun ilk max_per_group'unu al, buyuk overlap_count once
     result = []
@@ -1134,12 +1158,30 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
                 brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
             }}
+            // ICE kurumsal badge
+            let iceBadge = '';
+            if (item.ice_mult != null) {{
+                const iceColor = item.ice_mult >= 1.15 ? '#4ade80' : item.ice_mult >= 1.02 ? '#fbbf24' : item.ice_mult >= 0.90 ? '#a1a1aa' : '#f87171';
+                let iceExtra = '';
+                if (item.streak_days >= 3) {{
+                    const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
+                    iceExtra += ` str=${{item.streak_days}}g${{mIcon}}`;
+                }}
+                if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
+                    const sign = item.position_change_pct > 0 ? '+' : '';
+                    iceExtra += ` Δ${{sign}}${{item.position_change_pct.toFixed(1)}}%`;
+                }}
+                if (item.cost_ratio) {{
+                    iceExtra += ` r=${{item.cost_ratio.toFixed(2)}}`;
+                }}
+                iceBadge = `<span style="background:${{iceColor}}18;color:${{iceColor}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{iceExtra}}</span>`;
+            }}
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 ${{listsTag ? `<span class="lists-tag">${{listsTag}}</span>` : ''}}
                 <span class="reasons">${{reasons}}</span>
-                ${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}
+                ${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{iceBadge}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -1251,11 +1293,29 @@ const SECTOR_SUMMARY = {sector_summary_json};
                     sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
                 }}
             }}
+            // ICE kurumsal badge
+            let iceBadge = '';
+            if (item.ice_mult != null) {{
+                const iceColor = item.ice_mult >= 1.15 ? '#4ade80' : item.ice_mult >= 1.02 ? '#fbbf24' : item.ice_mult >= 0.90 ? '#a1a1aa' : '#f87171';
+                let iceExtra = '';
+                if (item.streak_days >= 3) {{
+                    const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
+                    iceExtra += ` str=${{item.streak_days}}g${{mIcon}}`;
+                }}
+                if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
+                    const sign = item.position_change_pct > 0 ? '+' : '';
+                    iceExtra += ` Δ${{sign}}${{item.position_change_pct.toFixed(1)}}%`;
+                }}
+                if (item.cost_ratio) {{
+                    iceExtra += ` r=${{item.cost_ratio.toFixed(2)}}`;
+                }}
+                iceBadge = `<span style="background:${{iceColor}}18;color:${{iceColor}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{iceExtra}}</span>`;
+            }}
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{gateTag}}
+                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{gateTag}}${{iceBadge}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
@@ -1338,11 +1398,29 @@ const SECTOR_SUMMARY = {sector_summary_json};
                 const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
                 brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
             }}
+            // ICE kurumsal badge
+            let iceBadge = '';
+            if (item.ice_mult != null) {{
+                const iceColor = item.ice_mult >= 1.15 ? '#4ade80' : item.ice_mult >= 1.02 ? '#fbbf24' : item.ice_mult >= 0.90 ? '#a1a1aa' : '#f87171';
+                let iceExtra = '';
+                if (item.streak_days >= 3) {{
+                    const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
+                    iceExtra += ` str=${{item.streak_days}}g${{mIcon}}`;
+                }}
+                if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
+                    const sign = item.position_change_pct > 0 ? '+' : '';
+                    iceExtra += ` Δ${{sign}}${{item.position_change_pct.toFixed(1)}}%`;
+                }}
+                if (item.cost_ratio) {{
+                    iceExtra += ` r=${{item.cost_ratio.toFixed(2)}}`;
+                }}
+                iceBadge = `<span style="background:${{iceColor}}18;color:${{iceColor}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{iceExtra}}</span>`;
+            }}
             html += `<div class="overlap-item">
                 <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="lists-tag">${{listsTag}}${{relaxed}}</span>
                 <span class="reasons-text">${{reason0}}</span>
-                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}
+                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{iceBadge}}
                 <span class="quality">${{item.quality}}p</span>
             </div>`;
         }});

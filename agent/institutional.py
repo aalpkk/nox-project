@@ -645,6 +645,14 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
         metrics.update({f"snap_{k}": v for k, v in snap_m.items()})
     if mkk_m:
         metrics.update({f"mkk_{k}": v for k, v in mkk_m.items()})
+    if cost_data:
+        if cost_data.get("cost_ratio"):
+            metrics["cost_ratio"] = cost_data["cost_ratio"]
+        if cost_data.get("streak_days"):
+            metrics["streak_days"] = cost_data["streak_days"]
+            metrics["streak_momentum"] = cost_data.get("momentum", "")
+        if cost_data.get("position_change_pct") is not None:
+            metrics["position_change_pct"] = cost_data["position_change_pct"]
 
     return ICEResult(
         ticker=ticker,

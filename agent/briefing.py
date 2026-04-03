@@ -1719,12 +1719,31 @@ def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results=None)
             t = ice.labels.get("kurumsal_teyit")
             b = ice.labels.get("tasinan_birikim")
             kv = ice.labels.get("kisa_vade")
+            ma = ice.labels.get("maliyet_avantaji")
             t_s = t.value[:3] if t else "?"
             b_s = b.value[:3] if b else "?"
             kv_s = kv.value[:4] if kv else "?"
             dt20 = ice.metrics.get("takas_20_change")
             dt_str = f" ΔT20={dt20:+,.0f}" if dt20 is not None else ""
-            parts.append(f"×{ice.multiplier:.2f}{ice.icon} T={t_s} B={b_s} KV={kv_s}{dt_str}")
+
+            # Maliyet + trend ek bilgileri
+            extras = []
+            cr = ice.metrics.get("cost_ratio")
+            if cr:
+                _CR_TAG = {"guclu": "💪", "avantaj": "✅", "notr": "", "risk": "⚠", "yuksek_risk": "🔻"}
+                ma_tag = _CR_TAG.get(ma.value, "") if ma else ""
+                extras.append(f"r={cr:.2f}{ma_tag}")
+            streak = ice.metrics.get("streak_days", 0)
+            if streak >= 3:
+                mom = ice.metrics.get("streak_momentum", "")
+                mom_short = "💪" if mom == "GÜÇLÜ" else ""
+                extras.append(f"streak={streak}g{mom_short}")
+            dpoz = ice.metrics.get("position_change_pct")
+            if dpoz is not None and abs(dpoz) >= 0.5:
+                extras.append(f"Δpoz={dpoz:+.1f}%")
+            ext_str = f" [{' '.join(extras)}]" if extras else ""
+
+            parts.append(f"×{ice.multiplier:.2f}{ice.icon} T={t_s} B={b_s} KV={kv_s}{dt_str}{ext_str}")
 
     if not ice_shown and sms_scores:
         sms = sms_scores.get(ticker)
@@ -2841,6 +2860,30 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     # Sektör regime overlay (soft gate + badge)
     _sector_regime_overlay(lists_dict)
+
+    # ICE verilerini sinyallere inject et (HTML rapor için)
+    if ice_results:
+        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+            for item in lists_dict.get(key, []):
+                ticker = item[0]
+                sig_or_meta = item[3] if len(item) > 3 else {}
+                if isinstance(sig_or_meta, dict):
+                    ice = ice_results.get(ticker)
+                    if ice:
+                        sig_or_meta['ice_mult'] = ice.multiplier
+                        sig_or_meta['ice_icon'] = ice.icon
+                        cr = ice.metrics.get("cost_ratio")
+                        if cr:
+                            sig_or_meta['cost_ratio'] = cr
+                            ma = ice.labels.get("maliyet_avantaji")
+                            sig_or_meta['cost_value'] = ma.value if ma else ""
+                        streak = ice.metrics.get("streak_days", 0)
+                        if streak >= 3:
+                            sig_or_meta['streak_days'] = streak
+                            sig_or_meta['streak_momentum'] = ice.metrics.get("streak_momentum", "")
+                        dpoz = ice.metrics.get("position_change_pct")
+                        if dpoz is not None:
+                            sig_or_meta['position_change_pct'] = dpoz
 
     # Limit Order TP sinyalleri hesapla
     limit_tp = _compute_limit_tp_signals(lists_dict)
