@@ -23,8 +23,7 @@ load_dotenv(os.path.join(ROOT, '.env'))
 
 from agent.scanner_reader import (summarize_signals, SCREENER_NAMES,
                                    export_signals_json,
-                                   fetch_mkk_data, fetch_takas_data,
-                                   fetch_takas_history)
+                                   fetch_mkk_data)
 from agent.html_signals import fetch_all_html_signals
 from agent.macro import (fetch_macro_data, fetch_macro_snapshot, assess_macro_regime,
                          format_macro_summary, calc_category_regimes,
@@ -1751,7 +1750,7 @@ def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results=None)
             else:
                 parts.append(f"K%{k_pct:.0f}")
 
-    # Takas: net akış by tip (haftalık)
+    # Takas: net akış by tip (haftalık varsa, yoksa günlük)
     if takas_data:
         td = takas_data.get(ticker)
         if td:
@@ -1762,11 +1761,13 @@ def _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results=None)
             for k in kurumlar:
                 name = k.get('Aracı Kurum') or k.get('kurum') or ''
                 h_lot = k.get('Haftalık Fark') or k.get('haftalik_fark') or 0
+                g_lot = k.get('Günlük Fark') or k.get('gunluk_fark') or 0
+                lot = h_lot if h_lot != 0 else g_lot
                 tip = classify_kurum_sms(name)
-                net_by_tip[tip] = net_by_tip.get(tip, 0) + h_lot
-                if h_lot > top_buyer_lot:
+                net_by_tip[tip] = net_by_tip.get(tip, 0) + lot
+                if lot > top_buyer_lot:
                     top_buyer_name = name
-                    top_buyer_lot = h_lot
+                    top_buyer_lot = lot
 
             flow_parts = []
             for tip, short in [('yab_banka', 'YB'), ('fon', 'F'), ('prop', 'P')]:
@@ -2669,13 +2670,13 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         except Exception as e:
             print(f"  ⚠️ Sinyal JSON push hatası: {e}")
 
-    # 2. MKK verisi (VDS auto-fetch — çakışma skorunda kullanılır)
+    # 2. MKK verisi (GitHub Pages — çakışma skorunda kullanılır)
     mkk_data_map = None
     try:
         mkk_json = fetch_mkk_data()
         if mkk_json and mkk_json.get('data'):
             mkk_data_map = mkk_json['data']
-            print(f"  MKK: {len(mkk_data_map)} hisse (VDS/{mkk_json.get('extracted_at', '?')[:10]})")
+            print(f"  MKK: {len(mkk_data_map)} hisse ({mkk_json.get('extracted_at', '?')[:10]})")
     except Exception as e:
         print(f"  ⚠️ MKK veri hatası: {e}")
 
@@ -2685,55 +2686,63 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         latest_signals, None, min_score=1, mkk_data=mkk_data_map)
     print(f"  {len(confluence_results)} hisse çakışma skoru ≥ 1")
 
-    # 2b. SMS hesapla (takas verisi varsa)
+    # 2b. Matriks kurumsal veri (SMS + ICE + maliyet avantajı)
+    signal_tickers = list({s['ticker'] for s in latest_signals})
     sms_scores = None
     takas_data_map = None
     takas_extracted_at = None
-    try:
-        takas_json_sms = fetch_takas_data()
-        if takas_json_sms and takas_json_sms.get('data'):
-            takas_data_map = takas_json_sms['data']
-            takas_extracted_at = takas_json_sms.get('extracted_at')
-            sms_scores = calc_batch_sms(None, takas_data_map, mkk_data_map)
-            guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
-            dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
-            print(f"  SMS: {len(sms_scores)} hisse ({guclu}🟢 güçlü, {dagitim}🔴 dağıtım)")
-    except Exception as e:
-        print(f"  ⚠️ SMS hesaplama hatası: {e}")
-
-    # 2c. ICE hesapla (takas history varsa — SMS'e öncelikli)
     ice_results = None
+    cost_data_map = None
+
+    matriks_enabled = os.environ.get("MATRIKS_ENABLED", "0") == "1"
+    matriks_api_key = os.environ.get("MATRIKS_API_KEY", "")
+
+    if matriks_enabled and matriks_api_key:
+        print("\n⬡ Matriks kurumsal veri çekiliyor...")
+        try:
+            from agent.matriks_client import MatriksClient
+            from agent.matriks_adapter import process_matriks_batch
+
+            client = MatriksClient()
+            matriks_raw = client.fetch_batch(signal_tickers)
+
+            if matriks_raw:
+                takas_data_map, cost_data_map = process_matriks_batch(matriks_raw)
+                takas_extracted_at = now.strftime("%Y-%m-%d %H:%M")
+                print(f"  Matriks: {len(matriks_raw)} hisse veri alındı")
+
+                if cost_data_map:
+                    cost_vals = [c["value"] for c in cost_data_map.values() if c["value"] != "veri_yok"]
+                    print(f"  Maliyet avantajı: {len(cost_data_map)} hisse ({len(cost_vals)} cost verisi)")
+
+                # SMS hesapla (Matriks günlük akış → S2/S3 güçlü, S1/S4 kısıtlı)
+                if takas_data_map:
+                    sms_scores = calc_batch_sms(None, takas_data_map, mkk_data_map)
+                    guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
+                    dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
+                    print(f"  SMS: {len(sms_scores)} hisse ({guclu}🟢 güçlü, {dagitim}🔴 dağıtım)")
+        except Exception as e:
+            print(f"  ⚠️ Matriks veri hatası: {e}")
+    else:
+        if not matriks_enabled:
+            print("\n  ℹ️ MATRIKS_ENABLED=0 — kurumsal veri atlanıyor")
+        elif not matriks_api_key:
+            print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
+
+    # 2c. ICE hesapla (Matriks snapshot + maliyet avantajı)
     try:
-        takas_history = fetch_takas_history()
-        if takas_history:
-            signal_tickers = list({s['ticker'] for s in latest_signals})
+        if takas_data_map:
             ice_results = calc_batch_ice(
-                signal_tickers, takas_history, takas_data_map, mkk_data_map)
+                signal_tickers, None, takas_data_map, mkk_data_map,
+                cost_data_map=cost_data_map)
             if ice_results:
                 guclu_ice = sum(1 for r in ice_results.values() if r.multiplier >= 1.15)
                 red_ice = sum(1 for r in ice_results.values() if r.multiplier < 0.90)
-                partial = sum(1 for r in ice_results.values() if r.status == "partial")
+                cost_active = sum(1 for r in ice_results.values()
+                                  if r.labels.get("maliyet_avantaji")
+                                  and r.labels["maliyet_avantaji"].value != "veri_yok")
                 print(f"  ICE: {len(ice_results)} hisse ({guclu_ice} güçlü teyit, {red_ice} dağıtım riski"
-                      f"{f', {partial} kısmi veri' if partial else ''})")
-                # ICE/SMS fallback loglama
-                ice_tickers = set(ice_results.keys())
-                sms_only = set((sms_scores or {}).keys()) - ice_tickers
-                sms_fallback = len(sms_only & set(signal_tickers))
-                if sms_fallback:
-                    print(f"  ICE aktif: {len(ice_tickers)}/{len(signal_tickers)} | SMS fallback: {sms_fallback}")
-                # A/B karşılaştırma (ICE vs SMS, kalibrasyon)
-                if sms_scores and ice_results:
-                    diffs = []
-                    for t in sorted(ice_results.keys())[:10]:
-                        sms = sms_scores.get(t)
-                        ice_r = ice_results[t]
-                        if sms:
-                            sms_l = sms.label[0] if hasattr(sms, 'label') else '?'
-                            ice_l = ice_r.label[0]
-                            if sms_l != ice_l:
-                                diffs.append(f"{t}:SMS={sms.score}{sms_l}/ICE={ice_r.score_100}{ice_l}")
-                    if diffs:
-                        print(f"  A/B fark: {' | '.join(diffs[:8])}")
+                      f", {cost_active} maliyet verisi)")
     except Exception as e:
         print(f"  ⚠️ ICE hesaplama hatası: {e}")
 
@@ -3186,20 +3195,17 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
                 scr = SCREENER_NAMES.get(s.get('screener', ''), s.get('screener', '?'))
                 data_context.append(f"  {s['ticker']}: {scr} SAT")
 
-    # ── MKK + Takas verisi (VDS auto-fetch) — shortlist hisseleri için ──
+    # ── MKK kompakt özeti (sadece bilgi, skor etkisi yok) ──
     shortlist_tickers = set()
     if lists_dict:
         for list_name in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt'):
             for item in lists_dict.get(list_name, []):
                 shortlist_tickers.add(item[0])
 
-    # ── MKK/Takas kompakt özeti (sadece bilgi, skor etkisi yok) ──
     mkk_json = fetch_mkk_data()
-    takas_json = fetch_takas_data()
     has_sm_data = False
     if mkk_json and mkk_json.get('data'):
         mkk_data = mkk_json['data']
-        # Sadece shortlist hisselerinin MKK bilgisi (kompakt)
         mkk_lines = []
         for ticker in sorted(shortlist_tickers):
             mkk = mkk_data.get(ticker)
@@ -3212,12 +3218,6 @@ def _generate_ai_briefing(signal_summary, macro_result, confluence_results,
             has_sm_data = True
             data_context.append(f"\n## MKK Bilgi (tarih: {mkk_json.get('extracted_at', '?')[:10]}, sadece bilgi — skor etkisi yok)")
             data_context.extend(mkk_lines)
-
-    if takas_json and takas_json.get('data'):
-        has_sm_data = True
-        takas_data = takas_json['data']
-        takas_date = takas_json.get('extracted_at', '?')[:10]
-        data_context.append(f"\n## Takas Bilgi ({takas_date}, sadece bilgi — skor etkisi yok, etiket degistirme)")
 
     if not has_sm_data:
         data_context.append("\n## SM/Takas/MKK verisi YOK — bu verilere referans yapma")

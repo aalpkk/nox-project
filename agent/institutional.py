@@ -9,16 +9,16 @@ Etiket ayrımı:
   1. kurumsal_teyit = kısa/orta vade YÖN teyidi (DT20, cont20, dt_genis destek)
   2. tasinan_birikim = uzun vade KALICILIK (DT60, cont60, top3_pct, flow_efficiency)
   3. kisa_vade = son 5 gün davranışı (DT5, recent_strength)
-  4. maliyet_avantaji = Faz 2 (AKD/kademe verisi geldiğinde aktif)
+  4. maliyet_avantaji = SM avg cost vs fiyat (Matriks settlement verisi)
 
 Çarpan: 0.65 - 1.20 (scanner skoruna multiplier)
 
-Veri kaynakları (tümü VDS GUI otomasyon):
-  - Takas history (70g sliding window) — condense_snapshot net_tip + top3_alici_pct
-  - Takas snapshot (günlük) — kurum listesi, G/H/A/3A fark
-  - MKK — bireysel/kurumsal %, fark 1g/5g
+Veri kaynakları:
+  - Matriks institutionalFlow — günlük kurumsal akış (snapshot)
+  - Matriks settlementAnalysis — broker pozisyonları + maliyet (maliyet_avantaji)
+  - Takas history (70g sliding window) — opsiyonel, varsa ICE güçlenir
+  - MKK — bireysel/kurumsal %, fark 1g/5g (GitHub Pages)
   - Kademe — S/A bid/ask (Faz 3, henüz yok)
-  - AKD (aracı kurum dağılımı) — VDS'ten gelecek (Faz 2)
 
 SMS v1 backward compat: score/label/icon alanları mevcut erişim kalıplarıyla uyumlu.
 """
@@ -341,12 +341,22 @@ def _label_kurumsal_teyit(takas_metrics, snapshot_metrics=None):
             sm_a = (snapshot_metrics.get("yb_aylik", 0) +
                     snapshot_metrics.get("fon_aylik", 0) +
                     snapshot_metrics.get("prop_aylik", 0))
+            sm_g = (snapshot_metrics.get("yb_gunluk", 0) +
+                    snapshot_metrics.get("fon_gunluk", 0) +
+                    snapshot_metrics.get("prop_gunluk", 0))
             if sm_h > 0 and sm_a > 0:
                 return ICELabel("kurumsal_teyit", "zayif",
                                 f"snap H={sm_h:+,} A={sm_a:+,} (history yok)")
             elif sm_h > 0:
                 return ICELabel("kurumsal_teyit", "zayif",
                                 f"snap H={sm_h:+,} (history yok)")
+            # Matriks fallback: sadece günlük veri varsa (H/A=0)
+            elif sm_h == 0 and sm_a == 0 and sm_g > 0:
+                return ICELabel("kurumsal_teyit", "zayif",
+                                f"snap G={sm_g:+,} (sadece günlük)")
+            elif sm_g > 0:
+                return ICELabel("kurumsal_teyit", "zayif",
+                                f"snap G={sm_g:+,} H={sm_h:+,} (history yok)")
             return ICELabel("kurumsal_teyit", "yok",
                             "snap SM negatif (history yok)")
         return ICELabel("kurumsal_teyit", "yok", "veri yok")
@@ -418,10 +428,15 @@ def _label_tasinan_birikim(takas_metrics, snapshot_metrics=None):
                     f"ΔT60={dt60:+,} cont60={cont60:.0%} eff={eff60:.0%}{top3_tag}")
 
 
-def _label_maliyet_avantaji():
-    """Maliyet avantajı — Faz 2: AKD verisi geldiğinde aktif."""
-    return ICELabel("maliyet_avantaji", "veri_yok",
-                    "AKD/kademe verisi henüz aktif değil")
+def _label_maliyet_avantaji(cost_data=None):
+    """Maliyet avantajı — Matriks settlement verisinden SM avg cost vs fiyat.
+
+    cost_data: matriks_adapter.calc_cost_advantage() çıktısı
+        {value: "guclu"|"avantaj"|"notr"|"risk"|"yuksek_risk"|"veri_yok", detail: str}
+    """
+    if not cost_data or cost_data.get("value") == "veri_yok":
+        return ICELabel("maliyet_avantaji", "veri_yok", "maliyet verisi yok")
+    return ICELabel("maliyet_avantaji", cost_data["value"], cost_data["detail"])
 
 
 def _label_kisa_vade(takas_metrics, snapshot_metrics=None, mkk_metrics=None):
@@ -481,6 +496,8 @@ def _calc_multiplier(labels):
     notr (1.00): karışık / veri yetersiz
     zayif (0.85): teyit=yok + birikim=suphe
     red_flag (0.65): teyit=yok + kv=dagitim_riski
+
+    + maliyet_avantaji ayarlaması (±0.05 max)
     """
     teyit = labels.get("kurumsal_teyit")
     birikim = labels.get("tasinan_birikim")
@@ -490,24 +507,32 @@ def _calc_multiplier(labels):
     b = birikim.value if birikim else "suphe"
     k = kv.value if kv else "notr"
 
+    # Base multiplier belirleme
     if t == "var" and b == "guclu" and k == "destekliyor":
-        return 1.20
-    if t == "var" and b in ("guclu", "orta") and k != "dagitim_riski":
-        return 1.10
-    if t in ("var", "zayif") and b in ("guclu", "orta"):
-        return 1.05
-    if t == "var":
-        return 1.00
-    if t == "zayif":
-        if k == "dagitim_riski":
-            return 0.85
-        return 0.95
-    # t == "yok"
-    if k == "dagitim_riski":
-        return 0.65
-    if b == "suphe":
-        return 0.85
-    return 0.90
+        base_mult = 1.20
+    elif t == "var" and b in ("guclu", "orta") and k != "dagitim_riski":
+        base_mult = 1.10
+    elif t in ("var", "zayif") and b in ("guclu", "orta"):
+        base_mult = 1.05
+    elif t == "var":
+        base_mult = 1.00
+    elif t == "zayif":
+        base_mult = 0.85 if k == "dagitim_riski" else 0.95
+    elif k == "dagitim_riski":
+        base_mult = 0.65
+    elif b == "suphe":
+        base_mult = 0.85
+    else:
+        base_mult = 0.90
+
+    # Maliyet avantajı ayarlaması (tüm seviyelere uygulanır)
+    ma = labels.get("maliyet_avantaji")
+    if ma and ma.value not in ("veri_yok", "notr"):
+        _MA_ADJUST = {"guclu": +0.05, "avantaj": +0.03, "risk": -0.03, "yuksek_risk": -0.05}
+        adj = _MA_ADJUST.get(ma.value, 0)
+        base_mult = max(0.65, min(1.20, base_mult + adj))
+
+    return base_mult
 
 
 def _multiplier_to_sms_compat(mult):
@@ -543,15 +568,16 @@ def _multiplier_to_score_100(mult):
 # ══════════════════════════════════════════════════════════════
 
 def calc_ice(ticker, takas_history, takas_snapshot=None,
-             mkk_data=None, kademe_data=None):
+             mkk_data=None, kademe_data=None, cost_data=None):
     """Tek hisse ICE hesapla.
 
     Args:
         ticker: Hisse kodu
         takas_history: {date: {ticker: {net_tip: {...}, ...}}} (70g window)
-        takas_snapshot: {ticker: {kurumlar: [...]}} (günlük VDS format)
+        takas_snapshot: {ticker: {kurumlar: [...]}} (günlük VDS/Matriks format)
         mkk_data: {ticker: {bireysel_pct, kurumsal_pct, ...}}
         kademe_data: Faz 3 — şimdilik None
+        cost_data: matriks_adapter.calc_cost_advantage() çıktısı (maliyet avantajı)
 
     Returns:
         ICEResult veya None
@@ -588,7 +614,7 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
     labels = {
         "kurumsal_teyit": _label_kurumsal_teyit(takas_m, snap_m),
         "tasinan_birikim": _label_tasinan_birikim(takas_m, snap_m),
-        "maliyet_avantaji": _label_maliyet_avantaji(),
+        "maliyet_avantaji": _label_maliyet_avantaji(cost_data),
         "kisa_vade": _label_kisa_vade(takas_m, snap_m, mkk_m),
     }
 
@@ -615,16 +641,20 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
 
 
 def calc_batch_ice(tickers, takas_history, takas_snapshot=None,
-                   mkk_data=None, kademe_data=None):
+                   mkk_data=None, kademe_data=None, cost_data_map=None):
     """Toplu ICE hesapla (event-driven: sadece verilen ticker'lar).
+
+    Args:
+        cost_data_map: {ticker: {value, detail, ...}} — maliyet avantajı verisi
 
     Returns:
         dict[str, ICEResult]
     """
     results = {}
     for ticker in tickers:
+        cd = cost_data_map.get(ticker) if cost_data_map else None
         ice = calc_ice(ticker, takas_history, takas_snapshot,
-                       mkk_data, kademe_data)
+                       mkk_data, kademe_data, cost_data=cd)
         if ice:
             results[ticker] = ice
     return results

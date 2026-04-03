@@ -28,7 +28,7 @@ jobs:
       # Sinyaller artık GitHub Pages HTML'lerden okunuyor (tek kaynak)
       # Artifact download'a gerek yok
 
-      # Faz 1: Ön analiz shortlist — SM verileri + sinyal listesi
+      # Faz 1: Ön analiz shortlist — Matriks kurumsal + sinyal listesi
       - name: Send shortlist (Phase 1)
         run: python -m agent.briefing --shortlist --notify
         env:
@@ -39,6 +39,8 @@ jobs:
           BIST_PAGES_BASE_URL: "https://aalpkk.github.io/bist-signals"
           ML_SCORING_ENABLED: "1"
           BREAKOUT_ML_ENABLED: "1"
+          MATRIKS_ENABLED: "1"
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
@@ -52,6 +54,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ML_SCORING_ENABLED: "1"
           BREAKOUT_ML_ENABLED: "1"
+          MATRIKS_ENABLED: "1"
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
 
       - uses: actions/upload-artifact@v4
         with:
