@@ -181,13 +181,12 @@ class MatriksClient:
         results = {}
         for key, days in _PERIODS:
             try:
-                if days <= 1:
-                    flow = self.get_institutional_flow(symbol, top=top)
-                else:
-                    start, end = self._date_range(days)
-                    flow = self.get_institutional_flow(symbol, top=top,
-                                                       start_date=start, end_date=end)
-                if flow:
+                # Her zaman tarih aralığı geç — piyasa kapalıyken de dünün verisi gelsin
+                start, end = self._date_range(max(days, 2))
+                flow = self.get_institutional_flow(symbol, top=top,
+                                                   start_date=start, end_date=end)
+                # Boş veri kontrolü (topBuyers/topSellers boş olabilir)
+                if flow and (flow.get("topBuyers") or flow.get("topSellers")):
                     results[key] = flow
             except Exception as e:
                 print(f"    ⚠️ {symbol} {key} flow hatası: {e}")

@@ -606,7 +606,8 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
     mkk_m = _calc_mkk_metrics(mkk_data, ticker)
 
     # En az bir veri kaynağı olmalı
-    if not takas_m and not snap_m:
+    has_cost = cost_data and cost_data.get("value") != "veri_yok"
+    if not takas_m and not snap_m and not has_cost:
         return None
 
     # Status belirleme
@@ -617,9 +618,12 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
             warnings.append(f"INSUFFICIENT_WINDOW: {days} gün (min 10 önerilir)")
         else:
             status = "ok"
-    else:
+    elif snap_m:
         status = "no_history"
         warnings.append("NO_HISTORY: sadece snapshot verisi")
+    else:
+        status = "cost_only"
+        warnings.append("COST_ONLY: sadece maliyet verisi")
 
     if not snap_m:
         warnings.append("NO_SNAPSHOT: günlük takas verisi yok")

@@ -2750,7 +2750,7 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     # 2c. ICE hesapla (Matriks snapshot + maliyet avantajı)
     try:
-        if takas_data_map:
+        if takas_data_map or cost_data_map:
             ice_results = calc_batch_ice(
                 signal_tickers, None, takas_data_map, mkk_data_map,
                 cost_data_map=cost_data_map)
