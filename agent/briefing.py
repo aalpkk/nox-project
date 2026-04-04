@@ -877,6 +877,112 @@ def _get_sm_info(ticker, ice_results, sms_scores):
     return sm_val, sm_icon_str, mult_tag
 
 
+def _extract_list_tickers(lists_dict):
+    """Shortlist'teki benzersiz hisse kodlarını çıkar."""
+    tickers = set()
+    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for item in lists_dict.get(key, []):
+            tickers.add(item[0])
+    return list(tickers)
+
+
+def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_key, now):
+    """Matriks kurumsal veri çek + SMS/ICE hesapla.
+
+    Args:
+        tickers: Sadece bu hisseler için veri çekilir
+        mkk_data_map: MKK verisi
+        matriks_enabled: Feature flag
+        matriks_api_key: API key
+        now: Zaman damgası
+
+    Returns:
+        (sms_scores, takas_data_map, ice_results, cost_data_map)
+    """
+    sms_scores = None
+    takas_data_map = None
+    ice_results = None
+    cost_data_map = None
+
+    if not matriks_enabled or not matriks_api_key:
+        if not matriks_enabled:
+            print("\n  ℹ️ MATRIKS_ENABLED=0 — kurumsal veri atlanıyor")
+        elif not matriks_api_key:
+            print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
+        return sms_scores, takas_data_map, ice_results, cost_data_map
+
+    print(f"\n⬡ Matriks kurumsal veri çekiliyor ({len(tickers)} hisse)...")
+    try:
+        from agent.matriks_client import MatriksClient
+        from agent.matriks_adapter import process_matriks_batch
+
+        client = MatriksClient()
+        matriks_raw = client.fetch_batch(tickers)
+
+        if matriks_raw:
+            takas_data_map, cost_data_map = process_matriks_batch(matriks_raw)
+            print(f"  Matriks: {len(matriks_raw)} hisse veri alındı")
+
+            if cost_data_map:
+                cost_vals = [c["value"] for c in cost_data_map.values() if c["value"] != "veri_yok"]
+                print(f"  Maliyet avantajı: {len(cost_data_map)} hisse ({len(cost_vals)} cost verisi)")
+
+            # SMS hesapla
+            if takas_data_map:
+                sms_scores = calc_batch_sms(None, takas_data_map, mkk_data_map)
+                guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
+                dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
+                print(f"  SMS: {len(sms_scores)} hisse ({guclu}🟢 güçlü, {dagitim}🔴 dağıtım)")
+    except Exception as e:
+        print(f"  ⚠️ Matriks veri hatası: {e}")
+
+    # ICE hesapla
+    try:
+        if takas_data_map or cost_data_map:
+            ice_results = calc_batch_ice(
+                tickers, None, takas_data_map, mkk_data_map,
+                cost_data_map=cost_data_map)
+            if ice_results:
+                guclu_ice = sum(1 for r in ice_results.values() if r.multiplier >= 1.15)
+                red_ice = sum(1 for r in ice_results.values() if r.multiplier < 0.90)
+                cost_active = sum(1 for r in ice_results.values()
+                                  if r.labels.get("maliyet_avantaji")
+                                  and r.labels["maliyet_avantaji"].value != "veri_yok")
+                print(f"  ICE: {len(ice_results)} hisse ({guclu_ice} güçlü teyit, {red_ice} dağıtım riski"
+                      f", {cost_active} maliyet verisi)")
+    except Exception as e:
+        print(f"  ⚠️ ICE hesaplama hatası: {e}")
+
+    return sms_scores, takas_data_map, ice_results, cost_data_map
+
+
+def _inject_ice_data(lists_dict, ice_results):
+    """ICE verilerini sinyal dict'lerine inject et (HTML rapor için)."""
+    if not ice_results:
+        return
+    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for item in lists_dict.get(key, []):
+            ticker = item[0]
+            sig_or_meta = item[3] if len(item) > 3 else {}
+            if isinstance(sig_or_meta, dict):
+                ice = ice_results.get(ticker)
+                if ice:
+                    sig_or_meta['ice_mult'] = ice.multiplier
+                    sig_or_meta['ice_icon'] = ice.icon
+                    cr = ice.metrics.get("cost_ratio")
+                    if cr:
+                        sig_or_meta['cost_ratio'] = cr
+                        ma = ice.labels.get("maliyet_avantaji")
+                        sig_or_meta['cost_value'] = ma.value if ma else ""
+                    streak = ice.metrics.get("streak_days", 0)
+                    if streak >= 3:
+                        sig_or_meta['streak_days'] = streak
+                        sig_or_meta['streak_momentum'] = ice.metrics.get("streak_momentum", "")
+                    dpoz = ice.metrics.get("position_change_pct")
+                    if dpoz is not None:
+                        sig_or_meta['position_change_pct'] = dpoz
+
+
 def _compute_4_lists(latest_signals, confluence_results=None):
     """4 kaynak bazlı öncelikli hisse listesi oluştur.
 
@@ -2705,8 +2811,7 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         latest_signals, None, min_score=1, mkk_data=mkk_data_map)
     print(f"  {len(confluence_results)} hisse çakışma skoru ≥ 1")
 
-    # 2b. Matriks kurumsal veri (SMS + ICE + maliyet avantajı)
-    signal_tickers = list({s['ticker'] for s in latest_signals})
+    # ── Matriks kurumsal veri değişkenleri ──
     sms_scores = None
     takas_data_map = None
     takas_extracted_at = None
@@ -2715,55 +2820,6 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     matriks_enabled = os.environ.get("MATRIKS_ENABLED", "0") == "1"
     matriks_api_key = os.environ.get("MATRIKS_API_KEY", "")
-
-    if matriks_enabled and matriks_api_key:
-        print("\n⬡ Matriks kurumsal veri çekiliyor...")
-        try:
-            from agent.matriks_client import MatriksClient
-            from agent.matriks_adapter import process_matriks_batch
-
-            client = MatriksClient()
-            matriks_raw = client.fetch_batch(signal_tickers)
-
-            if matriks_raw:
-                takas_data_map, cost_data_map = process_matriks_batch(matriks_raw)
-                takas_extracted_at = now.strftime("%Y-%m-%d %H:%M")
-                print(f"  Matriks: {len(matriks_raw)} hisse veri alındı")
-
-                if cost_data_map:
-                    cost_vals = [c["value"] for c in cost_data_map.values() if c["value"] != "veri_yok"]
-                    print(f"  Maliyet avantajı: {len(cost_data_map)} hisse ({len(cost_vals)} cost verisi)")
-
-                # SMS hesapla (Matriks günlük akış → S2/S3 güçlü, S1/S4 kısıtlı)
-                if takas_data_map:
-                    sms_scores = calc_batch_sms(None, takas_data_map, mkk_data_map)
-                    guclu = sum(1 for s in sms_scores.values() if s.score >= 45)
-                    dagitim = sum(1 for s in sms_scores.values() if s.score < 15)
-                    print(f"  SMS: {len(sms_scores)} hisse ({guclu}🟢 güçlü, {dagitim}🔴 dağıtım)")
-        except Exception as e:
-            print(f"  ⚠️ Matriks veri hatası: {e}")
-    else:
-        if not matriks_enabled:
-            print("\n  ℹ️ MATRIKS_ENABLED=0 — kurumsal veri atlanıyor")
-        elif not matriks_api_key:
-            print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
-
-    # 2c. ICE hesapla (Matriks snapshot + maliyet avantajı)
-    try:
-        if takas_data_map or cost_data_map:
-            ice_results = calc_batch_ice(
-                signal_tickers, None, takas_data_map, mkk_data_map,
-                cost_data_map=cost_data_map)
-            if ice_results:
-                guclu_ice = sum(1 for r in ice_results.values() if r.multiplier >= 1.15)
-                red_ice = sum(1 for r in ice_results.values() if r.multiplier < 0.90)
-                cost_active = sum(1 for r in ice_results.values()
-                                  if r.labels.get("maliyet_avantaji")
-                                  and r.labels["maliyet_avantaji"].value != "veri_yok")
-                print(f"  ICE: {len(ice_results)} hisse ({guclu_ice} güçlü teyit, {red_ice} dağıtım riski"
-                      f", {cost_active} maliyet verisi)")
-    except Exception as e:
-        print(f"  ⚠️ ICE hesaplama hatası: {e}")
 
     # ── SHORTLIST MODE: sadece öncelikli hisse listesi oluştur ──
     if shortlist_only:
@@ -2778,6 +2834,16 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
         # Sektör regime overlay (soft gate + badge)
         _sector_regime_overlay(lists_dict)
+
+        # Shortlistteki benzersiz hisseleri çıkar (Matriks sadece bunlar için çekilecek)
+        shortlist_tickers = _extract_list_tickers(lists_dict)
+
+        # 2b. Matriks kurumsal veri (sadece shortlist hisseleri — ~50 hisse, ~2.5 dk)
+        sms_scores, takas_data_map, ice_results, cost_data_map = _fetch_matriks_pipeline(
+            shortlist_tickers, mkk_data_map, matriks_enabled, matriks_api_key, now)
+
+        # ICE verilerini sinyallere inject et
+        _inject_ice_data(lists_dict, ice_results)
 
         _LIST_LABELS = [
             ('alsat', '📋 AL/SAT Tarama'),
@@ -2843,10 +2909,9 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         print(f"  ⚠️ Makro veri hatası: {e}")
         macro_result = None
 
-    # Çakışmayı makro + SMS + ICE ile tekrar hesapla
+    # Çakışmayı makro ile tekrar hesapla (SMS/ICE shortlist sonrası eklenecek)
     confluence_results = calc_all_confluence(
-        latest_signals, macro_result, min_score=1, mkk_data=mkk_data_map,
-        sms_scores=sms_scores, ice_results=ice_results)
+        latest_signals, macro_result, min_score=1, mkk_data=mkk_data_map)
 
     # 4. Shortlist ÖNCE hesapla (AI'a shortlist verisini göndermek için)
     print("\n📋 4 liste + haberler hesaplanıyor...")
@@ -2861,29 +2926,13 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     # Sektör regime overlay (soft gate + badge)
     _sector_regime_overlay(lists_dict)
 
+    # 4a. Matriks kurumsal veri (sadece shortlist hisseleri — ~50 hisse, ~2.5 dk)
+    shortlist_tickers = _extract_list_tickers(lists_dict)
+    sms_scores, takas_data_map, ice_results, cost_data_map = _fetch_matriks_pipeline(
+        shortlist_tickers, mkk_data_map, matriks_enabled, matriks_api_key, now)
+
     # ICE verilerini sinyallere inject et (HTML rapor için)
-    if ice_results:
-        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
-            for item in lists_dict.get(key, []):
-                ticker = item[0]
-                sig_or_meta = item[3] if len(item) > 3 else {}
-                if isinstance(sig_or_meta, dict):
-                    ice = ice_results.get(ticker)
-                    if ice:
-                        sig_or_meta['ice_mult'] = ice.multiplier
-                        sig_or_meta['ice_icon'] = ice.icon
-                        cr = ice.metrics.get("cost_ratio")
-                        if cr:
-                            sig_or_meta['cost_ratio'] = cr
-                            ma = ice.labels.get("maliyet_avantaji")
-                            sig_or_meta['cost_value'] = ma.value if ma else ""
-                        streak = ice.metrics.get("streak_days", 0)
-                        if streak >= 3:
-                            sig_or_meta['streak_days'] = streak
-                            sig_or_meta['streak_momentum'] = ice.metrics.get("streak_momentum", "")
-                        dpoz = ice.metrics.get("position_change_pct")
-                        if dpoz is not None:
-                            sig_or_meta['position_change_pct'] = dpoz
+    _inject_ice_data(lists_dict, ice_results)
 
     # Limit Order TP sinyalleri hesapla
     limit_tp = _compute_limit_tp_signals(lists_dict)
