@@ -504,16 +504,18 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
 
     Args:
         matriks_data: MatriksClient.fetch_batch() çıktısı
-            {TICKER: {flows, settlement, price},
+            {TICKER: {flows, settlement, price, daily_flows?},
              _trend: {analysis: str}}
 
     Returns:
-        (takas_data_map, cost_data_map):
+        (takas_data_map, cost_data_map, takas_history):
             takas_data_map: {TICKER: {kurumlar: [...]}} — SMS input (G/H/A/3A dolu)
             cost_data_map: {TICKER: {value, detail, streak_days, ...}} — ICE maliyet_avantaji input
+            takas_history: {date: {TICKER: {net_tip, top3_alici_pct}}} — ICE history input
     """
     takas_data_map = {}
     cost_data_map = {}
+    takas_history = {}  # ICE history: {date: {ticker: {net_tip, top3_alici_pct}}}
 
     # Trend verisini parse et (batch düzeyinde, _trend key'i altında)
     trend_map = {}
@@ -536,6 +538,15 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
         if flows:
             td = flows_to_takas_data(flows, ticker)
             takas_data_map.update(td)
+
+        # Daily flows → ICE takas_history
+        daily_flows = data.get("daily_flows", {})
+        for date_str, flow_resp in daily_flows.items():
+            day_hist = flow_to_takas_history_day(flow_resp, ticker, date_str)
+            for d, d_data in day_hist.items():
+                if d not in takas_history:
+                    takas_history[d] = {}
+                takas_history[d].update(d_data)
 
         # Maliyet avantajı
         current_price = None
@@ -571,4 +582,4 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
                 "momentum": trend_info["momentum"],
             }
 
-    return takas_data_map, cost_data_map
+    return takas_data_map, cost_data_map, takas_history

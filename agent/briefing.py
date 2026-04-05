@@ -911,17 +911,30 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
             print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
         return sms_scores, takas_data_map, ice_results, cost_data_map
 
-    print(f"\n⬡ Matriks kurumsal veri çekiliyor ({len(tickers)} hisse)...")
+    # Tarihsel flow: MATRIKS_HISTORY_DAYS env var (default 20, 0=kapalı)
+    history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "20"))
+    include_history = history_days > 0
+
+    mode_str = f", {history_days}g tarihçe" if include_history else ""
+    print(f"\n⬡ Matriks kurumsal veri çekiliyor ({len(tickers)} hisse{mode_str})...")
+
+    takas_history = None
     try:
         from agent.matriks_client import MatriksClient
         from agent.matriks_adapter import process_matriks_batch
 
         client = MatriksClient()
-        matriks_raw = client.fetch_batch(tickers)
+        matriks_raw = client.fetch_batch(
+            tickers, include_history=include_history, history_days=history_days)
 
         if matriks_raw:
-            takas_data_map, cost_data_map = process_matriks_batch(matriks_raw)
+            takas_data_map, cost_data_map, takas_history = process_matriks_batch(matriks_raw)
             print(f"  Matriks: {len(matriks_raw)} hisse veri alındı")
+
+            if takas_history:
+                hist_days = len(takas_history)
+                hist_tickers = len(set(t for d in takas_history.values() for t in d))
+                print(f"  Tarihçe: {hist_days} gün × {hist_tickers} hisse")
 
             if cost_data_map:
                 cost_vals = [c["value"] for c in cost_data_map.values() if c["value"] != "veri_yok"]
@@ -938,18 +951,18 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
 
     # ICE hesapla
     try:
-        if takas_data_map or cost_data_map:
+        if takas_data_map or cost_data_map or takas_history:
             ice_results = calc_batch_ice(
-                tickers, None, takas_data_map, mkk_data_map,
+                tickers, takas_history, takas_data_map, mkk_data_map,
                 cost_data_map=cost_data_map)
             if ice_results:
+                full = sum(1 for r in ice_results.values() if r.status == "ok")
+                partial = sum(1 for r in ice_results.values() if r.status == "partial")
+                no_hist = sum(1 for r in ice_results.values() if r.status in ("no_history", "cost_only"))
                 guclu_ice = sum(1 for r in ice_results.values() if r.multiplier >= 1.15)
                 red_ice = sum(1 for r in ice_results.values() if r.multiplier < 0.90)
-                cost_active = sum(1 for r in ice_results.values()
-                                  if r.labels.get("maliyet_avantaji")
-                                  and r.labels["maliyet_avantaji"].value != "veri_yok")
-                print(f"  ICE: {len(ice_results)} hisse ({guclu_ice} güçlü teyit, {red_ice} dağıtım riski"
-                      f", {cost_active} maliyet verisi)")
+                print(f"  ICE: {len(ice_results)} hisse (tam={full}, kısmi={partial}, snapshot={no_hist}"
+                      f" | {guclu_ice}🟢 güçlü, {red_ice}🔴 dağıtım)")
     except Exception as e:
         print(f"  ⚠️ ICE hesaplama hatası: {e}")
 

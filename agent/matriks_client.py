@@ -245,6 +245,44 @@ class MatriksClient:
             "includeDetails": True,
         })
 
+    @staticmethod
+    def _business_days(n: int) -> list:
+        """Son N iş gününün tarih listesini döndür (dünden geriye).
+
+        Bugün henüz kapanmamış olabilir, dünden başlar.
+        """
+        today = datetime.now(_TZ_TR).date()
+        days = []
+        d = today - timedelta(days=1)
+        while len(days) < n:
+            if d.weekday() < 5:  # Pzt-Cum
+                days.append(d)
+            d -= timedelta(days=1)
+        return days
+
+    def get_daily_flow_history(self, symbol: str, days: int = 20,
+                                top: int = 10) -> dict:
+        """Son N iş günü için günlük flow verisi çek.
+
+        Her gün ayrı ayrı çekilir — ICE takas_history için.
+        N=20 → ~21 API çağrısı (tatiller hariç).
+
+        Returns:
+            {date_str: flow_response} — veri olan günler
+        """
+        bdays = self._business_days(days)
+        result = {}
+        for d in bdays:
+            ds = d.strftime("%Y-%m-%d")
+            try:
+                flow = self.get_institutional_flow(
+                    symbol, top=top, start_date=ds, end_date=ds)
+                if flow and (flow.get("topBuyers") or flow.get("topSellers")):
+                    result[ds] = flow
+            except Exception:
+                pass  # Tatil veya hata — atla
+        return result
+
     # SM broker kodları — settlement trend çağrısı için
     _SM_AGENTS = [
         "CIY", "MLB", "DBY", "GSM", "JPM", "UBS", "MRL", "HSB",
@@ -252,19 +290,22 @@ class MatriksClient:
         "YATFON", "EMKFON",
     ]
 
-    def fetch_batch(self, tickers: list, include_settlement: bool = True) -> dict:
+    def fetch_batch(self, tickers: list, include_settlement: bool = True,
+                    include_history: bool = False, history_days: int = 20) -> dict:
         """Toplu veri çek — her ticker için 4 periyot flow + settlement + price.
 
         Hisse başına: 4 flow (G/H/A/3A) + 1 settlement(+dates) + 1 price = 6 çağrı.
+        include_history=True ise: + N günlük daily flow = ~26 çağrı/hisse.
         + batch başına 1 trend çağrısı (SM ardışık birikim).
-        50 hisse ≈ 155 saniye (0.5s rate limit).
 
         Args:
             tickers: Hisse kodu listesi
             include_settlement: Settlement analizi dahil et (maliyet avantajı için)
+            include_history: Günlük flow tarihçesi çek (ICE history için)
+            history_days: Kaç iş günü geriye git (default 20)
 
         Returns:
-            dict: {TICKER: {flows, settlement, price},
+            dict: {TICKER: {flows, settlement, price, daily_flows?},
                    _trend: {analysis: str}}
         """
         results = {}
@@ -284,6 +325,11 @@ class MatriksClient:
         settle_dates = [week_ago.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")]
 
         total = len(tickers)
+        calls_per = 6 + (history_days if include_history else 0)
+        if include_history:
+            est_min = total * calls_per * _RATE_LIMIT_SEC / 60
+            print(f"  Matriks: ~{calls_per} çağrı/hisse × {total} = ~{est_min:.0f} dk tahmini")
+
         for i, ticker in enumerate(tickers, 1):
             try:
                 data = {}
@@ -302,10 +348,17 @@ class MatriksClient:
                 if price:
                     data["price"] = price
 
+                # Günlük flow tarihçesi (ICE history)
+                if include_history and history_days > 0:
+                    daily_flows = self.get_daily_flow_history(ticker, history_days)
+                    if daily_flows:
+                        data["daily_flows"] = daily_flows
+
                 if data:
                     results[ticker] = data
-                    if i % 10 == 0 or i == total:
-                        print(f"  Matriks: {i}/{total} hisse tamamlandı")
+                    if i % 5 == 0 or i == total:
+                        hist_info = f", {len(data.get('daily_flows', {}))}g tarihçe" if include_history else ""
+                        print(f"  Matriks: {i}/{total} hisse tamamlandı{hist_info}")
             except Exception as e:
                 print(f"  ⚠️ Matriks {ticker} hatası: {e}")
                 continue
