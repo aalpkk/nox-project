@@ -338,10 +338,10 @@ class MatriksClient:
         except Exception as e:
             print(f"  ⚠️ Matriks trend hatası: {e}")
 
-        # Settlement tarih parametresi: bugün + 1 hafta önce
-        today = datetime.now(_TZ_TR).date()
-        week_ago = today - timedelta(days=9)  # ~5 iş günü + hafta sonu
-        settle_dates = [week_ago.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")]
+        # Settlement tarih parametresi: son 2 iş günü (hafta sonu düzeltmeli)
+        bdays = self._business_days(5)  # son 5 iş günü
+        settle_dates = [bdays[-1].strftime("%Y-%m-%d"),  # 1 hafta önceki iş günü
+                        bdays[0].strftime("%Y-%m-%d")]   # son iş günü
 
         total = len(tickers)
         calls_per = 6 + (history_days if include_history else 0)
