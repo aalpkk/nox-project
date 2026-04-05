@@ -111,24 +111,41 @@ def flow_to_takas_data(flow_response: dict, symbol: str) -> dict:
 def flow_to_takas_history_day(flow_response: dict, symbol: str, date_str: str) -> dict:
     """Matriks institutionalFlow → ICE takas_history tek gün formatı.
 
-    Çıktı: {date_str: {TICKER: {net_tip: {yab_banka: N, ...}, top3_alici_pct: float}}}
+    Çıktı: {date_str: {TICKER: {net_tip: {...}, top3_alici_pct: float,
+            sm_buy_qty: int, sm_buy_vol: float, sm_sell_qty: int, sm_sell_vol: float}}}
+
+    sm_buy/sell_qty/vol: SM broker'ların (yab_banka + fon) alış/satış lot ve TL hacmi.
+    Dönemsel maliyet hesabı için: avg_cost = sum(sm_buy_vol) / sum(sm_buy_qty)
     """
-    # Tüm broker'ları sınıflandır ve net akışı tip bazında grupla
     tip_net = {}
     all_buyers = []
+
+    # SM (yab_banka + fon) volume/quantity biriktir
+    sm_buy_qty = 0
+    sm_buy_vol = 0.0
+    sm_sell_qty = 0
+    sm_sell_vol = 0.0
 
     for agent in flow_response.get("topBuyers", []):
         name = agent.get("name", "")
         tip = classify_kurum_sms(name)
         qty = agent.get("quantity", 0)
+        vol = agent.get("volume", 0)
         tip_net[tip] = tip_net.get(tip, 0) + qty
         all_buyers.append({"name": name, "quantity": qty})
+        if tip in ("yab_banka", "fon"):
+            sm_buy_qty += qty
+            sm_buy_vol += vol
 
     for agent in flow_response.get("topSellers", []):
         name = agent.get("name", "")
         tip = classify_kurum_sms(name)
-        qty = -abs(agent.get("quantity", 0))
-        tip_net[tip] = tip_net.get(tip, 0) + qty
+        qty = abs(agent.get("quantity", 0))
+        vol = abs(agent.get("volume", 0))
+        tip_net[tip] = tip_net.get(tip, 0) - qty
+        if tip in ("yab_banka", "fon"):
+            sm_sell_qty += qty
+            sm_sell_vol += vol
 
     # Top3 alıcı yüzdesi
     top3_pct = 0.0
@@ -142,6 +159,10 @@ def flow_to_takas_history_day(flow_response: dict, symbol: str, date_str: str) -
             symbol: {
                 "net_tip": tip_net,
                 "top3_alici_pct": round(top3_pct, 1),
+                "sm_buy_qty": sm_buy_qty,
+                "sm_buy_vol": round(sm_buy_vol, 2),
+                "sm_sell_qty": sm_sell_qty,
+                "sm_sell_vol": round(sm_sell_vol, 2),
             }
         }
     }
@@ -496,7 +517,146 @@ def calc_cost_advantage(settlement_brokers: list, current_price: float,
 
 
 # ══════════════════════════════════════════════════════════════
-# E. Batch İşleme — briefing.py entegrasyonu
+# G. AKD Dönemsel Maliyet (takas_history'den)
+# ══════════════════════════════════════════════════════════════
+
+def calc_period_cost(takas_history: dict, ticker: str,
+                     current_price: float, trend_info: dict = None) -> dict:
+    """AKD daily flow'dan SM dönemsel maliyet hesapla.
+
+    Her günün sm_buy_qty/sm_buy_vol alanlarından ağırlıklı ortalama alış fiyatı.
+    Settlement cost'tan farklı: o dönemdeki gerçek işlem fiyatları, toplam pozisyon değil.
+
+    Returns:
+        dict: {value, detail, sm_avg_cost, cost_ratio, sm_buy_days, sm_net_qty, ...}
+    """
+    if not takas_history or not current_price or current_price <= 0:
+        result = {"value": "veri_yok", "detail": "maliyet verisi yok"}
+        if trend_info:
+            result["streak_days"] = trend_info.get("streak_days", 0)
+            result["momentum"] = trend_info.get("momentum", "")
+        return result
+
+    total_buy_qty = 0
+    total_buy_vol = 0.0
+    total_sell_qty = 0
+    total_sell_vol = 0.0
+    buy_days = 0
+
+    for d in sorted(takas_history.keys()):
+        td = takas_history[d].get(ticker, {})
+        bq = td.get("sm_buy_qty", 0)
+        bv = td.get("sm_buy_vol", 0)
+        sq = td.get("sm_sell_qty", 0)
+        sv = td.get("sm_sell_vol", 0)
+        total_buy_qty += bq
+        total_buy_vol += bv
+        total_sell_qty += sq
+        total_sell_vol += sv
+        if bq > 0:
+            buy_days += 1
+
+    net_qty = total_buy_qty - total_sell_qty
+
+    if total_buy_qty == 0 and total_sell_qty == 0:
+        result = {"value": "veri_yok", "detail": "SM işlem yok"}
+        if trend_info:
+            result["streak_days"] = trend_info.get("streak_days", 0)
+            result["momentum"] = trend_info.get("momentum", "")
+        return result
+
+    # SM alış ağırlıklı ortalama fiyat
+    if total_buy_qty > 0:
+        sm_buy_avg = total_buy_vol / total_buy_qty
+    else:
+        sm_buy_avg = 0
+
+    # SM satış ağırlıklı ortalama fiyat
+    if total_sell_qty > 0:
+        sm_sell_avg = total_sell_vol / total_sell_qty
+    else:
+        sm_sell_avg = 0
+
+    # Net birikim maliyeti (alış ağırlıklı)
+    if net_qty > 0 and sm_buy_avg > 0:
+        cost_ratio = sm_buy_avg / current_price
+    elif net_qty <= 0 and sm_sell_avg > 0:
+        # Net satış — satış fiyatını referans al
+        cost_ratio = sm_sell_avg / current_price
+    else:
+        result = {"value": "veri_yok", "detail": "SM maliyet hesaplanamadı"}
+        if trend_info:
+            result["streak_days"] = trend_info.get("streak_days", 0)
+            result["momentum"] = trend_info.get("momentum", "")
+        return result
+
+    # Net yön
+    if net_qty > 0:
+        yon = "birikim"
+        ref_price = sm_buy_avg
+    else:
+        yon = "dagitim"
+        ref_price = sm_sell_avg
+
+    # Eşik belirleme
+    if net_qty > 0:
+        # Birikim: fiyattan düşük maliyetle aldıysa → avantaj
+        if cost_ratio < 0.95:
+            value = "guclu"
+            desc = f"SM %{(1-cost_ratio)*100:.0f} kârda, güçlü tutma"
+        elif cost_ratio < 1.00:
+            value = "avantaj"
+            desc = "SM hafif kârda"
+        elif cost_ratio < 1.05:
+            value = "notr"
+            desc = "SM başa baş"
+        else:
+            value = "risk"
+            desc = "SM zararda ama biriktiriyor"
+    else:
+        # Dağıtım: satıyorlar
+        if cost_ratio < 0.95:
+            value = "risk"
+            desc = f"SM kârda satıyor (%{(1-cost_ratio)*100:.0f} kâr)"
+        elif cost_ratio < 1.05:
+            value = "yuksek_risk"
+            desc = "SM başa başta satıyor"
+        else:
+            value = "yuksek_risk"
+            desc = f"SM zararda satıyor, baskı riski"
+
+    # Streak + trend
+    streak_days = 0
+    momentum = ""
+    if trend_info:
+        streak_days = trend_info.get("streak_days", 0)
+        momentum = trend_info.get("momentum", "")
+
+    n_days = len([d for d in takas_history if ticker in takas_history[d]])
+    parts = [f"{desc} — SM {yon} avg {ref_price:.2f} vs fiyat {current_price:.2f}",
+             f"(r={cost_ratio:.2f}, {n_days}g, net={net_qty:+,} lot)"]
+    if streak_days > 0:
+        parts.append(f"streak={streak_days}g {momentum}")
+    detail = " ".join(parts)
+
+    result = {
+        "value": value,
+        "detail": detail,
+        "sm_avg_cost": round(ref_price, 2),
+        "cost_ratio": round(cost_ratio, 4),
+        "sm_buy_avg": round(sm_buy_avg, 2) if sm_buy_avg else None,
+        "sm_sell_avg": round(sm_sell_avg, 2) if sm_sell_avg else None,
+        "sm_net_qty": net_qty,
+        "sm_buy_days": buy_days,
+    }
+    if streak_days > 0:
+        result["streak_days"] = streak_days
+        result["momentum"] = momentum
+    return result
+
+
+# ══════════════════════════════════════════════════════════════
+# H. Batch İşleme — briefing.py entegrasyonu
 # ══════════════════════════════════════════════════════════════
 
 def process_matriks_batch(matriks_data: dict) -> tuple:
@@ -548,33 +708,33 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
                     takas_history[d] = {}
                 takas_history[d].update(d_data)
 
-        # Maliyet avantajı
+        # Güncel fiyat
         current_price = None
         if price_data:
             pd = price_data.get("data", {})
             current_price = pd.get("price")
 
-        daily_flow = flows.get("daily")
-
-        # Settlement parse — broker listesi + tarihsel karşılaştırma
-        analysis_text = ""
-        if settlement:
-            analysis_text = settlement.get("analysis", "")
-            if isinstance(analysis_text, dict):
-                analysis_text = analysis_text.get("_raw_text", "")
-
-        brokers = parse_settlement_text(analysis_text) if analysis_text else []
-        settlement_hist = parse_settlement_history(analysis_text) if analysis_text else []
         trend_info = trend_map.get(ticker)
 
-        if brokers and current_price:
-            cost_data = calc_cost_advantage(
-                brokers, current_price, daily_flow,
-                settlement_history=settlement_hist,
-                trend_info=trend_info)
+    # ── Maliyet hesabı: takas_history oluştuktan sonra toplu hesapla ──
+    for ticker, data in matriks_data.items():
+        if ticker.startswith("_"):
+            continue
+
+        price_data = data.get("price")
+        current_price = None
+        if price_data:
+            pd = price_data.get("data", {})
+            current_price = pd.get("price")
+
+        trend_info = trend_map.get(ticker)
+
+        # AKD dönemsel maliyet (birincil kaynak)
+        if takas_history and current_price:
+            cost_data = calc_period_cost(takas_history, ticker, current_price,
+                                         trend_info=trend_info)
             cost_data_map[ticker] = cost_data
         elif trend_info:
-            # Maliyet verisi yok ama trend bilgisi var
             cost_data_map[ticker] = {
                 "value": "veri_yok",
                 "detail": f"maliyet yok — streak={trend_info['streak_days']}g {trend_info['momentum']}",
