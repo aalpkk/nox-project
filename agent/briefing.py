@@ -911,8 +911,9 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
             print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
         return sms_scores, takas_data_map, ice_results, cost_data_map
 
-    # Tarihsel flow: MATRIKS_HISTORY_DAYS env var (default 20, 0=kapalı)
-    history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "20"))
+    # Tarihsel flow: MATRIKS_HISTORY_DAYS env var (default 10, 0=kapalı)
+    # 10g × 50 hisse = ~500 çağrı (~10dk). 20g = ~1000 çağrı → 429 riski yüksek.
+    history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "10"))
     include_history = history_days > 0
 
     mode_str = f", {history_days}g tarihçe" if include_history else ""

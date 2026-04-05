@@ -19,9 +19,11 @@ from typing import Optional
 
 MCP_URL = "https://mcp.matriks.ai/mcp"
 _DEFAULT_CLIENT_ID = "33667"
-_RATE_LIMIT_SEC = 0.8  # 429 rate limit koruma — 0.5 çok agresif
+_RATE_LIMIT_SEC = 1.2  # 429 rate limit koruma — 1000+ çağrıda 0.8s yetmiyor
 _TIMEOUT = 30
 _MSG_ID_COUNTER = 0
+_429_COUNT = 0  # global 429 sayacı — çok fazla olursa history atlanır
+_429_MAX = 5    # bu kadar 429'dan sonra history çekmeyi durdur
 
 _TZ_TR = timezone(timedelta(hours=3))
 
@@ -75,9 +77,11 @@ class MatriksClient:
             resp = requests.post(MCP_URL, headers=headers, json=msg, timeout=_TIMEOUT)
 
             if resp.status_code == 429:
+                global _429_COUNT
+                _429_COUNT += 1
                 wait = min(5 * (2 ** attempt), 30)  # 5, 10, 20, 30 saniye
                 if attempt < max_retries:
-                    print(f"    ⏳ Rate limit (429), {wait}s bekleniyor...")
+                    print(f"    ⏳ Rate limit (429 #{_429_COUNT}), {wait}s bekleniyor...")
                     time.sleep(wait)
                     # Session sıfırla — 429 sonrası yeni session gerekebilir
                     self.session_id = None
@@ -87,7 +91,7 @@ class MatriksClient:
                         headers["MCP-Session-ID"] = self.session_id
                     continue
                 else:
-                    print(f"    ⚠️ Rate limit aşılamadı ({max_retries} retry)")
+                    print(f"    ⚠️ Rate limit aşılamadı ({max_retries} retry, toplam {_429_COUNT} adet 429)")
                     return None
             break
 
@@ -368,10 +372,15 @@ class MatriksClient:
                     data["price"] = price
 
                 # Günlük flow tarihçesi (ICE history)
-                if include_history and history_days > 0:
+                # 429 bütçesi aşıldıysa history atla
+                if include_history and history_days > 0 and _429_COUNT < _429_MAX:
                     daily_flows = self.get_daily_flow_history(ticker, history_days)
                     if daily_flows:
                         data["daily_flows"] = daily_flows
+                elif include_history and _429_COUNT >= _429_MAX:
+                    if i == 1 or (i > 1 and _429_COUNT == _429_MAX):
+                        print(f"  ⚠️ {_429_COUNT} adet 429 — kalan hisseler için history atlanıyor")
+                    include_history = False  # Kalan hisseler için kapat
 
                 if data:
                     results[ticker] = data
