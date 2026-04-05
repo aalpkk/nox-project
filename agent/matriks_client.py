@@ -19,7 +19,7 @@ from typing import Optional
 
 MCP_URL = "https://mcp.matriks.ai/mcp"
 _DEFAULT_CLIENT_ID = "33667"
-_RATE_LIMIT_SEC = 0.5
+_RATE_LIMIT_SEC = 0.8  # 429 rate limit koruma — 0.5 çok agresif
 _TIMEOUT = 30
 _MSG_ID_COUNTER = 0
 
@@ -60,7 +60,7 @@ class MatriksClient:
         self._last_call = time.time()
 
     def _send(self, msg: dict) -> Optional[dict]:
-        """JSON-RPC mesajı gönder, yanıt döndür."""
+        """JSON-RPC mesajı gönder, yanıt döndür. 429 rate limit'te otomatik retry."""
         headers = {
             "Content-Type": "application/json",
             "X-Client-ID": self.client_id,
@@ -69,8 +69,27 @@ class MatriksClient:
         if self.session_id:
             headers["MCP-Session-ID"] = self.session_id
 
-        self._rate_wait()
-        resp = requests.post(MCP_URL, headers=headers, json=msg, timeout=_TIMEOUT)
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            self._rate_wait()
+            resp = requests.post(MCP_URL, headers=headers, json=msg, timeout=_TIMEOUT)
+
+            if resp.status_code == 429:
+                wait = min(5 * (2 ** attempt), 30)  # 5, 10, 20, 30 saniye
+                if attempt < max_retries:
+                    print(f"    ⏳ Rate limit (429), {wait}s bekleniyor...")
+                    time.sleep(wait)
+                    # Session sıfırla — 429 sonrası yeni session gerekebilir
+                    self.session_id = None
+                    self._initialized = False
+                    self._ensure_init()
+                    if self.session_id:
+                        headers["MCP-Session-ID"] = self.session_id
+                    continue
+                else:
+                    print(f"    ⚠️ Rate limit aşılamadı ({max_retries} retry)")
+                    return None
+            break
 
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("MCP-Session-ID")
         if sid:
