@@ -53,6 +53,7 @@ jobs:
           BREAKOUT_ML_ENABLED: "1"
           MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
           MATRIKS_TIMEOUT: "300"
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
@@ -70,6 +71,7 @@ jobs:
           BREAKOUT_ML_ENABLED: "1"
           MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
 
       - uses: actions/upload-artifact@v4
         with:

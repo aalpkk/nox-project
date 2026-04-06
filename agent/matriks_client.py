@@ -18,7 +18,7 @@ from typing import Optional
 
 
 MCP_URL = "https://mcp.matriks.ai/mcp"
-_DEFAULT_CLIENT_ID = "33667"
+_DEFAULT_CLIENT_ID = "69d009f8e1bcb3134b2268ea"
 _RATE_LIMIT_SEC = 1.2  # 429 rate limit koruma — 1000+ çağrıda 0.8s yetmiyor
 _TIMEOUT = 30
 _MSG_ID_COUNTER = 0

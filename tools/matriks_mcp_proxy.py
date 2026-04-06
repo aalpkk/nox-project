@@ -8,7 +8,7 @@ import json
 import requests
 
 MCP_URL = "https://mcp.matriks.ai/mcp"
-CLIENT_ID = "33667"
+CLIENT_ID = "69d009f8e1bcb3134b2268ea"
 API_KEY = "***REDACTED_KEY***"
 
 session_id = None
