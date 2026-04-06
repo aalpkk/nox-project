@@ -255,39 +255,40 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     o = df['Open']
     v = df['Volume']
 
-    feats = pd.DataFrame(index=df.index)
+    # Dict'e topla, sonunda tek seferde DataFrame oluştur (fragmentation önlemi)
+    _c = {}
 
     # ═══════════════════════════════════════
     # A. FİYAT YAPISI (8)
     # ═══════════════════════════════════════
-    feats['close'] = c
-    feats['returns_1d'] = c.pct_change() * 100
-    feats['returns_5d'] = c.pct_change(5) * 100
-    feats['returns_10d'] = c.pct_change(10) * 100
+    _c['close'] = c
+    _c['returns_1d'] = c.pct_change() * 100
+    _c['returns_5d'] = c.pct_change(5) * 100
+    _c['returns_10d'] = c.pct_change(10) * 100
     hl_range = (h - l).replace(0, np.nan)
-    feats['close_position'] = (c - l) / hl_range  # Candle location (0-1)
-    feats['gap_pct'] = (o - c.shift(1)) / c.shift(1).replace(0, np.nan) * 100
+    _c['close_position'] = (c - l) / hl_range  # Candle location (0-1)
+    _c['gap_pct'] = (o - c.shift(1)) / c.shift(1).replace(0, np.nan) * 100
     ema21 = _ema(c, 21)
     ema55 = _ema(c, 55)
-    feats['ema21_dist_pct'] = (c / ema21.replace(0, np.nan) - 1) * 100
-    feats['ema55_dist_pct'] = (c / ema55.replace(0, np.nan) - 1) * 100
+    _c['ema21_dist_pct'] = (c / ema21.replace(0, np.nan) - 1) * 100
+    _c['ema55_dist_pct'] = (c / ema55.replace(0, np.nan) - 1) * 100
 
     # ═══════════════════════════════════════
     # B. TREND (12)
     # ═══════════════════════════════════════
     adx, plus_di, minus_di = _calc_adx_with_di(df, 14)
-    feats['adx_14'] = adx
+    _c['adx_14'] = adx
     adx_slope = (adx - adx.shift(5)) / 5
-    feats['adx_slope_5'] = adx_slope
-    feats['plus_di'] = plus_di
-    feats['minus_di'] = minus_di
-    feats['di_spread'] = plus_di - minus_di
-    feats['ema_trend_up'] = (ema21 > ema55).astype(int)
+    _c['adx_slope_5'] = adx_slope
+    _c['plus_di'] = plus_di
+    _c['minus_di'] = minus_di
+    _c['di_spread'] = plus_di - minus_di
+    _c['ema_trend_up'] = (ema21 > ema55).astype(int)
     st_dir = _calc_supertrend(df, 10, 3.0)
-    feats['supertrend_dir'] = st_dir
+    _c['supertrend_dir'] = st_dir
     pmax_dir = _calc_pmax(df)
-    feats['pmax_dir'] = pmax_dir
-    feats['phase_above_ema21'] = (c > ema21).astype(int)
+    _c['pmax_dir'] = pmax_dir
+    _c['phase_above_ema21'] = (c > ema21).astype(int)
 
     # HTF features
     if weekly_df is None and n >= 60:
@@ -302,28 +303,28 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
         w_ema21 = _ema(weekly_df['Close'], 21)
         w_ema55 = _ema(weekly_df['Close'], 55)
         w_trend_up = (w_ema21 > w_ema55).astype(int)
-        feats['htf_adx'] = w_adx.reindex(df.index, method='ffill')
-        feats['htf_adx_slope'] = w_adx_slope.reindex(df.index, method='ffill')
-        feats['htf_trend_up'] = w_trend_up.reindex(df.index, method='ffill')
+        _c['htf_adx'] = w_adx.reindex(df.index, method='ffill')
+        _c['htf_adx_slope'] = w_adx_slope.reindex(df.index, method='ffill')
+        _c['htf_trend_up'] = w_trend_up.reindex(df.index, method='ffill')
     else:
-        feats['htf_adx'] = np.nan
-        feats['htf_adx_slope'] = np.nan
-        feats['htf_trend_up'] = np.nan
+        _c['htf_adx'] = np.nan
+        _c['htf_adx_slope'] = np.nan
+        _c['htf_trend_up'] = np.nan
 
     # ═══════════════════════════════════════
     # C. MOMENTUM (10)
     # ═══════════════════════════════════════
     rsi14 = _calc_rsi(c, 14)
-    feats['rsi_14'] = rsi14
-    feats['rsi_2'] = _calc_rsi(c, 2)
+    _c['rsi_14'] = rsi14
+    _c['rsi_2'] = _calc_rsi(c, 2)
     macd_line, macd_signal, macd_hist = _calc_macd(c)
-    feats['macd_line'] = macd_line
-    feats['macd_signal'] = macd_signal
-    feats['macd_hist'] = macd_hist
+    _c['macd_line'] = macd_line
+    _c['macd_signal'] = macd_signal
+    _c['macd_hist'] = macd_hist
     wt1, wt2 = _calc_wavetrend(df)
-    feats['wt1'] = wt1
-    feats['wt2'] = wt2
-    feats['wt_bullish'] = (wt1 > wt2).astype(int)
+    _c['wt1'] = wt1
+    _c['wt2'] = wt2
+    _c['wt_bullish'] = (wt1 > wt2).astype(int)
 
     # Squeeze
     bb_mid = _sma(c, 20)
@@ -335,64 +336,64 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     kc_range = _rma(_true_range(df), 20) * 1.5
     kc_upper = kc_mid + kc_range
     kc_lower = kc_mid - kc_range
-    feats['squeeze_on'] = ((bb_lower > kc_lower) & (bb_upper < kc_upper)).astype(int)
+    _c['squeeze_on'] = ((bb_lower > kc_lower) & (bb_upper < kc_upper)).astype(int)
     highest = h.rolling(20).max()
     lowest = l.rolling(20).min()
     sq_mid = (highest + lowest) / 2
-    feats['squeeze_mom'] = c - (sq_mid + bb_mid) / 2
+    _c['squeeze_mom'] = c - (sq_mid + bb_mid) / 2
 
     # ═══════════════════════════════════════
     # D. VOLATİLİTE (6) — cross-stock comparable only
     # ═══════════════════════════════════════
-    feats['atr_14'] = atr_val
-    feats['atr_pct'] = atr_val / c.replace(0, np.nan) * 100
+    _c['atr_14'] = atr_val
+    _c['atr_pct'] = atr_val / c.replace(0, np.nan) * 100
     bb_range = (bb_upper - bb_lower).replace(0, np.nan)
-    feats['bb_pctb'] = (c - bb_lower) / bb_range
-    feats['bb_width'] = bb_range / bb_mid.replace(0, np.nan) * 100
+    _c['bb_pctb'] = (c - bb_lower) / bb_range
+    _c['bb_width'] = bb_range / bb_mid.replace(0, np.nan) * 100
     high_20 = h.rolling(20).max()
-    feats['drawdown_20'] = (c - high_20) / high_20.replace(0, np.nan) * 100
-    feats['daily_move_atr'] = (c - o) / atr_val.replace(0, np.nan)
+    _c['drawdown_20'] = (c - high_20) / high_20.replace(0, np.nan) * 100
+    _c['daily_move_atr'] = (c - o) / atr_val.replace(0, np.nan)
 
     # ═══════════════════════════════════════
     # E. HACİM (7)
     # ═══════════════════════════════════════
     vol_sma20 = _sma(v, 20)
     vol_sma30 = _sma(v, 30)
-    feats['vol_ratio_20'] = v / vol_sma20.replace(0, np.nan)
-    feats['vol_ratio_30'] = v / vol_sma30.replace(0, np.nan)
+    _c['vol_ratio_20'] = v / vol_sma20.replace(0, np.nan)
+    _c['vol_ratio_30'] = v / vol_sma30.replace(0, np.nan)
     cmf20 = _calc_cmf(df, 20)
-    feats['cmf_20'] = cmf20
+    _c['cmf_20'] = cmf20
     obv = _calc_obv(df)
     obv_sma20 = _sma(obv, 20)
-    feats['obv_trend'] = (obv > obv_sma20).astype(int)
+    _c['obv_trend'] = (obv > obv_sma20).astype(int)
     obv_ema10 = _ema(obv, 10)
-    feats['obv_slope_5'] = _linreg_slope(obv_ema10, 5)
-    feats['mfi_14'] = _calc_mfi(df, 14)
+    _c['obv_slope_5'] = _linreg_slope(obv_ema10, 5)
+    _c['mfi_14'] = _calc_mfi(df, 14)
     green_mask = c > o
-    feats['consecutive_green'] = _consecutive_count(green_mask)
+    _c['consecutive_green'] = _consecutive_count(green_mask)
 
     # ═══════════════════════════════════════
     # F. YAPI / SMC (6)
     # ═══════════════════════════════════════
     swing_bias_arr, bos_prop, choch_prop = _calc_smc(df)
-    feats['swing_bias'] = swing_bias_arr
+    _c['swing_bias'] = swing_bias_arr
     idx_arr = np.arange(n)
     bos_age = np.where(bos_prop == -999, np.nan, idx_arr - bos_prop)
     choch_age = np.where(choch_prop == -999, np.nan, idx_arr - choch_prop)
-    feats['bos_age'] = bos_age
-    feats['choch_age'] = choch_age
+    _c['bos_age'] = bos_age
+    _c['choch_age'] = choch_age
 
     pivot_highs = _find_pivot_highs(h, 5)
     last_pivot_high = pivot_highs.ffill()
-    feats['structure_break'] = (c > last_pivot_high * 1.002).astype(int)
+    _c['structure_break'] = (c > last_pivot_high * 1.002).astype(int)
 
     pivot_lows = _find_pivot_lows(l, 5)
     last_pl = pivot_lows.ffill()
     prev_pl = pivot_lows.ffill().shift(1)
-    feats['higher_low'] = (last_pl > prev_pl).astype(int)
+    _c['higher_low'] = (last_pl > prev_pl).astype(int)
 
     high_40 = h.rolling(40).max()
-    feats['near_40high'] = (c > high_40 * 0.97).astype(int)
+    _c['near_40high'] = (c > high_40 * 0.97).astype(int)
 
     # ═══════════════════════════════════════
     # G. AL/SAT Q SCORE PRİMİTİVLERİ (5) — regime.py exact
@@ -414,7 +415,7 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     range_atr = candle_range / atr_val.replace(0, np.nan)
 
     # Scoring (exact thresholds from markets/bist/regime.py lines 215-218)
-    feats['q_rvol_s'] = np.where(rvol >= 2, 25,
+    _c['q_rvol_s'] = np.where(rvol >= 2, 25,
                         np.where(rvol >= 0.5, 20,   # RVOL_THRESH = 0.5
                         np.where(rvol >= 1, 10, 0))).astype(float)
     # Fix: RVOL_THRESH=0.5 is lower than 1.0, so order matters
@@ -423,22 +424,22 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     # but >=1 should be 10?  Re-reading: the chain is if-elif, so:
     # rvol>=2→25, elif rvol>=0.5→20, elif rvol>=1→10 (never reached)
     # So effectively: >=2→25, >=0.5→20, <0.5→0
-    feats['q_rvol_s'] = np.where(rvol >= 2, 25,
+    _c['q_rvol_s'] = np.where(rvol >= 2, 25,
                         np.where(rvol >= 0.5, 20, 0)).astype(float)
 
-    feats['q_clv_s'] = np.where(clv >= 0.75, 25,
+    _c['q_clv_s'] = np.where(clv >= 0.75, 25,
                        np.where(clv >= 0.5, 15,
                        np.where(clv >= 0.25, 5, 0))).astype(float)
 
-    feats['q_wick_s'] = np.where(wick_ratio <= 0.15, 25,
+    _c['q_wick_s'] = np.where(wick_ratio <= 0.15, 25,
                         np.where(wick_ratio <= 0.3, 15,
                         np.where(wick_ratio <= 0.5, 5, 0))).astype(float)
 
-    feats['q_range_s'] = np.where(range_atr >= 1.2, 25,
+    _c['q_range_s'] = np.where(range_atr >= 1.2, 25,
                          np.where(range_atr >= 0.8, 15,
                          np.where(range_atr >= 0.5, 5, 0))).astype(float)
 
-    feats['q_total'] = feats['q_rvol_s'] + feats['q_clv_s'] + feats['q_wick_s'] + feats['q_range_s']
+    _c['q_total'] = _c['q_rvol_s'] + _c['q_clv_s'] + _c['q_wick_s'] + _c['q_range_s']
 
     # ═══════════════════════════════════════
     # H. NW BREADTH PRİMİTİVLERİ (5) — nox_v3_signals.py exact
@@ -447,26 +448,26 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
 
     # Sub-component 1: RSI thrust (50pt)
     br_rsi_thrust = ((rsi_min10 < 30) & (rsi14 > 55)).astype(int)
-    feats['br_rsi_thrust'] = br_rsi_thrust
+    _c['br_rsi_thrust'] = br_rsi_thrust
 
     # Sub-component 2: RSI gradual (25pt)
     rsi_delta5 = rsi14 - rsi14.shift(5)
     br_rsi_gradual = ((rsi_delta5 > 15) & (rsi14 > 40) & (rsi_min10 < 35)).astype(int)
-    feats['br_rsi_gradual'] = br_rsi_gradual
+    _c['br_rsi_gradual'] = br_rsi_gradual
 
     # Sub-component 3: AD proxy (25pt)
     consec_green = _consecutive_count(green_mask)
     br_ad_proxy = ((consec_green >= 3) & (v > vol_sma20 * 1.3)).astype(int)
-    feats['br_ad_proxy'] = br_ad_proxy
+    _c['br_ad_proxy'] = br_ad_proxy
 
     # Sub-component 4: EMA reclaim (15pt)
     br_ema_reclaim = ((c > ema21) & (c.shift(1) < ema21.shift(1))).astype(int)
-    feats['br_ema_reclaim'] = br_ema_reclaim
+    _c['br_ema_reclaim'] = br_ema_reclaim
 
     # Composite breadth score
     br_score = (br_rsi_thrust * 50 + br_rsi_gradual * 25 +
                 br_ad_proxy * 25 + br_ema_reclaim * 15).clip(0, 100).astype(float)
-    feats['br_score'] = br_score
+    _c['br_score'] = br_score
 
     # ═══════════════════════════════════════
     # I. NW REGIME SCORE PRİMİTİVLERİ (6) — nox_v3_signals.py exact
@@ -481,43 +482,43 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     adx_min20 = adx.rolling(20).min()
     rg_adx_rebound = ((adx - adx_min20) > 5).astype(float) * 15
 
-    feats['rg_slope_score'] = rg_slope_score
-    feats['rg_di_score'] = rg_di_score
-    feats['rg_ema_above'] = rg_ema_above
-    feats['rg_adx_rebound'] = rg_adx_rebound
-    feats['rg_was_trending'] = was_trending
+    _c['rg_slope_score'] = rg_slope_score
+    _c['rg_di_score'] = rg_di_score
+    _c['rg_ema_above'] = rg_ema_above
+    _c['rg_adx_rebound'] = rg_adx_rebound
+    _c['rg_was_trending'] = was_trending
 
     # Composite regime score
     rg_raw = (rg_slope_score + rg_di_score + rg_ema_above + rg_adx_rebound).clip(0, 100)
     rg_score = rg_raw * was_trending
-    feats['rg_score'] = rg_score
+    _c['rg_score'] = rg_score
 
     # Gate
-    feats['gate_open'] = ((br_score >= 25) | (rg_score >= 25)).astype(int)
+    _c['gate_open'] = ((br_score >= 25) | (rg_score >= 25)).astype(int)
 
     # ═══════════════════════════════════════
     # J. SELL SEVERITY PRİMİTİVLERİ (5) — nox_v3_signals.py exact
     # ═══════════════════════════════════════
     red_mask = c < o
     red_count = _consecutive_count(red_mask)
-    feats['red_count'] = red_count
-    feats['drawdown_20_pct'] = (c - high_20) / high_20.replace(0, np.nan) * 100
+    _c['red_count'] = red_count
+    _c['drawdown_20_pct'] = (c - high_20) / high_20.replace(0, np.nan) * 100
     high_close_5 = c.rolling(5).max()
     decline_5d_atr = (c - high_close_5) / atr_val.replace(0, np.nan)
-    feats['decline_5d_atr'] = decline_5d_atr
+    _c['decline_5d_atr'] = decline_5d_atr
 
     # Composite severity
     severity = pd.Series(0, index=df.index)
-    sev1 = (feats['daily_move_atr'] < -1.5) | (red_count >= 3) | (feats['drawdown_20_pct'] < -8)
+    sev1 = (_c['daily_move_atr'] < -1.5) | (red_count >= 3) | (_c['drawdown_20_pct'] < -8)
     severity = severity.where(~sev1, 1)
-    sev2 = (feats['daily_move_atr'] < -2.5) | ((red_count >= 5) & (decline_5d_atr < -3))
+    sev2 = (_c['daily_move_atr'] < -2.5) | ((red_count >= 5) & (decline_5d_atr < -3))
     severity = severity.where(~sev2, 2)
-    sev3 = (feats['daily_move_atr'] < -3.5) | (feats['drawdown_20_pct'] < -12)
+    sev3 = (_c['daily_move_atr'] < -3.5) | (_c['drawdown_20_pct'] < -12)
     severity = severity.where(~sev3, 3)
-    feats['sell_severity'] = severity.astype(int)
+    _c['sell_severity'] = severity.astype(int)
 
     # Pivot delta
-    feats['pivot_delta_pct'] = (c - last_pl) / last_pl.replace(0, np.nan) * 100
+    _c['pivot_delta_pct'] = (c - last_pl) / last_pl.replace(0, np.nan) * 100
 
     # ═══════════════════════════════════════
     # K. RT TPE PRİMİTİVLERİ (9+3) — regime_transition.py exact
@@ -526,19 +527,19 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     # -- Trend sub-components --
     rt_ema_bull = (c > ema21).astype(int)
     rt_st_bull = (st_dir == 1).astype(int)
-    feats['rt_ema_bull'] = rt_ema_bull
-    feats['rt_st_bull'] = rt_st_bull
+    _c['rt_ema_bull'] = rt_ema_bull
+    _c['rt_st_bull'] = rt_st_bull
 
     # Weekly trend up (reindexed)
     if weekly_df is not None and len(weekly_df) >= 20:
         w_ema21_rt = _ema(weekly_df['Close'], 21)
         w_trend_rising = (w_ema21_rt > w_ema21_rt.shift(1)).astype(int)
-        feats['rt_wk_trend_up'] = w_trend_rising.reindex(df.index, method='ffill')
+        _c['rt_wk_trend_up'] = w_trend_rising.reindex(df.index, method='ffill')
     else:
-        feats['rt_wk_trend_up'] = np.nan
+        _c['rt_wk_trend_up'] = np.nan
 
     # trend_score = ema_bull + st_bull + wk_trend_up
-    trend_s = rt_ema_bull + rt_st_bull + feats['rt_wk_trend_up'].fillna(0).astype(int)
+    trend_s = rt_ema_bull + rt_st_bull + _c['rt_wk_trend_up'].fillna(0).astype(int)
     trend_s = trend_s.clip(0, 3)
 
     # -- Participation sub-components --
@@ -546,9 +547,9 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     rt_rvol_high = (rvol >= 1.0).astype(int)
     obv_slope = _linreg_slope(obv_ema10, 5)
     rt_obv_slope_pos = (obv_slope > 0).astype(int)
-    feats['rt_cmf_pos'] = rt_cmf_pos
-    feats['rt_rvol_high'] = rt_rvol_high
-    feats['rt_obv_slope_pos'] = rt_obv_slope_pos
+    _c['rt_cmf_pos'] = rt_cmf_pos
+    _c['rt_rvol_high'] = rt_rvol_high
+    _c['rt_obv_slope_pos'] = rt_obv_slope_pos
 
     part_s = (rt_cmf_pos + rt_rvol_high + rt_obv_slope_pos).clip(0, 3)
 
@@ -557,17 +558,17 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     atr_sma20 = _sma(atr_val, 20)
     rt_atr_expanding = (atr_val > atr_sma20 * 1.05).astype(int)
     rt_di_bull = ((plus_di - minus_di) > 5).astype(int)
-    feats['rt_adx_slope_pos'] = rt_adx_slope_pos
-    feats['rt_atr_expanding'] = rt_atr_expanding
-    feats['rt_di_bull'] = rt_di_bull
+    _c['rt_adx_slope_pos'] = rt_adx_slope_pos
+    _c['rt_atr_expanding'] = rt_atr_expanding
+    _c['rt_di_bull'] = rt_di_bull
 
     exp_s = (rt_adx_slope_pos + rt_atr_expanding + rt_di_bull).clip(0, 3)
 
     # Composite scores
-    feats['trend_score'] = trend_s
-    feats['participation_score'] = part_s
-    feats['expansion_score'] = exp_s
-    feats['tpe_total'] = trend_s + part_s + exp_s
+    _c['trend_score'] = trend_s
+    _c['participation_score'] = part_s
+    _c['expansion_score'] = exp_s
+    _c['tpe_total'] = trend_s + part_s + exp_s
 
     # ═══════════════════════════════════════
     # L. RT REGIME + ENTRY + OE + EXIT (6) — regime_transition.py exact
@@ -575,7 +576,7 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
 
     # Regime label
     regime = _compute_regime_from_tpe(trend_s, part_s, exp_s)
-    feats['regime_score'] = regime
+    _c['regime_score'] = regime
 
     # Entry score (CORRECTED: from run_regime_transition.py)
     # Low vol: ATR% < 3.0
@@ -583,11 +584,11 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     # Growth room: regime <= 2
     # No pump: RVOL < 2.0
     entry_s = pd.Series(0, index=df.index)
-    entry_s = entry_s + (feats['atr_pct'] < 3.0).astype(int)
+    entry_s = entry_s + (_c['atr_pct'] < 3.0).astype(int)
     entry_s = entry_s + (adx_slope < 0).astype(int)
     entry_s = entry_s + (regime <= 2).astype(int)
     entry_s = entry_s + (rvol < 2.0).astype(int)
-    feats['entry_score'] = entry_s.clip(0, 4)
+    _c['entry_score'] = entry_s.clip(0, 4)
 
     # OE score (CORRECTED: from regime_transition.py)
     # RSI > 80, close > BB upper, 5-bar mom > 8%, EMA dist > 5%
@@ -598,30 +599,30 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     oe_s = oe_s + (mom_5 > 8).astype(int)
     ema_dist_abs = ((c / ema21.replace(0, np.nan) - 1) * 100).abs()
     oe_s = oe_s + (ema_dist_abs > 5).astype(int)
-    feats['oe_score'] = oe_s.clip(0, 4)
+    _c['oe_score'] = oe_s.clip(0, 4)
 
     # Pullback conditions (for H+PB detection)
-    feats['pb_ema_dist'] = ema_dist_abs
-    feats['pb_rsi_low'] = (rsi14 <= 55).astype(int)
+    _c['pb_ema_dist'] = ema_dist_abs
+    _c['pb_rsi_low'] = (rsi14 <= 55).astype(int)
 
     # Exit stage
-    feats['exit_stage'] = _compute_exit_stage(df, ema21, st_dir, adx_slope, cmf20, trend_s)
+    _c['exit_stage'] = _compute_exit_stage(df, ema21, st_dir, adx_slope, cmf20, trend_s)
 
     # Days in trade
-    feats['days_in_trade'] = _compute_days_in_trade(regime)
+    _c['days_in_trade'] = _compute_days_in_trade(regime)
 
     # ═══════════════════════════════════════
     # M. TAVAN PRİMİTİVLERİ (6)
     # ═══════════════════════════════════════
     prev_close = c.shift(1)
     limit_up = prev_close * 1.10
-    feats['is_tavan'] = (c >= limit_up * 0.995).astype(int)
-    feats['tavan_streak'] = _consecutive_count(feats['is_tavan'].astype(bool))
+    _c['is_tavan'] = (c >= limit_up * 0.995).astype(int)
+    _c['tavan_streak'] = _consecutive_count(_c['is_tavan'].astype(bool))
     # close_to_high: tavan-specific (close/high, NOT candle location value)
-    feats['close_to_high'] = c / h.replace(0, np.nan)
-    feats['tavan_locked'] = ((feats['is_tavan'] == 1) & (feats['close_to_high'] >= 0.95)).astype(int)
-    feats['hit_tavan_intraday'] = (h >= limit_up * 0.995).astype(int)
-    feats['recent_tavan_10d'] = feats['is_tavan'].rolling(10, min_periods=1).sum()
+    _c['close_to_high'] = c / h.replace(0, np.nan)
+    _c['tavan_locked'] = ((_c['is_tavan'] == 1) & (_c['close_to_high'] >= 0.95)).astype(int)
+    _c['hit_tavan_intraday'] = (h >= limit_up * 0.995).astype(int)
+    _c['recent_tavan_10d'] = _c['is_tavan'].rolling(10, min_periods=1).sum()
 
     # ═══════════════════════════════════════
     # N. RELATİF GÜÇ (3) — regime.py exact (RS_LEN1=10, RS_LEN2=60)
@@ -632,13 +633,13 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
         bench_ret_10 = xu_close.pct_change(10) * 100
         stock_ret_60 = c.pct_change(60) * 100
         bench_ret_60 = xu_close.pct_change(60) * 100
-        feats['rs_10'] = stock_ret_10 - bench_ret_10
-        feats['rs_60'] = stock_ret_60 - bench_ret_60
-        feats['rs_composite'] = feats['rs_10'] * 0.6 + feats['rs_60'] * 0.4
+        _c['rs_10'] = stock_ret_10 - bench_ret_10
+        _c['rs_60'] = stock_ret_60 - bench_ret_60
+        _c['rs_composite'] = _c['rs_10'] * 0.6 + _c['rs_60'] * 0.4
     else:
-        feats['rs_10'] = np.nan
-        feats['rs_60'] = np.nan
-        feats['rs_composite'] = np.nan
+        _c['rs_10'] = np.nan
+        _c['rs_60'] = np.nan
+        _c['rs_composite'] = np.nan
 
     # ═══════════════════════════════════════
     # O. PRE-BREAKOUT / BİRİKİM→BREAKOUT (22)
@@ -649,67 +650,67 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     range_5 = h.rolling(5).max() - l.rolling(5).min()
     range_20 = h.rolling(20).max() - l.rolling(20).min()
     range_40 = h.rolling(40).max() - l.rolling(40).min()
-    feats['range_contraction_5_20'] = range_5 / range_20.replace(0, np.nan)
-    feats['range_contraction_5_40'] = range_5 / range_40.replace(0, np.nan)
+    _c['range_contraction_5_20'] = range_5 / range_20.replace(0, np.nan)
+    _c['range_contraction_5_40'] = range_5 / range_40.replace(0, np.nan)
     atr_5 = _rma(_true_range(df), 5)
-    feats['atr_contraction_5_20'] = atr_5 / atr_val.replace(0, np.nan)
+    _c['atr_contraction_5_20'] = atr_5 / atr_val.replace(0, np.nan)
     bb_width_raw = bb_range / bb_mid.replace(0, np.nan)
-    feats['bb_width_pctile_20'] = bb_width_raw.rolling(60, min_periods=20).rank(pct=True)
+    _c['bb_width_pctile_20'] = bb_width_raw.rolling(60, min_periods=20).rank(pct=True)
 
     # O2. Hacim Birikim Paterni (5)
     vol_sma5 = _sma(v, 5)
-    feats['vol_dryup_ratio'] = vol_sma5 / vol_sma20.replace(0, np.nan)
-    feats['vol_surge_today'] = v / vol_sma5.replace(0, np.nan)
-    feats['vol_acceleration'] = (vol_sma5 - vol_sma5.shift(5)) / vol_sma5.shift(5).replace(0, np.nan)
-    feats['tl_volume_20d_avg'] = _sma(c * v, 20)
-    vol_dryup = feats['vol_dryup_ratio'].clip(upper=2)
-    vol_spike = feats['vol_surge_today'].clip(upper=5)
-    feats['vol_pattern_score'] = (2 - vol_dryup) * 2 + np.where(vol_spike > 2, vol_spike * 3, 0)
+    _c['vol_dryup_ratio'] = vol_sma5 / vol_sma20.replace(0, np.nan)
+    _c['vol_surge_today'] = v / vol_sma5.replace(0, np.nan)
+    _c['vol_acceleration'] = (vol_sma5 - vol_sma5.shift(5)) / vol_sma5.shift(5).replace(0, np.nan)
+    _c['tl_volume_20d_avg'] = _sma(c * v, 20)
+    vol_dryup = _c['vol_dryup_ratio'].clip(upper=2)
+    vol_spike = _c['vol_surge_today'].clip(upper=5)
+    _c['vol_pattern_score'] = (2 - vol_dryup) * 2 + np.where(vol_spike > 2, vol_spike * 3, 0)
 
     # O3. Momentum Oluşumu (4)
-    feats['rsi_momentum_5d'] = rsi14 - rsi14.shift(5)
-    feats['macd_hist_accel'] = macd_hist - macd_hist.shift(3)
+    _c['rsi_momentum_5d'] = rsi14 - rsi14.shift(5)
+    _c['macd_hist_accel'] = macd_hist - macd_hist.shift(3)
     higher_close_mask = c > c.shift(1)
-    feats['consecutive_higher_close'] = _consecutive_count(higher_close_mask)
+    _c['consecutive_higher_close'] = _consecutive_count(higher_close_mask)
     high_20d = h.rolling(20).max()
-    feats['close_vs_20d_high_pct'] = (c - high_20d) / high_20d.replace(0, np.nan) * 100
+    _c['close_vs_20d_high_pct'] = (c - high_20d) / high_20d.replace(0, np.nan) * 100
 
     # O4. Yapısal Yakınlık (4)
     high_52w = h.rolling(252, min_periods=60).max()
-    feats['dist_to_52w_high_pct'] = (c - high_52w) / high_52w.replace(0, np.nan) * 100
-    feats['dist_to_20d_high_pct'] = feats['close_vs_20d_high_pct']  # same calc
-    feats['near_52w_high'] = (c >= high_52w * 0.95).astype(int)
+    _c['dist_to_52w_high_pct'] = (c - high_52w) / high_52w.replace(0, np.nan) * 100
+    _c['dist_to_20d_high_pct'] = _c['close_vs_20d_high_pct']  # same calc
+    _c['near_52w_high'] = (c >= high_52w * 0.95).astype(int)
     low_20d = l.rolling(20).min()
-    feats['price_range_position_20'] = (c - low_20d) / (high_20d - low_20d).replace(0, np.nan)
+    _c['price_range_position_20'] = (c - low_20d) / (high_20d - low_20d).replace(0, np.nan)
 
     # O5. Yakın Iskalama / Öncü Sinyal (3)
     daily_ret_pct = (c / c.shift(1) - 1) * 100
-    feats['near_tavan_miss'] = ((daily_ret_pct >= 7) & (daily_ret_pct < 9.5)).astype(int)
-    feats['recent_near_tavan_5d'] = feats['near_tavan_miss'].rolling(5, min_periods=1).sum()
-    feats['max_daily_ret_5d'] = daily_ret_pct.rolling(5, min_periods=1).max()
+    _c['near_tavan_miss'] = ((daily_ret_pct >= 7) & (daily_ret_pct < 9.5)).astype(int)
+    _c['recent_near_tavan_5d'] = _c['near_tavan_miss'].rolling(5, min_periods=1).sum()
+    _c['max_daily_ret_5d'] = daily_ret_pct.rolling(5, min_periods=1).max()
 
     # O6. Relatif Güç İvmesi (2)
     if xu_df is not None and 'Close' in xu_df.columns and len(xu_df) >= 65:
-        feats['rs_acceleration'] = feats['rs_10'] - feats['rs_10'].shift(5)
+        _c['rs_acceleration'] = _c['rs_10'] - _c['rs_10'].shift(5)
     else:
-        feats['rs_acceleration'] = np.nan
+        _c['rs_acceleration'] = np.nan
     # market_tavan_count_10d: piyasa geneli, dışarıdan verilmeli — NaN olarak bırak
-    feats['market_tavan_count_10d'] = np.nan
+    _c['market_tavan_count_10d'] = np.nan
 
     # O7. Lag-1 Güvenli Feature'lar (8) — leakage-free versiyonlar
-    feats['returns_1d_lag1'] = feats['returns_1d'].shift(1)
-    feats['close_position_lag1'] = feats['close_position'].shift(1)
-    feats['close_to_high_lag1'] = feats['close_to_high'].shift(1)
+    _c['returns_1d_lag1'] = _c['returns_1d'].shift(1)
+    _c['close_position_lag1'] = _c['close_position'].shift(1)
+    _c['close_to_high_lag1'] = _c['close_to_high'].shift(1)
     daily_ret_pct_lag = daily_ret_pct.shift(1)
-    feats['max_daily_ret_5d_lag1'] = daily_ret_pct_lag.rolling(5, min_periods=1).max()
-    near_miss_lag = feats['near_tavan_miss'].shift(1)
-    feats['recent_near_tavan_5d_lag1'] = near_miss_lag.rolling(5, min_periods=1).sum()
-    feats['vol_surge_yesterday'] = v.shift(1) / _sma(v, 5).shift(1).replace(0, np.nan)
-    feats['consecutive_green_lag1'] = feats['consecutive_green'].shift(1)
-    is_tavan_lag = feats['is_tavan'].shift(1)
-    feats['recent_tavan_10d_lag1'] = is_tavan_lag.rolling(10, min_periods=1).sum()
+    _c['max_daily_ret_5d_lag1'] = daily_ret_pct_lag.rolling(5, min_periods=1).max()
+    near_miss_lag = _c['near_tavan_miss'].shift(1)
+    _c['recent_near_tavan_5d_lag1'] = near_miss_lag.rolling(5, min_periods=1).sum()
+    _c['vol_surge_yesterday'] = v.shift(1) / _sma(v, 5).shift(1).replace(0, np.nan)
+    _c['consecutive_green_lag1'] = _c['consecutive_green'].shift(1)
+    is_tavan_lag = _c['is_tavan'].shift(1)
+    _c['recent_tavan_10d_lag1'] = is_tavan_lag.rolling(10, min_periods=1).sum()
 
-    return feats
+    return pd.DataFrame(_c, index=df.index)
 
 
 # ═══════════════════════════════════════════
