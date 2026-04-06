@@ -22,8 +22,8 @@ _DEFAULT_CLIENT_ID = "33667"
 _RATE_LIMIT_SEC = 1.2  # 429 rate limit koruma — 1000+ çağrıda 0.8s yetmiyor
 _TIMEOUT = 30
 _MSG_ID_COUNTER = 0
-_429_COUNT = 0  # global 429 sayacı — çok fazla olursa history atlanır
-_429_MAX = 5    # bu kadar 429'dan sonra history çekmeyi durdur
+_429_COUNT = 0  # global 429 sayacı
+_429_MAX = 10   # bu kadar 429'dan sonra tüm API çağrılarını durdur (circuit breaker)
 
 _TZ_TR = timezone(timedelta(hours=3))
 
@@ -63,6 +63,12 @@ class MatriksClient:
 
     def _send(self, msg: dict) -> Optional[dict]:
         """JSON-RPC mesajı gönder, yanıt döndür. 429 rate limit'te otomatik retry."""
+        global _429_COUNT
+
+        # Global circuit breaker — çok fazla 429 aldıysa artık deneme
+        if _429_COUNT >= _429_MAX:
+            return None
+
         headers = {
             "Content-Type": "application/json",
             "X-Client-ID": self.client_id,
@@ -74,24 +80,24 @@ class MatriksClient:
         max_retries = 3
         for attempt in range(max_retries + 1):
             self._rate_wait()
-            resp = requests.post(MCP_URL, headers=headers, json=msg, timeout=_TIMEOUT)
+            try:
+                resp = requests.post(MCP_URL, headers=headers, json=msg, timeout=_TIMEOUT)
+            except Exception as e:
+                print(f"    ⚠️ HTTP hatası: {e}")
+                return None
 
             if resp.status_code == 429:
-                global _429_COUNT
                 _429_COUNT += 1
-                wait = min(5 * (2 ** attempt), 30)  # 5, 10, 20, 30 saniye
+                if _429_COUNT >= _429_MAX:
+                    print(f"    🛑 Circuit breaker: {_429_COUNT} adet 429 — Matriks API devre dışı")
+                    return None
+                wait = min(10 * (2 ** attempt), 60)  # 10, 20, 40, 60 saniye
                 if attempt < max_retries:
                     print(f"    ⏳ Rate limit (429 #{_429_COUNT}), {wait}s bekleniyor...")
                     time.sleep(wait)
-                    # Session sıfırla — 429 sonrası yeni session gerekebilir
-                    self.session_id = None
-                    self._initialized = False
-                    self._ensure_init()
-                    if self.session_id:
-                        headers["MCP-Session-ID"] = self.session_id
                     continue
                 else:
-                    print(f"    ⚠️ Rate limit aşılamadı ({max_retries} retry, toplam {_429_COUNT} adet 429)")
+                    print(f"    ⚠️ Rate limit aşılamadı ({max_retries} retry)")
                     return None
             break
 
@@ -101,11 +107,16 @@ class MatriksClient:
 
         if resp.status_code == 204:
             return None
-        return resp.json()
+        try:
+            return resp.json()
+        except Exception:
+            return None
 
     def _ensure_init(self):
         """MCP initialize + notifications/initialized handshake."""
         if self._initialized:
+            return
+        if _429_COUNT >= _429_MAX:
             return
         init_msg = {
             "jsonrpc": "2.0",
