@@ -31,6 +31,7 @@ jobs:
       # Faz 1: Ön analiz shortlist — Matriks kurumsal + sinyal listesi
       - name: Send shortlist (Phase 1)
         run: python -m agent.briefing --shortlist --notify
+        timeout-minutes: 45
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -41,10 +42,12 @@ jobs:
           BREAKOUT_ML_ENABLED: "1"
           MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_TIMEOUT: "300"
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
         run: python -m agent.briefing --notify
+        timeout-minutes: 45
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
