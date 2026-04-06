@@ -45,76 +45,258 @@ _TZ_TR = timezone(timedelta(hours=3))
 # ML SCORING OVERLAY v2 (3-Katmanlı, Feature flag: ML_SCORING_ENABLED)
 # ═══════════════════════════════════════════
 
+_YF_CACHE_PATH = os.path.join(ROOT, "output", "yf_price_cache.parquet")
+_YF_XU_CACHE_PATH = os.path.join(ROOT, "output", "yf_xu100_cache.parquet")
+
+
+def _normalize_yf_columns(df):
+    """yfinance DataFrame kolon isimlerini standartlaştır."""
+    col_map = {}
+    for col in df.columns:
+        cs = str(col).strip().lower()
+        if cs in ('close', 'adj close'):
+            col_map[col] = 'Close'
+        elif cs == 'open':
+            col_map[col] = 'Open'
+        elif cs == 'high':
+            col_map[col] = 'High'
+        elif cs == 'low':
+            col_map[col] = 'Low'
+        elif cs == 'volume':
+            col_map[col] = 'Volume'
+    if col_map:
+        df = df.rename(columns=col_map)
+    return df
+
+
+def _load_yf_cache():
+    """Cache'den fiyat verisi yükle. Returns: (price_data dict, xu_df, cache_end_date)."""
+    price_data = {}
+    xu_df = None
+    cache_end = None
+
+    if os.path.exists(_YF_CACHE_PATH):
+        try:
+            cached = pd.read_parquet(_YF_CACHE_PATH)
+            if 'ticker' in cached.columns:
+                for t, grp in cached.groupby('ticker'):
+                    df = grp.drop(columns=['ticker']).copy()
+                    df.index = pd.to_datetime(df.index)
+                    df = df.sort_index()
+                    if len(df) >= 80 and 'Close' in df.columns:
+                        price_data[t] = df
+                if price_data:
+                    cache_end = max(df.index.max() for df in price_data.values())
+                    cache_end = cache_end.date() if hasattr(cache_end, 'date') else cache_end
+                    print(f"  [Cache] {len(price_data)} hisse yüklendi (son: {cache_end})")
+        except Exception as e:
+            print(f"  [Cache] Okuma hatası: {e}")
+
+    if os.path.exists(_YF_XU_CACHE_PATH):
+        try:
+            xu_df = pd.read_parquet(_YF_XU_CACHE_PATH)
+            xu_df.index = pd.to_datetime(xu_df.index)
+        except Exception:
+            pass
+
+    return price_data, xu_df, cache_end
+
+
+def _save_yf_cache(price_data, xu_df):
+    """Fiyat verisini parquet cache'e yaz."""
+    os.makedirs(os.path.dirname(_YF_CACHE_PATH), exist_ok=True)
+    try:
+        frames = []
+        for t, df in price_data.items():
+            tmp = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+            tmp['ticker'] = t
+            frames.append(tmp)
+        if frames:
+            combined = pd.concat(frames)
+            combined.to_parquet(_YF_CACHE_PATH)
+            print(f"  [Cache] {len(price_data)} hisse kaydedildi")
+    except Exception as e:
+        print(f"  [Cache] Yazma hatası: {e}")
+
+    if xu_df is not None:
+        try:
+            xu_df.to_parquet(_YF_XU_CACHE_PATH)
+        except Exception:
+            pass
+
+
 def _fetch_yf_price_data(tickers):
-    """yfinance ile fiyat verisi çek — ML ve SBT ortak kullanım.
+    """yfinance ile fiyat verisi çek — inkremental cache destekli.
+
+    1. Cache varsa yükle, son tarihi bul
+    2. Sadece eksik günleri indir (start=son_tarih+1)
+    3. Cache'e append et
+    4. İlk run: ~25 dk, sonraki: saniyeler
 
     Returns: (price_data: dict, xu_df: DataFrame or None)
     """
     import yfinance as yf
+    from datetime import date
 
-    yf_syms = [f"{t}.IS" for t in tickers]
-    price_data = {}
-    raw = yf.download(" ".join(yf_syms), period="1y",
-                      progress=False, auto_adjust=True,
-                      group_by='ticker', threads=True)
-    if not raw.empty:
-        for t, yf_t in zip(tickers, yf_syms):
-            try:
-                if len(yf_syms) == 1:
-                    df = raw.copy()
-                elif isinstance(raw.columns, pd.MultiIndex):
-                    level_0 = raw.columns.get_level_values(0).unique().tolist()
-                    level_1 = raw.columns.get_level_values(1).unique().tolist()
-                    price_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
-                    if any(v in price_cols for v in level_0):
-                        key = yf_t if yf_t in level_1 else t
-                        df = raw.xs(key, level=1, axis=1).copy()
-                    else:
-                        key = yf_t if yf_t in level_0 else t
-                        df = raw[key].copy()
-                else:
-                    continue
+    today = date.today()
 
-                col_map = {}
-                for col in df.columns:
-                    cs = str(col).strip().lower()
-                    if cs in ('close', 'adj close'):
-                        col_map[col] = 'Close'
-                    elif cs == 'open':
-                        col_map[col] = 'Open'
-                    elif cs == 'high':
-                        col_map[col] = 'High'
-                    elif cs == 'low':
-                        col_map[col] = 'Low'
-                    elif cs == 'volume':
-                        col_map[col] = 'Volume'
-                if col_map:
-                    df = df.rename(columns=col_map)
-                df = df.dropna(how='all')
-                if len(df) >= 80 and 'Close' in df.columns:
-                    price_data[t] = df
-            except Exception:
-                continue
+    # Cache yükle
+    price_data, xu_df, cache_end = _load_yf_cache()
 
-    # XU100 benchmark
-    xu_df = None
-    try:
-        xu = yf.download("XU100.IS", period="1y", progress=False, auto_adjust=True)
-        if isinstance(xu.columns, pd.MultiIndex):
-            xu.columns = xu.columns.get_level_values(0)
-        col_map = {}
-        for col in xu.columns:
-            cs = str(col).strip().lower()
-            if cs in ('close', 'adj close'):
-                col_map[col] = 'Close'
-        if col_map:
-            xu = xu.rename(columns=col_map)
-        if not xu.empty and 'Close' in xu.columns:
-            xu_df = xu
-    except Exception:
-        pass
+    # Cache yeterince güncel mi? (aynı gün veya dünkü iş günü)
+    need_full = False
+    need_delta = False
+    delta_start = None
 
+    if not price_data:
+        need_full = True
+        print(f"  [YF] Cache yok — tam indirme yapılacak ({len(tickers)} hisse)")
+    elif cache_end and (today - cache_end).days <= 1:
+        # Cache bugün veya dün — güncel
+        # Eksik ticker'lar var mı?
+        missing = [t for t in tickers if t not in price_data]
+        if missing:
+            print(f"  [YF] Cache güncel, {len(missing)} yeni hisse indiriliyor")
+            need_full = False
+            need_delta = False
+            # Sadece eksikleri indir
+            _download_and_merge(missing, price_data, yf, full=True)
+        else:
+            print(f"  [YF] Cache güncel ({cache_end}), indirme atlanıyor ✓")
+    elif cache_end:
+        delta_days = (today - cache_end).days
+        if delta_days <= 10:
+            need_delta = True
+            delta_start = cache_end + timedelta(days=1)
+            print(f"  [YF] Cache {delta_days} gün eski — delta indirme ({delta_start} → {today})")
+        else:
+            need_full = True
+            print(f"  [YF] Cache {delta_days} gün eski — tam indirme gerekli")
+    else:
+        need_full = True
+
+    if need_full:
+        price_data = {}
+        _download_and_merge(tickers, price_data, yf, full=True)
+
+    elif need_delta and delta_start:
+        # İnkremental: sadece eksik günler
+        all_tickers = list(set(tickers) | set(price_data.keys()))
+        yf_syms = [f"{t}.IS" for t in all_tickers]
+        try:
+            raw = yf.download(" ".join(yf_syms),
+                              start=delta_start.strftime("%Y-%m-%d"),
+                              end=(today + timedelta(days=1)).strftime("%Y-%m-%d"),
+                              progress=False, auto_adjust=True,
+                              group_by='ticker', threads=True)
+            if not raw.empty:
+                new_count = 0
+                for t, yf_t in zip(all_tickers, yf_syms):
+                    try:
+                        df_new = _extract_ticker_df(raw, t, yf_t, len(yf_syms))
+                        if df_new is not None and not df_new.empty:
+                            if t in price_data:
+                                # Append — yeni günleri ekle
+                                existing = price_data[t]
+                                combined = pd.concat([existing, df_new])
+                                combined = combined[~combined.index.duplicated(keep='last')]
+                                combined = combined.sort_index()
+                                # Son 1 yılı tut (memory tasarrufu)
+                                cutoff = combined.index.max() - pd.Timedelta(days=370)
+                                combined = combined[combined.index >= cutoff]
+                                price_data[t] = combined
+                                new_count += 1
+                            else:
+                                # Yeni ticker — yeterli veri varsa ekle
+                                if len(df_new) >= 5:
+                                    price_data[t] = df_new
+                                    new_count += 1
+                    except Exception:
+                        continue
+                print(f"  [YF] Delta: {new_count} hisse güncellendi")
+        except Exception as e:
+            print(f"  [YF] Delta indirme hatası: {e}")
+
+        # Delta'da eksik kalan yeni ticker'ları tam indir
+        missing = [t for t in tickers if t not in price_data]
+        if missing:
+            print(f"  [YF] {len(missing)} yeni hisse tam indiriliyor")
+            _download_and_merge(missing, price_data, yf, full=True)
+
+    # XU100 güncelle
+    if xu_df is None or xu_df.empty or need_full:
+        try:
+            xu = yf.download("XU100.IS", period="1y", progress=False, auto_adjust=True)
+            if isinstance(xu.columns, pd.MultiIndex):
+                xu.columns = xu.columns.get_level_values(0)
+            xu = _normalize_yf_columns(xu)
+            if not xu.empty and 'Close' in xu.columns:
+                xu_df = xu
+        except Exception:
+            pass
+    elif need_delta and delta_start:
+        try:
+            xu_new = yf.download("XU100.IS",
+                                 start=delta_start.strftime("%Y-%m-%d"),
+                                 progress=False, auto_adjust=True)
+            if isinstance(xu_new.columns, pd.MultiIndex):
+                xu_new.columns = xu_new.columns.get_level_values(0)
+            xu_new = _normalize_yf_columns(xu_new)
+            if not xu_new.empty and 'Close' in xu_new.columns:
+                xu_df = pd.concat([xu_df, xu_new])
+                xu_df = xu_df[~xu_df.index.duplicated(keep='last')].sort_index()
+        except Exception:
+            pass
+
+    # Cache kaydet
+    _save_yf_cache(price_data, xu_df)
+
+    print(f"  ✅ YF: {len(price_data)} hisse hazır")
     return price_data, xu_df
+
+
+def _extract_ticker_df(raw, ticker, yf_ticker, total_syms):
+    """yfinance raw DataFrame'den tek ticker çıkar ve normalize et."""
+    try:
+        if total_syms == 1:
+            df = raw.copy()
+        elif isinstance(raw.columns, pd.MultiIndex):
+            level_0 = raw.columns.get_level_values(0).unique().tolist()
+            level_1 = raw.columns.get_level_values(1).unique().tolist()
+            price_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
+            if any(v in price_cols for v in level_0):
+                key = yf_ticker if yf_ticker in level_1 else ticker
+                df = raw.xs(key, level=1, axis=1).copy()
+            else:
+                key = yf_ticker if yf_ticker in level_0 else ticker
+                df = raw[key].copy()
+        else:
+            return None
+
+        df = _normalize_yf_columns(df)
+        df = df.dropna(how='all')
+        return df
+    except Exception:
+        return None
+
+
+def _download_and_merge(tickers, price_data, yf, full=True):
+    """Tam 1y indirme yap ve price_data dict'e merge et."""
+    if not tickers:
+        return
+    yf_syms = [f"{t}.IS" for t in tickers]
+    try:
+        raw = yf.download(" ".join(yf_syms), period="1y",
+                          progress=False, auto_adjust=True,
+                          group_by='ticker', threads=True)
+        if not raw.empty:
+            for t, yf_t in zip(tickers, yf_syms):
+                df = _extract_ticker_df(raw, t, yf_t, len(yf_syms))
+                if df is not None and len(df) >= 80 and 'Close' in df.columns:
+                    price_data[t] = df
+            print(f"  ✅ TradingView → {len(price_data)} hisse")
+    except Exception as e:
+        print(f"  ⚠️ YF indirme hatası: {e}")
 
 
 def _calc_taban_risk(df):
