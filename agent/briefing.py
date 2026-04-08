@@ -1190,9 +1190,9 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
                 for t, d in new_data.items():
                     if t.startswith("_"):
                         continue
-                    # Günlük veriyi kaydet (flows, settlement, price)
+                    # Günlük veriyi kaydet (flows, settlement, price, investor)
                     daily_entry = {}
-                    for k in ("flows", "settlement", "price"):
+                    for k in ("flows", "settlement", "price", "investor"):
                         if k in d:
                             daily_entry[k] = d[k]
                     daily_store[t] = daily_entry

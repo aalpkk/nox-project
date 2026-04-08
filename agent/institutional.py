@@ -669,9 +669,14 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
     snap_m = _calc_snapshot_metrics(takas_snapshot, ticker)
     mkk_m = _calc_mkk_metrics(mkk_data, ticker)
 
-    # Daily history yoksa → aggregate'lerden türet (G/H/A/3A → DT5/20/60)
-    if not takas_m and snap_m:
-        takas_m = _calc_aggregate_takas_metrics(snap_m)
+    # Daily history yoksa veya yetersizse → aggregate'lerden türet (G/H/A/3A → DT5/20/60)
+    # Aggregate, kısmi history'den (5 gün) daha geniş pencere kapsar (H=5g, A=20g, 3A=60g)
+    if snap_m:
+        if not takas_m:
+            takas_m = _calc_aggregate_takas_metrics(snap_m)
+        elif takas_m.get("available_days", 0) < 20:
+            # Yetersiz history — aggregate daha güvenilir
+            takas_m = _calc_aggregate_takas_metrics(snap_m)
 
     # En az bir veri kaynağı olmalı
     has_cost = cost_data and cost_data.get("value") != "veri_yok"
