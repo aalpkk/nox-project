@@ -8,6 +8,7 @@ Kullanım:
     python -m agent.briefing --no-ai      # Claude API kullanmadan (sadece veri)
 """
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timezone, timedelta
@@ -1068,15 +1069,39 @@ def _extract_list_tickers(lists_dict):
     return list(tickers)
 
 
+def _matriks_cache_path(date_str: str) -> str:
+    """Matriks günlük cache dosya yolu."""
+    return os.path.join(ROOT, "output", f"matriks_cache_{date_str}.json")
+
+
+def _load_matriks_cache(date_str: str) -> dict:
+    """Bugünün Matriks cache'ini yükle. Yoksa boş dict."""
+    path = _matriks_cache_path(date_str)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_matriks_cache(date_str: str, data: dict):
+    """Matriks raw verisini cache dosyasına yaz."""
+    path = _matriks_cache_path(date_str)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"  ⚠️ Matriks cache yazma hatası: {e}")
+
+
 def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_key, now):
     """Matriks kurumsal veri çek + SMS/ICE hesapla.
 
-    Args:
-        tickers: Sadece bu hisseler için veri çekilir
-        mkk_data_map: MKK verisi
-        matriks_enabled: Feature flag
-        matriks_api_key: API key
-        now: Zaman damgası
+    Cache stratejisi: Bugünün verisi varsa dosyadan oku, sadece eksik
+    ticker'ları API'den çek. Phase 1 çeker → Phase 2 cache'ten okur.
 
     Returns:
         (sms_scores, takas_data_map, ice_results, cost_data_map)
@@ -1093,40 +1118,71 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
             print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
         return sms_scores, takas_data_map, ice_results, cost_data_map
 
-    # Tarihsel flow: MATRIKS_HISTORY_DAYS env var (default 5, 0=kapalı)
-    # 5g × 50 hisse = ~250 çağrı (~5dk). 10g = ~500 çağrı (~10dk).
     history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "5"))
     include_history = history_days > 0
 
-    mode_str = f", {history_days}g tarihçe" if include_history else ""
-    print(f"\n⬡ Matriks kurumsal veri çekiliyor ({len(tickers)} hisse{mode_str})...")
+    # Cache: bugünün verisini yükle
+    today_str = now.strftime("%Y-%m-%d")
+    cached = _load_matriks_cache(today_str)
+
+    # Eksik ticker'ları bul (cache'te olmayanlar)
+    cached_tickers = set(k for k in cached if not k.startswith("_"))
+    missing = [t for t in tickers if t not in cached_tickers]
+
+    if not missing and cached:
+        # Tüm ticker'lar cache'te — API'ye gitmeye gerek yok
+        print(f"\n⬡ Matriks cache'ten okunuyor ({len(cached_tickers)} hisse, {today_str})")
+        matriks_raw = cached
+    else:
+        mode_str = f", {history_days}g tarihçe" if include_history else ""
+        if cached_tickers:
+            print(f"\n⬡ Matriks delta çekiliyor ({len(missing)} eksik / {len(tickers)} toplam{mode_str})...")
+        else:
+            print(f"\n⬡ Matriks kurumsal veri çekiliyor ({len(tickers)} hisse{mode_str})...")
+
+        matriks_raw = dict(cached)  # cache'teki veriyle başla
+        try:
+            import concurrent.futures
+            from agent.matriks_client import MatriksClient
+
+            matriks_timeout = int(os.environ.get("MATRIKS_TIMEOUT", "600"))
+            client = MatriksClient()
+
+            fetch_tickers = missing if missing else tickers
+
+            def _fetch():
+                return client.fetch_batch(
+                    fetch_tickers, include_history=include_history,
+                    history_days=history_days)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_fetch)
+                try:
+                    new_data = future.result(timeout=matriks_timeout)
+                except concurrent.futures.TimeoutError:
+                    new_data = dict(client._partial_results) if client._partial_results else None
+                    done = len([k for k in (new_data or {}) if not k.startswith("_")])
+                    print(f"  ⚠️ Matriks {matriks_timeout}s timeout — {done}/{len(fetch_tickers)} hisse kısmi veriyle devam")
+
+            if new_data:
+                matriks_raw.update(new_data)
+
+            # Cache'e yaz (Phase 2 ve sonraki run'lar için)
+            if matriks_raw:
+                _save_matriks_cache(today_str, matriks_raw)
+                total_tickers = len([k for k in matriks_raw if not k.startswith("_")])
+                new_count = len([k for k in (new_data or {}) if not k.startswith("_")])
+                print(f"  Matriks: {total_tickers} hisse (cache={len(cached_tickers)}, yeni={new_count})")
+
+        except Exception as e:
+            print(f"  ⚠️ Matriks veri hatası: {e}")
 
     takas_history = None
     try:
-        import concurrent.futures
-        from agent.matriks_client import MatriksClient
         from agent.matriks_adapter import process_matriks_batch
-
-        matriks_timeout = int(os.environ.get("MATRIKS_TIMEOUT", "600"))  # 10 dk hard limit
-        client = MatriksClient()
-
-        def _fetch():
-            return client.fetch_batch(
-                tickers, include_history=include_history, history_days=history_days)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(_fetch)
-            try:
-                matriks_raw = future.result(timeout=matriks_timeout)
-            except concurrent.futures.TimeoutError:
-                # Thread hâlâ çalışıyor — kısmi sonucu client'tan oku
-                matriks_raw = dict(client._partial_results) if client._partial_results else None
-                done = len([k for k in (matriks_raw or {}) if not k.startswith("_")])
-                print(f"  ⚠️ Matriks {matriks_timeout}s timeout — {done}/{len(tickers)} hisse kısmi veriyle devam")
 
         if matriks_raw:
             takas_data_map, cost_data_map, takas_history = process_matriks_batch(matriks_raw)
-            print(f"  Matriks: {len(matriks_raw)} hisse veri alındı")
 
             if takas_history:
                 hist_days = len(takas_history)
