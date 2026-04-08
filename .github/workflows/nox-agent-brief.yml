@@ -2,12 +2,11 @@ name: NOX Agent Briefing
 on:
   schedule:
     - cron: '45 15 * * 1-5'  # 18:45 TR — tüm screener'lardan sonra
-  workflow_run:
-    workflows:
-      - "NOX v3 Weekly Screener"
-      - "NOX Regime Transition Screener"
-    types: [completed]
   workflow_dispatch:  # Manuel tetikleme
+
+concurrency:
+  group: nox-briefing
+  cancel-in-progress: true
 
 env:
   GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -15,7 +14,6 @@ env:
 jobs:
   briefing:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
 
