@@ -318,14 +318,20 @@ class MatriksClient:
         """
         if not start_date or not end_date:
             start_date, end_date = self._date_range(10)
-        resp = self.call_tool("historicalData", {
-            "symbol": symbol,
-            "startDate": start_date,
-            "endDate": end_date,
-            "includeHistoricalInvestorData": True,
-        })
-        if resp and isinstance(resp, dict):
-            return resp.get("historicalInvestorData")
+        try:
+            resp = self.call_tool("historicalData", {
+                "symbol": symbol,
+                "startDate": start_date,
+                "endDate": end_date,
+                "includeHistoricalInvestorData": True,
+                "rawBars": False,       # bar verisi gönderme (response küçülsün)
+            })
+            if resp and isinstance(resp, dict):
+                inv = resp.get("historicalInvestorData")
+                if inv:
+                    return inv
+        except Exception:
+            pass
         return None
 
     def get_market_price(self, symbol: str) -> Optional[dict]:
@@ -458,6 +464,8 @@ class MatriksClient:
                     data["investor"] = investor
 
                 total_api_calls += 7  # flow(4) + settlement(1) + price(1) + investor(1)
+                total_investor = sum(1 for t in results.values()
+                                     if isinstance(t, dict) and "investor" in t)
 
                 # Günlük flow tarihçesi (ICE history) — delta çekme
                 if include_history and history_days > 0 and _429_COUNT < _429_MAX:
@@ -491,9 +499,9 @@ class MatriksClient:
                         df = data.get("daily_flows", {})
                         elapsed_total = time.time() - _batch_start
                         eta = (elapsed_total / i) * (total - i)
-                        print(f"  Matriks: {i}/{total} hisse, {len(df)}g tarihçe, "
+                        print(f"  Matriks: {i}/{total} hisse, "
                               f"rate={_RATE_LIMIT_SEC:.2f}s, "
-                              f"API={total_api_calls} cache={total_cache_hits}, "
+                              f"API={total_api_calls}, MKK={total_investor}, "
                               f"ETA={eta/60:.0f}dk")
             except Exception as e:
                 print(f"  ⚠️ Matriks {ticker} hatası: {e}")
