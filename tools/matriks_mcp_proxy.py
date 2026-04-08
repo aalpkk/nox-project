@@ -4,12 +4,13 @@ Matriks MCP Proxy — streamable-http → stdio bridge
 Claude Code stdio MCP olarak çalışır, istekleri POST ile Matriks sunucusuna iletir.
 """
 import sys
+import os
 import json
 import requests
 
 MCP_URL = "https://mcp.matriks.ai/mcp"
-CLIENT_ID = "69d009f8e1bcb3134b2268ea"
-API_KEY = "***REDACTED_KEY***"
+CLIENT_ID = os.environ.get("MATRIKS_CLIENT_ID", "33667")
+API_KEY = os.environ.get("MATRIKS_API_KEY", "")
 
 session_id = None
 
