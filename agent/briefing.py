@@ -1119,8 +1119,10 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
             try:
                 matriks_raw = future.result(timeout=matriks_timeout)
             except concurrent.futures.TimeoutError:
-                print(f"  ⚠️ Matriks {matriks_timeout}s timeout — kısmi veriyle devam")
-                matriks_raw = None
+                # Thread hâlâ çalışıyor — kısmi sonucu client'tan oku
+                matriks_raw = dict(client._partial_results) if client._partial_results else None
+                done = len([k for k in (matriks_raw or {}) if not k.startswith("_")])
+                print(f"  ⚠️ Matriks {matriks_timeout}s timeout — {done}/{len(tickers)} hisse kısmi veriyle devam")
 
         if matriks_raw:
             takas_data_map, cost_data_map, takas_history = process_matriks_batch(matriks_raw)

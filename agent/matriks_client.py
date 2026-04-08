@@ -45,6 +45,7 @@ class MatriksClient:
         self.session_id: Optional[str] = None
         self._last_call = 0.0
         self._initialized = False
+        self._partial_results: Optional[dict] = None  # timeout'ta kısmi veri kurtarma
         # Debug: credentials doğrulama
         key_preview = self.api_key[:12] + "..." if len(self.api_key) > 12 else self.api_key
         print(f"  [Matriks] Client-ID: {self.client_id[:8]}..., Key: {key_preview}")
@@ -346,6 +347,7 @@ class MatriksClient:
                    _trend: {analysis: str}}
         """
         results = {}
+        self._partial_results = results  # referans paylaş — timeout'ta kısmi veri okunabilir
 
         # Batch başına 1 kez: SM ardışık birikim trendleri
         try:
