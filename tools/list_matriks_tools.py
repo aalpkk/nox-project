@@ -1,5 +1,6 @@
 """Matriks MCP tool listesini çek ve yazdır."""
-import json
+import json, sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agent.matriks_client import MatriksClient
 
 client = MatriksClient()
