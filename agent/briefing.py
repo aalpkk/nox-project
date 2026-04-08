@@ -1136,7 +1136,12 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
     trend_store = cache.get("_trend")
 
     # Bugün zaten çekildiyse → cache'ten oku
+    # Cache'te investor verisi yoksa yeniden çek (eski cache uyumluluğu)
     daily_cached = set(daily_store.keys()) if cache_date == today_str else set()
+    has_investor = any("investor" in daily_store.get(t, {}) for t in tickers if t in daily_cached)
+    if daily_cached and not has_investor:
+        print(f"  ℹ️ Cache'te investor verisi yok — yeniden çekiliyor")
+        daily_cached = set()  # cache'i geçersiz say
     missing = [t for t in tickers if t not in daily_cached]
 
     if not missing and daily_cached:
