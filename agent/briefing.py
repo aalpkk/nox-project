@@ -1124,7 +1124,8 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
             print("\n  ⚠️ MATRIKS_API_KEY eksik — kurumsal veri atlanıyor")
         return sms_scores, takas_data_map, ice_results, cost_data_map
 
-    history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "5"))
+    # Daily history artık gereksiz — ICE aggregate'lerden (G/H/A/3A) çalışıyor
+    history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "0"))
     include_history = history_days > 0
 
     today_str = now.strftime("%Y-%m-%d")
@@ -1233,7 +1234,15 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
         from agent.matriks_adapter import process_matriks_batch
 
         if matriks_raw:
-            takas_data_map, cost_data_map, takas_history = process_matriks_batch(matriks_raw)
+            takas_data_map, cost_data_map, takas_history, matriks_mkk = process_matriks_batch(matriks_raw)
+
+            # Matriks MKK verisi varsa mevcut mkk_data_map'i güncelle/override et
+            if matriks_mkk:
+                if mkk_data_map:
+                    mkk_data_map.update(matriks_mkk)
+                else:
+                    mkk_data_map = matriks_mkk
+                print(f"  MKK (Matriks): {len(matriks_mkk)} hisse yatırımcı dağılımı")
 
             if takas_history:
                 hist_days = len(takas_history)
@@ -1261,11 +1270,12 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
                 cost_data_map=cost_data_map)
             if ice_results:
                 full = sum(1 for r in ice_results.values() if r.status == "ok")
+                agg = sum(1 for r in ice_results.values() if r.status == "aggregate")
                 partial = sum(1 for r in ice_results.values() if r.status == "partial")
                 no_hist = sum(1 for r in ice_results.values() if r.status in ("no_history", "cost_only"))
                 guclu_ice = sum(1 for r in ice_results.values() if r.multiplier >= 1.15)
                 red_ice = sum(1 for r in ice_results.values() if r.multiplier < 0.90)
-                print(f"  ICE: {len(ice_results)} hisse (tam={full}, kısmi={partial}, snapshot={no_hist}"
+                print(f"  ICE: {len(ice_results)} hisse (tam={full}, agg={agg}, kısmi={partial}, snapshot={no_hist}"
                       f" | {guclu_ice}🟢 güçlü, {red_ice}🔴 dağıtım)")
     except Exception as e:
         print(f"  ⚠️ ICE hesaplama hatası: {e}")

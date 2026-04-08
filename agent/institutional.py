@@ -297,6 +297,70 @@ def _calc_snapshot_metrics(takas_snapshot, ticker):
 
 
 # ══════════════════════════════════════════════════════════════
+# Aggregate → Takas Metrikleri (daily history gereksiz)
+# ══════════════════════════════════════════════════════════════
+
+def _calc_aggregate_takas_metrics(snapshot_metrics):
+    """G/H/A/3A aggregate'lerden ICE metrikleri türet.
+
+    Daily history olmadan çalışır — Matriks 4 periyot flow yeterli.
+    DT5 ≈ SM haftalık, DT20 ≈ SM aylık, DT60 ≈ SM 3 aylık.
+
+    Continuity proxy: kaç periyotta (G/H/A/3A) SM pozitif.
+    Flow efficiency proxy: kısa/uzun vade uyumu.
+    """
+    if not snapshot_metrics:
+        return None
+
+    # SM = yab_banka + fon + prop (her periyot)
+    sm_g = (snapshot_metrics.get("yb_gunluk", 0) +
+            snapshot_metrics.get("fon_gunluk", 0) +
+            snapshot_metrics.get("prop_gunluk", 0))
+    sm_h = (snapshot_metrics.get("yb_haftalik", 0) +
+            snapshot_metrics.get("fon_haftalik", 0) +
+            snapshot_metrics.get("prop_haftalik", 0))
+    sm_a = (snapshot_metrics.get("yb_aylik", 0) +
+            snapshot_metrics.get("fon_aylik", 0) +
+            snapshot_metrics.get("prop_aylik", 0))
+    sm_3a = (snapshot_metrics.get("yb_3aylik", 0) +
+             snapshot_metrics.get("fon_3aylik", 0) +
+             snapshot_metrics.get("prop_3aylik", 0))
+
+    # Geniş seri (yerli_banka dahil) — 20g proxy
+    yerli_a = snapshot_metrics.get("yerli_aylik", 0)
+    dt20_genis = sm_a + yerli_a
+
+    # Continuity proxy: 4 periyottan kaçı pozitif (0.00 - 1.00)
+    periods = [sm_g, sm_h, sm_a, sm_3a]
+    positive_count = sum(1 for p in periods if p > 0)
+    cont_proxy = positive_count / 4.0
+
+    # Flow efficiency proxy: net / toplam mutlak
+    total_abs = abs(sm_g) + abs(sm_h) + abs(sm_a) + abs(sm_3a)
+    net = sm_g + sm_h + sm_a + sm_3a
+    eff_proxy = (net / total_abs) if total_abs > 100 else 0.0
+
+    # Recent strength: G'nin H'ye göre gücü
+    eps = max(abs(sm_h) * 0.01, 100)
+    recent_str = sm_g / (abs(sm_h) + eps)
+
+    return {
+        "takas_5_change": sm_h,       # H ≈ DT5
+        "takas_20_change": sm_a,      # A ≈ DT20
+        "takas_60_change": sm_3a,     # 3A ≈ DT60
+        "takas_20_genis": dt20_genis,
+        "recent_strength": round(recent_str, 3),
+        "continuity_20": round(cont_proxy, 2),   # proxy
+        "continuity_60": round(cont_proxy, 2),   # aynı proxy (4 nokta)
+        "flow_efficiency_20": round(eff_proxy, 3),
+        "flow_efficiency_60": round(eff_proxy, 3),
+        "top3_alici_avg": None,       # aggregate'den hesaplanamaz
+        "available_days": 60,         # aggregate = 60 gün kapsıyor
+        "_is_aggregate": True,        # daily history değil, aggregate'ten türetildi
+    }
+
+
+# ══════════════════════════════════════════════════════════════
 # MKK Metrikleri
 # ══════════════════════════════════════════════════════════════
 
@@ -605,6 +669,10 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
     snap_m = _calc_snapshot_metrics(takas_snapshot, ticker)
     mkk_m = _calc_mkk_metrics(mkk_data, ticker)
 
+    # Daily history yoksa → aggregate'lerden türet (G/H/A/3A → DT5/20/60)
+    if not takas_m and snap_m:
+        takas_m = _calc_aggregate_takas_metrics(snap_m)
+
     # En az bir veri kaynağı olmalı
     has_cost = cost_data and cost_data.get("value") != "veri_yok"
     if not takas_m and not snap_m and not has_cost:
@@ -612,8 +680,12 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
 
     # Status belirleme
     if takas_m:
+        is_agg = takas_m.get("_is_aggregate", False)
         days = takas_m.get("available_days", 0)
-        if days < 10:
+        if is_agg:
+            status = "aggregate"
+            warnings.append("AGGREGATE: G/H/A/3A'dan türetildi (daily history yok)")
+        elif days < 10:
             status = "partial"
             warnings.append(f"INSUFFICIENT_WINDOW: {days} gün (min 10 önerilir)")
         else:
@@ -630,7 +702,7 @@ def calc_ice(ticker, takas_history, takas_snapshot=None,
     if not mkk_m:
         warnings.append("NO_MKK: MKK verisi yok")
 
-    # Etiketleri üret
+    # Etiketleri üret — takas_m artık aggregate olabilir, etiket fonksiyonları aynı çalışır
     labels = {
         "kurumsal_teyit": _label_kurumsal_teyit(takas_m, snap_m),
         "tasinan_birikim": _label_tasinan_birikim(takas_m, snap_m),

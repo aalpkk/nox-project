@@ -206,10 +206,13 @@ def _prepare_ticker_data(ticker_data):
 # S1: Birikim Sürekliliği (max 25p, min -5p)
 # ══════════════════════════════════════════════════════════════
 
-def calc_s1_birikim(prepared):
-    """Yabancı banka (max 15p) + Fon (max 10p) birikim sürekliliği.
+def calc_s1_birikim(prepared, mkk_data=None, ticker=None):
+    """Yabancı banka (max 15p) + Fon (max 10p) + Yerli banka cross-val (max 5p).
 
     Prop kanalları S1'de puan almaz (sinyal güvenilirliği düşük).
+    Yerli banka: normalde puan almaz, AMA MKK kurumsal oranı artıyorsa
+    ve yerli_banka kanalından yoğun alım varsa → kısmi puan (max 5p).
+    Bu cross-validation ile TEB/İş üzerinden yapılan kurumsal birikimi yakalar.
     """
     net = prepared["net_tip"]
     details = []
@@ -264,7 +267,37 @@ def calc_s1_birikim(prepared):
     fon_puan = max(-4, min(10, fon_puan))
     details.append(f"Fon:{fon_puan} (G:{fon['g']:+,} H:{fon['h']:+,} A:{fon['a']:+,} 3A:{fon['3a']:+,})")
 
-    total = max(-5, min(25, yb_puan + fon_puan))
+    # Yerli Banka cross-validation (max 5p)
+    # MKK kurumsal oranı artıyorsa + yerli_banka alıyorsa → kısmi puan
+    # Mantık: TEB/İş/Garanti üzerinden kurumsal birikim yapılıyor olabilir
+    yerli_puan = 0
+    yerli = net.get("yerli_banka", {"g": 0, "h": 0, "a": 0, "3a": 0})
+    mkk = None
+    if mkk_data and ticker:
+        mkk = mkk_data.get(ticker) or mkk_data.get(f"{ticker}.IS")
+
+    if mkk:
+        # bireysel_fark_5g < 0 = bireysel azalma = kurumsal artışı
+        kurumsallasma = -(mkk.get("bireysel_fark_5g", 0) or 0)
+        if kurumsallasma > 1.0:  # haftalık %1+ kurumsal artış
+            # Yerli banka haftalık/aylık alıyorsa → cross-validated birikim
+            if yerli["a"] > 0 and yerli["h"] > 0:
+                yerli_puan = 5
+            elif yerli["a"] > 0 or yerli["h"] > 0:
+                yerli_puan = 3
+            elif yerli["g"] > 0:
+                yerli_puan = 1
+        elif kurumsallasma > 0.5:  # haftalık %0.5-1 kurumsal artış
+            if yerli["a"] > 0 and yerli["h"] > 0:
+                yerli_puan = 3
+            elif yerli["a"] > 0 or yerli["h"] > 0:
+                yerli_puan = 2
+
+    if yerli_puan > 0:
+        details.append(f"Yerli✓:{yerli_puan} (MKK K+{kurumsallasma:.1f}pp "
+                        f"H:{yerli['h']:+,} A:{yerli['a']:+,})")
+
+    total = max(-5, min(25, yb_puan + fon_puan + yerli_puan))
     return total, " | ".join(details)
 
 
@@ -524,7 +557,7 @@ def calc_smart_money_score(ticker, takas_data, mkk_data=None):
 
     prepared = _prepare_ticker_data(td)
 
-    s1, s1_d = calc_s1_birikim(prepared)
+    s1, s1_d = calc_s1_birikim(prepared, mkk_data=mkk_data, ticker=ticker)
     s2, s2_d = calc_s2_yogunlasma(prepared)
     s3, s3_d = calc_s3_karsi_taraf(prepared)
     s4, s4_d = calc_s4_sureklilik(prepared)

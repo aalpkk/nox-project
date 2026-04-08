@@ -105,6 +105,53 @@ def flow_to_takas_data(flow_response: dict, symbol: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════
+# A2. historicalInvestorData → MKK format
+# ══════════════════════════════════════════════════════════════
+
+def investor_data_to_mkk(investor_list: list, symbol: str) -> dict:
+    """Matriks historicalInvestorData → MKK data formatı.
+
+    Args:
+        investor_list: [{d, rQ, rP, iQ, iP, c}, ...]
+            d=tarih, rP=bireysel%, iP=kurumsal%, c=yatırımcı sayısı
+        symbol: Hisse kodu
+
+    Returns:
+        {symbol: {bireysel_pct, kurumsal_pct, yatirimci_sayisi,
+                  tarih, bireysel_fark_1g, bireysel_fark_5g}}
+    """
+    if not investor_list:
+        return {}
+
+    # Tarihe göre sırala (en yeni ilk)
+    sorted_data = sorted(investor_list, key=lambda x: x.get("d", ""), reverse=True)
+    latest = sorted_data[0]
+
+    entry = {
+        "bireysel_pct": latest.get("rP", 0),
+        "kurumsal_pct": latest.get("iP", 0),
+        "yatirimci_sayisi": latest.get("c", 0),
+        "tarih": latest.get("d", ""),
+    }
+
+    # Günlük fark (1g): bugün vs dün
+    if len(sorted_data) >= 2:
+        prev = sorted_data[1]
+        entry["bireysel_fark_1g"] = round(latest.get("rP", 0) - prev.get("rP", 0), 2)
+
+    # Haftalık fark (5g): bugün vs 5 iş günü öncesi
+    if len(sorted_data) >= 5:
+        week_ago = sorted_data[4]  # ~5 iş günü öncesi (index 4)
+        entry["bireysel_fark_5g"] = round(latest.get("rP", 0) - week_ago.get("rP", 0), 2)
+    elif len(sorted_data) >= 2:
+        # En eski veri ile karşılaştır
+        oldest = sorted_data[-1]
+        entry["bireysel_fark_5g"] = round(latest.get("rP", 0) - oldest.get("rP", 0), 2)
+
+    return {symbol: entry}
+
+
+# ══════════════════════════════════════════════════════════════
 # B. institutionalFlow → takas_history_day (ICE format)
 # ══════════════════════════════════════════════════════════════
 
@@ -664,17 +711,19 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
 
     Args:
         matriks_data: MatriksClient.fetch_batch() çıktısı
-            {TICKER: {flows, settlement, price, daily_flows?},
+            {TICKER: {flows, settlement, price, daily_flows?, investor?},
              _trend: {analysis: str}}
 
     Returns:
-        (takas_data_map, cost_data_map, takas_history):
+        (takas_data_map, cost_data_map, takas_history, mkk_data_map):
             takas_data_map: {TICKER: {kurumlar: [...]}} — SMS input (G/H/A/3A dolu)
             cost_data_map: {TICKER: {value, detail, streak_days, ...}} — ICE maliyet_avantaji input
             takas_history: {date: {TICKER: {net_tip, top3_alici_pct}}} — ICE history input
+            mkk_data_map: {TICKER: {bireysel_pct, kurumsal_pct, ...}} — MKK yatırımcı dağılımı
     """
     takas_data_map = {}
     cost_data_map = {}
+    mkk_data_map = {}
     takas_history = {}  # ICE history: {date: {ticker: {net_tip, top3_alici_pct}}}
 
     # Trend verisini parse et (batch düzeyinde, _trend key'i altında)
@@ -698,6 +747,12 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
         if flows:
             td = flows_to_takas_data(flows, ticker)
             takas_data_map.update(td)
+
+        # MKK yatırımcı dağılımı (Matriks historicalInvestorData)
+        investor = data.get("investor")
+        if investor:
+            mkk = investor_data_to_mkk(investor, ticker)
+            mkk_data_map.update(mkk)
 
         # Daily flows → ICE takas_history
         daily_flows = data.get("daily_flows", {})
@@ -742,4 +797,4 @@ def process_matriks_batch(matriks_data: dict) -> tuple:
                 "momentum": trend_info["momentum"],
             }
 
-    return takas_data_map, cost_data_map, takas_history
+    return takas_data_map, cost_data_map, takas_history, mkk_data_map

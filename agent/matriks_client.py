@@ -301,6 +301,33 @@ class MatriksClient:
             "top": 50,
         })
 
+    def get_investor_data(self, symbol: str, start_date: str = None,
+                          end_date: str = None) -> Optional[list]:
+        """MKK yatırımcı dağılımı (bireysel/kurumsal %, yatırımcı sayısı).
+
+        historicalData tool'u ile çekilir — historicalInvestorData alanı.
+
+        Args:
+            symbol: Hisse kodu
+            start_date: Başlangıç tarihi (YYYY-MM-DD)
+            end_date: Bitiş tarihi (YYYY-MM-DD)
+
+        Returns:
+            list: [{d, rQ, rP, iQ, iP, c}, ...] veya None
+                  d=tarih, rP=bireysel%, iP=kurumsal%, c=yatırımcı sayısı
+        """
+        if not start_date or not end_date:
+            start_date, end_date = self._date_range(10)
+        resp = self.call_tool("historicalData", {
+            "symbol": symbol,
+            "startDate": start_date,
+            "endDate": end_date,
+            "includeHistoricalInvestorData": True,
+        })
+        if resp and isinstance(resp, dict):
+            return resp.get("historicalInvestorData")
+        return None
+
     def get_market_price(self, symbol: str) -> Optional[dict]:
         """Güncel fiyat bilgisi.
 
@@ -425,7 +452,12 @@ class MatriksClient:
                 if price:
                     data["price"] = price
 
-                total_api_calls += 6  # flow(4) + settlement(1) + price(1)
+                # MKK yatırımcı dağılımı (1 extra call — son 10 iş günü)
+                investor = self.get_investor_data(ticker)
+                if investor:
+                    data["investor"] = investor
+
+                total_api_calls += 7  # flow(4) + settlement(1) + price(1) + investor(1)
 
                 # Günlük flow tarihçesi (ICE history) — delta çekme
                 if include_history and history_days > 0 and _429_COUNT < _429_MAX:
