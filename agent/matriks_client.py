@@ -19,11 +19,15 @@ from typing import Optional
 
 MCP_URL = "https://mcp.matriks.ai/mcp"
 _DEFAULT_CLIENT_ID = "33667"
-_RATE_LIMIT_SEC = 1.2  # 429 rate limit koruma — 1000+ çağrıda 0.8s yetmiyor
+_RATE_LIMIT_SEC = 0.5   # başlangıç — adaptive olarak ayarlanır
+_RATE_MIN = 0.3         # minimum bekleme (429 gelmezse buraya kadar düşer)
+_RATE_MAX = 2.0         # maksimum bekleme (429 gelince buraya kadar çıkar)
+_RATE_STEP_DOWN = 0.05  # her başarılı çağrıda bu kadar düş
+_RATE_STEP_UP = 0.5     # her 429'da bu kadar artır
 _TIMEOUT = 30
 _MSG_ID_COUNTER = 0
 _429_COUNT = 0  # global 429 sayacı
-_429_MAX = 10   # bu kadar 429'dan sonra tüm API çağrılarını durdur (circuit breaker)
+_429_MAX = 15   # circuit breaker — limit artırıldı (eskiden 10)
 
 _TZ_TR = timezone(timedelta(hours=3))
 
@@ -60,10 +64,24 @@ class MatriksClient:
         return _MSG_ID_COUNTER
 
     def _rate_wait(self):
+        global _RATE_LIMIT_SEC
         elapsed = time.time() - self._last_call
         if elapsed < _RATE_LIMIT_SEC:
             time.sleep(_RATE_LIMIT_SEC - elapsed)
         self._last_call = time.time()
+
+    @staticmethod
+    def _rate_success():
+        """429 gelmedi — rate limit'i kademeli düşür."""
+        global _RATE_LIMIT_SEC
+        if _RATE_LIMIT_SEC > _RATE_MIN:
+            _RATE_LIMIT_SEC = max(_RATE_MIN, _RATE_LIMIT_SEC - _RATE_STEP_DOWN)
+
+    @staticmethod
+    def _rate_backoff():
+        """429 geldi — rate limit'i kademeli artır."""
+        global _RATE_LIMIT_SEC
+        _RATE_LIMIT_SEC = min(_RATE_MAX, _RATE_LIMIT_SEC + _RATE_STEP_UP)
 
     def _send(self, msg: dict) -> Optional[dict]:
         """JSON-RPC mesajı gönder, yanıt döndür. 429 rate limit'te otomatik retry."""
@@ -92,17 +110,19 @@ class MatriksClient:
 
             if resp.status_code == 429:
                 _429_COUNT += 1
+                self._rate_backoff()
                 if _429_COUNT >= _429_MAX:
                     print(f"    🛑 Circuit breaker: {_429_COUNT} adet 429 — Matriks API devre dışı")
                     return None
                 wait = min(10 * (2 ** attempt), 60)  # 10, 20, 40, 60 saniye
                 if attempt < max_retries:
-                    print(f"    ⏳ Rate limit (429 #{_429_COUNT}), {wait}s bekleniyor...")
+                    print(f"    ⏳ Rate limit (429 #{_429_COUNT}), rate→{_RATE_LIMIT_SEC:.2f}s, {wait}s bekleniyor...")
                     time.sleep(wait)
                     continue
                 else:
                     print(f"    ⚠️ Rate limit aşılamadı ({max_retries} retry)")
                     return None
+            self._rate_success()
             break
 
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("MCP-Session-ID")
@@ -186,7 +206,8 @@ class MatriksClient:
     # ──────────────────────────────────────────
 
     def get_institutional_flow(self, symbol: str, top: int = 10,
-                               start_date: str = None, end_date: str = None) -> Optional[dict]:
+                               start_date: str = None, end_date: str = None,
+                               include_investor: bool = False) -> Optional[dict]:
         """Kurumsal akış verisi (topBuyers/topSellers/byVolume/moneyFlow).
 
         Args:
@@ -194,9 +215,11 @@ class MatriksClient:
             top: En çok N broker
             start_date: Başlangıç tarihi (YYYY-MM-DD), None ise bugün
             end_date: Bitiş tarihi (YYYY-MM-DD), None ise bugün
+            include_investor: MKK yatırımcı dağılımı (bireysel/kurumsal %) dahil et
 
         Returns:
             dict: {topBuyers, topSellers, byVolume, moneyFlow, summary, ...}
+                  include_investor=True ise investorCount/investorHistoric alanları eklenir
         """
         args = {
             "symbol": symbol,
@@ -208,22 +231,29 @@ class MatriksClient:
             args["startDate"] = start_date
         if end_date:
             args["endDate"] = end_date
+        if include_investor:
+            args["includeInvestorCount"] = True
+            args["includeInvestorHistoric"] = True
         return self.call_tool("institutionalFlow", args)
 
     def get_institutional_flow_periods(self, symbol: str, top: int = 10) -> dict:
         """4 periyot için kurumsal akış verisi çek (G/H/A/3A).
 
+        Daily çağrısı MKK yatırımcı dağılımını da içerir (0 extra call).
+
         Returns:
             dict: {daily: flow, weekly: flow, monthly: flow, quarterly: flow}
+                  daily flow'da investorCount/investorHistoric alanları bulunur
         """
         results = {}
         for key, days in _PERIODS:
             try:
-                # Her zaman tarih aralığı geç — piyasa kapalıyken de dünün verisi gelsin
                 start, end = self._date_range(max(days, 2))
+                # Sadece daily'de MKK yatırımcı dağılımını iste (0 extra call)
+                inv = (key == "daily")
                 flow = self.get_institutional_flow(symbol, top=top,
-                                                   start_date=start, end_date=end)
-                # Boş veri kontrolü (topBuyers/topSellers boş olabilir)
+                                                   start_date=start, end_date=end,
+                                                   include_investor=inv)
                 if flow and (flow.get("topBuyers") or flow.get("topSellers")):
                     results[key] = flow
             except Exception as e:
@@ -357,6 +387,7 @@ class MatriksClient:
         results = {}
         self._partial_results = results  # referans paylaş — timeout'ta kısmi veri okunabilir
         history_cache = history_cache or {}
+        _batch_start = time.time()
 
         # Batch başına 1 kez: SM ardışık birikim trendleri
         try:
@@ -424,9 +455,14 @@ class MatriksClient:
 
                 if data:
                     results[ticker] = data
-                    if i % 5 == 0 or i == total:
+                    if i % 10 == 0 or i == total:
                         df = data.get("daily_flows", {})
-                        print(f"  Matriks: {i}/{total} hisse tamamlandı, {len(df)}g tarihçe")
+                        elapsed_total = time.time() - _batch_start
+                        eta = (elapsed_total / i) * (total - i)
+                        print(f"  Matriks: {i}/{total} hisse, {len(df)}g tarihçe, "
+                              f"rate={_RATE_LIMIT_SEC:.2f}s, "
+                              f"API={total_api_calls} cache={total_cache_hits}, "
+                              f"ETA={eta/60:.0f}dk")
             except Exception as e:
                 print(f"  ⚠️ Matriks {ticker} hatası: {e}")
                 continue

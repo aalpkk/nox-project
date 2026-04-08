@@ -84,3 +84,71 @@ else:
                 print(f"  {name}: boş yanıt")
         except Exception as e:
             print(f"  {name}: exception {e}")
+
+# 4. institutionalFlow ile MKK investor verisi test et
+print("\n=== institutionalFlow + investorCount Test (GARAN) ===")
+time.sleep(1)
+resp = send({"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "institutionalFlow",
+                        "arguments": {"symbol": "GARAN",
+                                      "includeInvestorCount": True,
+                                      "includeInvestorHistoric": True,
+                                      "top": 3}}})
+if resp:
+    result = resp.get("result", {})
+    err = resp.get("error", {})
+    if err:
+        print(f"  ERR: {json.dumps(err, ensure_ascii=False)[:300]}")
+    else:
+        contents = result.get("content", [])
+        for c in contents:
+            if c.get("type") == "text":
+                text = c["text"]
+                try:
+                    data = json.loads(text)
+                    # investor ile ilgili key'leri bul
+                    inv_keys = [k for k in data.keys() if "investor" in k.lower() or "mkk" in k.lower()
+                                or "bireysel" in k.lower() or "kurumsal" in k.lower() or "count" in k.lower()]
+                    print(f"  Tüm key'ler: {list(data.keys())}")
+                    print(f"  Investor key'ler: {inv_keys}")
+                    for k in inv_keys:
+                        val = data[k]
+                        print(f"  {k}: {json.dumps(val, ensure_ascii=False)[:500]}")
+                    if not inv_keys:
+                        print(f"  Investor key bulunamadı. İlk 500 char:")
+                        print(f"  {json.dumps(data, ensure_ascii=False)[:500]}")
+                except:
+                    print(f"  Raw text: {text[:500]}")
+
+# 5. historicalData ile investor verisi test et
+print("\n=== historicalData + investorData Test (GARAN) ===")
+time.sleep(1)
+resp = send({"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "historicalData",
+                        "arguments": {"symbol": "GARAN",
+                                      "includeHistoricalInvestorData": True,
+                                      "startDate": "2026-04-01",
+                                      "endDate": "2026-04-08"}}})
+if resp:
+    result = resp.get("result", {})
+    err = resp.get("error", {})
+    if err:
+        print(f"  ERR: {json.dumps(err, ensure_ascii=False)[:300]}")
+    else:
+        contents = result.get("content", [])
+        for c in contents:
+            if c.get("type") == "text":
+                text = c["text"]
+                try:
+                    data = json.loads(text)
+                    inv_keys = [k for k in data.keys() if "investor" in k.lower() or "mkk" in k.lower()
+                                or "bireysel" in k.lower() or "kurumsal" in k.lower()]
+                    print(f"  Tüm key'ler: {list(data.keys())}")
+                    print(f"  Investor key'ler: {inv_keys}")
+                    for k in inv_keys:
+                        val = data[k]
+                        print(f"  {k}: {json.dumps(val, ensure_ascii=False)[:500]}")
+                    if not inv_keys:
+                        print(f"  İlk 500 char: {json.dumps(data, ensure_ascii=False)[:500]}")
+                except:
+                    print(f"  Raw text: {text[:500]}")
