@@ -30,7 +30,7 @@ jobs:
           path: |
             output/yf_price_cache.parquet
             output/yf_xu100_cache.parquet
-            output/matriks_cache_*.json
+            output/matriks_cache.json
           key: nox-cache-${{ github.run_number }}
           restore-keys: |
             nox-cache-

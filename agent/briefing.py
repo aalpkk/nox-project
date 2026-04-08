@@ -1069,29 +1069,32 @@ def _extract_list_tickers(lists_dict):
     return list(tickers)
 
 
-def _matriks_cache_path(date_str: str) -> str:
-    """Matriks günlük cache dosya yolu."""
-    return os.path.join(ROOT, "output", f"matriks_cache_{date_str}.json")
+_MATRIKS_CACHE_PATH = os.path.join(ROOT, "output", "matriks_cache.json")
 
 
-def _load_matriks_cache(date_str: str) -> dict:
-    """Bugünün Matriks cache'ini yükle. Yoksa boş dict."""
-    path = _matriks_cache_path(date_str)
-    if os.path.exists(path):
+def _load_matriks_cache() -> dict:
+    """Kümülatif Matriks cache yükle.
+
+    Yapı: {
+        _history: {TICKER: {date_str: flow_data, ...}},  # kümülatif tarihçe
+        _today: "2026-04-08",                              # günlük verinin tarihi
+        _daily: {TICKER: {flows, settlement, price}},      # bugünün taze verisi
+    }
+    """
+    if os.path.exists(_MATRIKS_CACHE_PATH):
         try:
-            with open(path) as f:
+            with open(_MATRIKS_CACHE_PATH) as f:
                 return json.load(f)
         except Exception:
             pass
     return {}
 
 
-def _save_matriks_cache(date_str: str, data: dict):
-    """Matriks raw verisini cache dosyasına yaz."""
-    path = _matriks_cache_path(date_str)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def _save_matriks_cache(data: dict):
+    """Matriks cache yaz."""
+    os.makedirs(os.path.dirname(_MATRIKS_CACHE_PATH), exist_ok=True)
     try:
-        with open(path, "w") as f:
+        with open(_MATRIKS_CACHE_PATH, "w") as f:
             json.dump(data, f, ensure_ascii=False)
     except Exception as e:
         print(f"  ⚠️ Matriks cache yazma hatası: {e}")
@@ -1100,8 +1103,11 @@ def _save_matriks_cache(date_str: str, data: dict):
 def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_key, now):
     """Matriks kurumsal veri çek + SMS/ICE hesapla.
 
-    Cache stratejisi: Bugünün verisi varsa dosyadan oku, sadece eksik
-    ticker'ları API'den çek. Phase 1 çeker → Phase 2 cache'ten okur.
+    Cache stratejisi (kümülatif):
+    - _history: {TICKER: {date: flow}} → günler biriktirilerek saklanır
+    - _daily: {TICKER: {flows, settlement, price}} → bugünün taze verisi
+    - Phase 1 çeker, Phase 2 aynı günde cache'ten okur (0 API çağrısı)
+    - Sonraki gün: sadece yeni gün çekilir, eski günler cache'ten gelir
 
     Returns:
         (sms_scores, takas_data_map, ice_results, cost_data_map)
@@ -1121,26 +1127,36 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
     history_days = int(os.environ.get("MATRIKS_HISTORY_DAYS", "5"))
     include_history = history_days > 0
 
-    # Cache: bugünün verisini yükle
     today_str = now.strftime("%Y-%m-%d")
-    cached = _load_matriks_cache(today_str)
+    cache = _load_matriks_cache()
+    cache_date = cache.get("_today", "")
+    history_store = cache.get("_history", {})  # {TICKER: {date: flow}}
+    daily_store = cache.get("_daily", {})       # {TICKER: {flows, settlement, price}}
+    trend_store = cache.get("_trend")
 
-    # Eksik ticker'ları bul (cache'te olmayanlar)
-    cached_tickers = set(k for k in cached if not k.startswith("_"))
-    missing = [t for t in tickers if t not in cached_tickers]
+    # Bugün zaten çekildiyse → cache'ten oku
+    daily_cached = set(daily_store.keys()) if cache_date == today_str else set()
+    missing = [t for t in tickers if t not in daily_cached]
 
-    if not missing and cached:
-        # Tüm ticker'lar cache'te — API'ye gitmeye gerek yok
-        print(f"\n⬡ Matriks cache'ten okunuyor ({len(cached_tickers)} hisse, {today_str})")
-        matriks_raw = cached
+    if not missing and daily_cached:
+        # Tüm ticker'lar bugünün cache'inde — API'ye sıfır çağrı
+        print(f"\n⬡ Matriks cache'ten okunuyor ({len(daily_cached)} hisse, {today_str})")
+        matriks_raw = {}
+        for t in tickers:
+            d = dict(daily_store.get(t, {}))
+            # History'yi cache'ten ekle
+            if t in history_store:
+                d["daily_flows"] = dict(history_store[t])
+            matriks_raw[t] = d
+        if trend_store:
+            matriks_raw["_trend"] = trend_store
     else:
         mode_str = f", {history_days}g tarihçe" if include_history else ""
-        if cached_tickers:
-            print(f"\n⬡ Matriks delta çekiliyor ({len(missing)} eksik / {len(tickers)} toplam{mode_str})...")
+        if daily_cached:
+            print(f"\n⬡ Matriks delta çekiliyor ({len(missing)} yeni / {len(tickers)} toplam{mode_str})...")
         else:
             print(f"\n⬡ Matriks kurumsal veri çekiliyor ({len(tickers)} hisse{mode_str})...")
 
-        matriks_raw = dict(cached)  # cache'teki veriyle başla
         try:
             import concurrent.futures
             from agent.matriks_client import MatriksClient
@@ -1153,7 +1169,7 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
             def _fetch():
                 return client.fetch_batch(
                     fetch_tickers, include_history=include_history,
-                    history_days=history_days)
+                    history_days=history_days, history_cache=history_store)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(_fetch)
@@ -1162,20 +1178,55 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
                 except concurrent.futures.TimeoutError:
                     new_data = dict(client._partial_results) if client._partial_results else None
                     done = len([k for k in (new_data or {}) if not k.startswith("_")])
-                    print(f"  ⚠️ Matriks {matriks_timeout}s timeout — {done}/{len(fetch_tickers)} hisse kısmi veriyle devam")
+                    print(f"  ⚠️ Matriks {matriks_timeout}s timeout — {done}/{len(fetch_tickers)} kısmi veri")
 
+            # Cache güncelle
             if new_data:
-                matriks_raw.update(new_data)
+                new_trend = new_data.pop("_trend", None)
+                if new_trend:
+                    trend_store = new_trend
 
-            # Cache'e yaz (Phase 2 ve sonraki run'lar için)
-            if matriks_raw:
-                _save_matriks_cache(today_str, matriks_raw)
-                total_tickers = len([k for k in matriks_raw if not k.startswith("_")])
-                new_count = len([k for k in (new_data or {}) if not k.startswith("_")])
-                print(f"  Matriks: {total_tickers} hisse (cache={len(cached_tickers)}, yeni={new_count})")
+                for t, d in new_data.items():
+                    if t.startswith("_"):
+                        continue
+                    # Günlük veriyi kaydet (flows, settlement, price)
+                    daily_entry = {}
+                    for k in ("flows", "settlement", "price"):
+                        if k in d:
+                            daily_entry[k] = d[k]
+                    daily_store[t] = daily_entry
+
+                    # History biriktir (kümülatif merge)
+                    if "daily_flows" in d:
+                        if t not in history_store:
+                            history_store[t] = {}
+                        history_store[t].update(d["daily_flows"])
+
+                new_count = len([k for k in new_data if not k.startswith("_")])
+                total_hist = sum(len(v) for v in history_store.values())
+                print(f"  Matriks: {new_count} yeni hisse, tarihçe toplam {total_hist} gün-hisse")
+
+            # Cache dosyasına yaz
+            _save_matriks_cache({
+                "_today": today_str,
+                "_daily": daily_store,
+                "_history": history_store,
+                "_trend": trend_store,
+            })
 
         except Exception as e:
             print(f"  ⚠️ Matriks veri hatası: {e}")
+
+        # matriks_raw oluştur (tüm ticker'lar: daily_store + history_store)
+        matriks_raw = {}
+        for t in tickers:
+            d = dict(daily_store.get(t, {}))
+            if t in history_store:
+                d["daily_flows"] = dict(history_store[t])
+            if d:
+                matriks_raw[t] = d
+        if trend_store:
+            matriks_raw["_trend"] = trend_store
 
     takas_history = None
     try:

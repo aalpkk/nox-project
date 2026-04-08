@@ -299,19 +299,25 @@ class MatriksClient:
         return days
 
     def get_daily_flow_history(self, symbol: str, days: int = 20,
-                                top: int = 10) -> dict:
+                                top: int = 10,
+                                cached_dates: set = None) -> dict:
         """Son N iş günü için günlük flow verisi çek.
 
         Her gün ayrı ayrı çekilir — ICE takas_history için.
-        N=20 → ~21 API çağrısı (tatiller hariç).
+        cached_dates varsa o günler atlanır (delta çekme).
 
         Returns:
-            {date_str: flow_response} — veri olan günler
+            {date_str: flow_response} — sadece yeni çekilen günler
         """
         bdays = self._business_days(days)
+        cached_dates = cached_dates or set()
         result = {}
+        skipped = 0
         for d in bdays:
             ds = d.strftime("%Y-%m-%d")
+            if ds in cached_dates:
+                skipped += 1
+                continue
             try:
                 flow = self.get_institutional_flow(
                     symbol, top=top, start_date=ds, end_date=ds)
@@ -329,11 +335,12 @@ class MatriksClient:
     ]
 
     def fetch_batch(self, tickers: list, include_settlement: bool = True,
-                    include_history: bool = False, history_days: int = 20) -> dict:
+                    include_history: bool = False, history_days: int = 20,
+                    history_cache: dict = None) -> dict:
         """Toplu veri çek — her ticker için 4 periyot flow + settlement + price.
 
         Hisse başına: 4 flow (G/H/A/3A) + 1 settlement(+dates) + 1 price = 6 çağrı.
-        include_history=True ise: + N günlük daily flow = ~26 çağrı/hisse.
+        include_history=True ise: + eksik günlük daily flow çekilir.
         + batch başına 1 trend çağrısı (SM ardışık birikim).
 
         Args:
@@ -341,6 +348,7 @@ class MatriksClient:
             include_settlement: Settlement analizi dahil et (maliyet avantajı için)
             include_history: Günlük flow tarihçesi çek (ICE history için)
             history_days: Kaç iş günü geriye git (default 20)
+            history_cache: {TICKER: {date_str: flow}} — daha önce çekilmiş tarihçe
 
         Returns:
             dict: {TICKER: {flows, settlement, price, daily_flows?},
@@ -348,6 +356,7 @@ class MatriksClient:
         """
         results = {}
         self._partial_results = results  # referans paylaş — timeout'ta kısmi veri okunabilir
+        history_cache = history_cache or {}
 
         # Batch başına 1 kez: SM ardışık birikim trendleri
         try:
@@ -364,16 +373,14 @@ class MatriksClient:
                         bdays[0].strftime("%Y-%m-%d")]   # son iş günü
 
         total = len(tickers)
-        calls_per = 6 + (history_days if include_history else 0)
-        if include_history:
-            est_min = total * calls_per * _RATE_LIMIT_SEC / 60
-            print(f"  Matriks: ~{calls_per} çağrı/hisse × {total} = ~{est_min:.0f} dk tahmini")
+        total_api_calls = 0
+        total_cache_hits = 0
 
         for i, ticker in enumerate(tickers, 1):
             try:
                 data = {}
 
-                # 4 periyot flow (G/H/A/3A)
+                # 4 periyot flow (G/H/A/3A) — her zaman taze
                 flows = self.get_institutional_flow_periods(ticker)
                 if flows:
                     data["flows"] = flows
@@ -387,23 +394,44 @@ class MatriksClient:
                 if price:
                     data["price"] = price
 
-                # Günlük flow tarihçesi (ICE history)
-                # 429 bütçesi aşıldıysa history atla
+                total_api_calls += 6  # flow(4) + settlement(1) + price(1)
+
+                # Günlük flow tarihçesi (ICE history) — delta çekme
                 if include_history and history_days > 0 and _429_COUNT < _429_MAX:
-                    daily_flows = self.get_daily_flow_history(ticker, history_days)
-                    if daily_flows:
-                        data["daily_flows"] = daily_flows
+                    # Cache'teki tarihleri al — sadece eksikleri çek
+                    ticker_cached = history_cache.get(ticker, {})
+                    cached_dates = set(ticker_cached.keys())
+
+                    new_flows = self.get_daily_flow_history(
+                        ticker, history_days, cached_dates=cached_dates)
+
+                    # Cache + yeni → birleştir
+                    merged = dict(ticker_cached)
+                    merged.update(new_flows)
+                    if merged:
+                        data["daily_flows"] = merged
+                    total_api_calls += len(new_flows)
+                    total_cache_hits += len(cached_dates)
+
                 elif include_history and _429_COUNT >= _429_MAX:
                     if i == 1 or (i > 1 and _429_COUNT == _429_MAX):
                         print(f"  ⚠️ {_429_COUNT} adet 429 — kalan hisseler için history atlanıyor")
-                    include_history = False  # Kalan hisseler için kapat
+                    # Cache'ten olabildiğini yükle
+                    ticker_cached = history_cache.get(ticker, {})
+                    if ticker_cached:
+                        data["daily_flows"] = dict(ticker_cached)
+                    include_history = False
 
                 if data:
                     results[ticker] = data
                     if i % 5 == 0 or i == total:
-                        hist_info = f", {len(data.get('daily_flows', {}))}g tarihçe" if include_history else ""
-                        print(f"  Matriks: {i}/{total} hisse tamamlandı{hist_info}")
+                        df = data.get("daily_flows", {})
+                        print(f"  Matriks: {i}/{total} hisse tamamlandı, {len(df)}g tarihçe")
             except Exception as e:
                 print(f"  ⚠️ Matriks {ticker} hatası: {e}")
                 continue
+
+        if total_cache_hits > 0:
+            print(f"  Matriks: {total_api_calls} API çağrısı, {total_cache_hits} gün cache'ten")
+
         return results
