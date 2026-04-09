@@ -23,20 +23,20 @@ _TICKER_EXCLUDE = {
     'ONERI', 'UYARI', 'ALTIN', 'DOVIZ', 'FAIZ', 'EMTIA',
 }
 
-_LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+_LIST_SHORT = {'alsat': 'NOX-Tek', 'tavan': 'NOX9', 'nw': 'NOX-Dip', 'rt': 'NOX-Trend', 'sbt': 'NOX-Krlm'}
 _LIST_LABELS = {
-    'alsat': 'AL/SAT Tarama',
-    'tavan': 'Tavan Tarayici',
-    'nw': 'NW Pivot AL',
-    'rt': 'Regime Transition',
-    'sbt': 'SBT Breakout',
+    'alsat': 'NOX Teknik Sinyal',
+    'tavan': 'NOX 9',
+    'nw': 'NOX Dip Pivot',
+    'rt': 'NOX Trend',
+    'sbt': 'NOX Kırılım',
 }
 _LIST_ICONS = {
-    'alsat': '\U0001f4cb',  # clipboard
-    'tavan': '\U0001f53a',  # up triangle
-    'nw': '\U0001f4ca',     # chart
-    'rt': '\u26a1',         # lightning
-    'sbt': '\U0001f680',    # rocket
+    'alsat': '',
+    'tavan': '',
+    'nw': '',
+    'rt': '',
+    'sbt': '',
 }
 
 
@@ -248,6 +248,25 @@ def _prepare_shortlist_json(lists_dict, max_items=15):
                     entry['brk_ml_s'] = meta['brk_ml_s']
                 if meta.get('brk_avoid'):
                     entry['brk_avoid'] = True
+                # ICE kurumsal veriler
+                if meta.get('ice_mult') is not None:
+                    entry['ice_mult'] = meta['ice_mult']
+                    entry['ice_icon'] = meta.get('ice_icon', '')
+                if meta.get('cost_ratio'):
+                    entry['cost_ratio'] = meta['cost_ratio']
+                    entry['cost_value'] = meta.get('cost_value', '')
+                if meta.get('streak_days'):
+                    entry['streak_days'] = meta['streak_days']
+                    entry['streak_momentum'] = meta.get('streak_momentum', '')
+                if meta.get('position_change_pct') is not None:
+                    entry['position_change_pct'] = meta['position_change_pct']
+                # Vol tier
+                if meta.get('vol_tier'):
+                    entry['vol_tier'] = meta['vol_tier']
+                    entry['vol_tier_icon'] = meta.get('vol_tier_icon', '')
+                # Gate
+                if meta.get('gate_penalty'):
+                    entry['gate_penalty'] = meta['gate_penalty']
             entries.append(entry)
         result[key] = {
             'label': label,
@@ -317,11 +336,11 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 
     # Regime renk
     regime_colors = {
-        "GÜÇLÜ_RISK_ON": "#4ade80",
-        "RISK_ON": "#4ade80",
-        "NÖTR": "#a1a1aa",
-        "RISK_OFF": "#f87171",
-        "GÜÇLÜ_RISK_OFF": "#f87171",
+        "GÜÇLÜ_RISK_ON": "#7a9e7a",
+        "RISK_ON": "#7a9e7a",
+        "NÖTR": "#8a8580",
+        "RISK_OFF": "#9e5a5a",
+        "GÜÇLÜ_RISK_OFF": "#9e5a5a",
     }
     regime_color = regime_colors.get(regime, "#a1a1aa")
 
@@ -372,7 +391,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
 
     # ML Güçlü listesi (≥0.50)
-    _LIST_SHORT_HTML = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+    _LIST_SHORT_HTML = {'alsat': 'NOX-Tek', 'tavan': 'NOX9', 'nw': 'NOX-Dip', 'rt': 'NOX-Trend', 'sbt': 'NOX-Krlm'}
     ml_strong_items = []
     if lists_dict:
         _ml_seen_html = set()
@@ -438,38 +457,398 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 {_NOX_CSS}
 
 .briefing-container {{
+    position: relative;
+    z-index: 1;
     max-width: 960px;
-    margin: 2rem auto;
-    padding: 0 1.5rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 2rem;
 }}
 
-/* HEADER */
-.briefing-header {{
-    text-align: center;
-    margin-bottom: 2rem;
+/* ─── KATMAN 1: DURUM (sticky top bar) ─── */
+.nox-status-bar {{
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(6,6,8,0.55);
+    backdrop-filter: blur(24px) saturate(1.3);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    border-bottom: 1px solid rgba(201,169,110,0.08);
+    padding: 0.6rem 1.5rem;
+    margin: 0 -1.5rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
 }}
-.briefing-header h1 {{
-    font-family: var(--font-display);
-    font-size: 1.8rem;
-    color: var(--nox-cyan);
-    margin: 0;
+.nox-status-bar .logo {{
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.15rem;
+    white-space: nowrap;
 }}
-.briefing-header .subtitle {{
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-top: 0.5rem;
+.nox-status-bar .logo .nox-text {{
+    font-family: var(--font-brand);
+    font-size: 6rem;
+    color: #fff;
+    letter-spacing: 0.06em;
+    line-height: 0.85;
 }}
-.regime-badge {{
-    display: inline-block;
-    padding: 0.4rem 1.2rem;
-    border-radius: 2rem;
+.nox-status-bar .logo .brief-text {{
+    font-family: var(--font-handwrite);
+    font-size: 1.3rem;
+    color: #fff;
+    margin-left: 0.15rem;
+    position: relative;
+    top: -0.1rem;
+}}
+.nox-status-bar .regime-pill {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.7rem;
+    border-radius: 1rem;
     font-weight: 600;
-    font-size: 1rem;
-    margin: 1rem 0;
+    font-size: 0.72rem;
     border: 1px solid;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}}
+.nox-status-bar .macro-pills {{
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    flex: 1;
+}}
+.nox-status-bar .mpill {{
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}}
+.nox-status-bar .mpill b {{ font-weight: 600; }}
+.nox-status-bar .meta-right {{
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    margin-left: auto;
 }}
 
-/* SECTION TITLES */
+/* ─── KATMAN 1.5: Endeks uyarıları ─── */
+.nox-index-warn {{
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.2rem;
+    padding: 0.5rem 0.8rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+}}
+
+/* ─── KATMAN 2: AKSİYON KARTLARI ─── */
+.action-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}}
+.action-card {{
+    background: rgba(199,189,190,0.08);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: none;
+    border-radius: 18px;
+    padding: 0.9rem 1.1rem;
+    border-left: 3px solid transparent;
+    transition: all 0.25s ease;
+    animation: cardFadeIn 0.3s ease-out both;
+    position: relative;
+    overflow: hidden;
+}}
+.action-card::before {{
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(184,149,110,0.15), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+}}
+.action-card:hover {{
+    background: rgba(199,189,190,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(184,149,110,0.03);
+    transform: translateY(-1px);
+}}
+.action-card:hover::before {{ opacity: 1; }}
+.action-card.tier1 {{ border-left: 3px solid rgba(201,169,110,0.4); }}
+.action-card.tier2a {{ border-left: 3px solid rgba(184,149,110,0.25); }}
+.action-card.tier2b {{ border-left: 3px solid rgba(138,122,158,0.25); }}
+@keyframes cardFadeIn {{
+    from {{ opacity: 0; transform: translateY(8px); }}
+    to {{ opacity: 1; transform: translateY(0); }}
+}}
+.action-card .card-head {{
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}}
+.action-card .card-head .ticker {{
+    font-family: 'Inter', sans-serif;
+    font-weight: 900;
+    font-size: 1.15rem;
+    color: #fff;
+}}
+.action-card .card-head .tier-tag {{
+    font-size: 0.6rem;
+    font-family: var(--font-mono);
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}}
+.action-card .card-head .tier-tag.t1 {{ background: rgba(201,169,110,0.12); color: #c9a96e; }}
+.action-card .card-head .tier-tag.t2a {{ background: rgba(168,135,106,0.12); color: #a8876a; }}
+.action-card .card-head .tier-tag.t2b {{ background: rgba(138,122,158,0.12); color: #8a7a9e; }}
+.action-card .card-head .score-pill {{
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    background: var(--nox-gold-dim);
+    color: var(--nox-gold);
+    margin-left: auto;
+}}
+.action-card .card-badges {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 0.4rem;
+}}
+.action-card .card-reasons {{
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin-bottom: 0.4rem;
+}}
+.action-card .card-entry {{
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+}}
+.action-card .card-entry .e-label {{ color: var(--text-muted); }}
+.action-card .card-entry .e-limit {{ color: var(--nox-gold); font-weight: 600; }}
+.action-card .card-entry .e-sl {{ color: var(--nox-red); font-weight: 600; }}
+.action-card .card-entry .e-tp {{ color: var(--nox-green); font-weight: 600; }}
+.tier-group-label {{
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin: 1.2rem 0 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}}
+.tier-group-label:first-child {{ margin-top: 0; }}
+.tier-group-label .cnt {{
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}}
+
+/* ─── KATMAN 3: RADAR ─── */
+.radar-section {{
+    background: rgba(199,189,190,0.07);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: none;
+    border-radius: 18px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}}
+.radar-section .radar-header {{
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}}
+.radar-item {{
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 0.82rem;
+}}
+.radar-item:last-child {{ border-bottom: none; }}
+.radar-item .rank {{ color: var(--text-muted); font-family: var(--font-mono); font-size: 0.72rem; min-width: 1.2rem; }}
+.radar-item .ticker {{ font-family: 'Inter', sans-serif; font-weight: 900; font-size: 0.92rem; min-width: 4rem; }}
+.radar-item .tag {{
+    font-size: 0.65rem;
+    padding: 0.08rem 0.3rem;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+}}
+.radar-item .tag.ml {{ background: rgba(192,132,252,0.15); color: var(--nox-purple); }}
+.radar-item .tag.brk {{ background: rgba(250,204,21,0.15); color: var(--nox-yellow); }}
+.radar-item .tag.ltp {{ background: rgba(74,222,128,0.15); color: var(--nox-green); }}
+
+/* ─── KATMAN 4: DETAY (collapse) ─── */
+.detail-block {{
+    margin-bottom: 0.75rem;
+}}
+.detail-block > summary {{
+    font-family: var(--font-display);
+    color: var(--nox-gold);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.6rem 0.8rem;
+    background: rgba(199,189,190,0.07);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: none;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: all 0.2s;
+    list-style: none;
+}}
+.detail-block > summary::-webkit-details-marker {{ display: none; }}
+.detail-block > summary::before {{
+    content: '▸';
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}}
+.detail-block[open] > summary::before {{ transform: rotate(90deg); }}
+.detail-block > summary:hover {{
+    background: rgba(199,189,190,0.10);
+}}
+.detail-block > summary .det-count {{
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-left: auto;
+}}
+.detail-block .detail-body {{
+    padding: 0.8rem;
+    border: none;
+    border-radius: 0 0 16px 16px;
+    background: rgba(6,7,9,0.6);
+}}
+
+/* ─── TABS (sinyal listeleri) ─── */
+.nox-tabs {{
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 0.75rem;
+    overflow-x: auto;
+}}
+.nox-tab {{
+    padding: 0.5rem 1rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+    background: none;
+    border-top: none; border-left: none; border-right: none;
+    font-family: var(--font-display);
+}}
+.nox-tab:hover {{ color: var(--text-secondary); }}
+.nox-tab.active {{
+    color: var(--nox-gold);
+    border-bottom-color: var(--nox-gold);
+}}
+.nox-tab-panel {{ display: none; }}
+.nox-tab-panel.active {{ display: block; }}
+
+/* ─── SECTION TITLE (katman başlıkları) ─── */
+.layer-title {{
+    font-family: var(--font-display);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, rgba(201,169,110,0.2), transparent 60%) 1;
+}}
+
+/* ─── FOOTER ─── */
+.nox-footer {{
+    text-align: center;
+    padding: 2rem 0 1rem;
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.35);
+    font-family: var(--font-mono);
+    letter-spacing: 0.1em;
+}}
+
+/* ─── GLOSSARY ─── */
+.glossary-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}}
+.glossary-group {{
+    padding-bottom: 0.5rem;
+}}
+.glossary-cat {{
+    font-family: var(--font-display);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--nox-gold);
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid rgba(201,169,110,0.1);
+}}
+.glossary-row {{
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.2rem 0;
+    font-size: 0.78rem;
+    line-height: 1.4;
+}}
+.glossary-key {{
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 5.5rem;
+    flex-shrink: 0;
+    font-size: 0.72rem;
+}}
+.glossary-val {{
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+}}
+
+/* SECTION TITLES (legacy — used in detail blocks) */
 .section-title {{
     font-family: var(--font-display);
     color: var(--nox-cyan);
@@ -526,7 +905,9 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     min-width: 1.2rem;
 }}
 .signal-card .ticker {{
-    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    font-weight: 900;
+    font-size: 0.92rem;
     min-width: 4rem;
 }}
 .signal-card .reasons {{
@@ -553,9 +934,9 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     border-radius: 4px;
     white-space: nowrap;
 }}
-.ml-badge.ml-strong {{ background: rgba(250,204,21,0.15); color: #facc15; }}
-.ml-badge.ml-mid {{ background: rgba(59,130,246,0.15); color: #3b82f6; }}
-.ml-badge.ml-weak {{ background: rgba(239,68,68,0.15); color: #ef4444; }}
+.ml-badge.ml-strong {{ background: rgba(201,169,110,0.15); color: var(--nox-gold); }}
+.ml-badge.ml-mid {{ background: rgba(122,143,165,0.15); color: var(--nox-blue); }}
+.ml-badge.ml-weak {{ background: rgba(158,90,90,0.15); color: var(--nox-red); }}
 
 /* DUAL ML BADGE */
 .ml-dual {{
@@ -580,10 +961,10 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     border-radius: 3px;
     white-space: nowrap;
 }}
-.sbt-badge.sbt-ap {{ background: rgba(74,222,128,0.2); color: #4ade80; }}
-.sbt-badge.sbt-a {{ background: rgba(96,165,250,0.2); color: #60a5fa; }}
-.sbt-badge.sbt-b {{ background: rgba(161,161,170,0.12); color: #a1a1aa; }}
-.sbt-badge.sbt-x {{ background: rgba(248,113,113,0.15); color: #f87171; }}
+.sbt-badge.sbt-ap {{ background: rgba(122,158,122,0.2); color: var(--nox-green); }}
+.sbt-badge.sbt-a {{ background: rgba(122,143,165,0.2); color: var(--nox-blue); }}
+.sbt-badge.sbt-b {{ background: rgba(138,133,128,0.12); color: var(--text-secondary); }}
+.sbt-badge.sbt-x {{ background: rgba(158,90,90,0.15); color: var(--nox-red); }}
 
 /* VOL TIER BADGE (Hacim-donus) */
 .vol-tier {{
@@ -594,7 +975,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     margin-left: 4px;
     white-space: nowrap;
 }}
-.vol-tier.vt-altin {{ background: rgba(250,204,21,0.2); color: #facc15; }}
+.vol-tier.vt-altin {{ background: rgba(201,169,110,0.15); color: var(--nox-gold); }}
 .vol-tier.vt-gumus {{ background: rgba(192,192,192,0.2); color: #c0c0c0; }}
 .vol-tier.vt-bronz {{ background: rgba(205,127,50,0.2); color: #cd7f32; }}
 
@@ -606,8 +987,8 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     border-radius: 3px;
     white-space: nowrap;
 }}
-.sector-badge.sector-ok {{ background: rgba(74,222,128,0.15); color: #4ade80; }}
-.sector-badge.sector-warn {{ background: rgba(251,146,60,0.15); color: #fb923c; }}
+.sector-badge.sector-ok {{ background: rgba(122,158,122,0.15); color: var(--nox-green); }}
+.sector-badge.sector-warn {{ background: rgba(168,135,106,0.15); color: var(--nox-orange); }}
 
 /* GATE TAG */
 .gate-tag {{
@@ -615,8 +996,8 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     font-size: 0.6rem;
     padding: 0.08rem 0.25rem;
     border-radius: 3px;
-    background: rgba(248,113,113,0.12);
-    color: #f87171;
+    background: rgba(158,90,90,0.12);
+    color: var(--nox-red);
     white-space: nowrap;
 }}
 .brk-avoid {{
@@ -624,8 +1005,8 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     font-size: 0.6rem;
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
-    background: rgba(239,68,68,0.18);
-    color: #ef4444;
+    background: rgba(158,90,90,0.18);
+    color: var(--nox-red);
     font-weight: 600;
     white-space: nowrap;
 }}
@@ -645,8 +1026,8 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     font-size: 0.75rem;
     font-weight: 600;
 }}
-.rerank-delta.up {{ color: #4ade80; }}
-.rerank-delta.down {{ color: #f87171; }}
+.rerank-delta.up {{ color: var(--nox-green); }}
+.rerank-delta.down {{ color: var(--nox-red); }}
 
 /* FILTERED SECTION */
 .filtered-item {{
@@ -688,9 +1069,9 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     font-size: 0.75rem;
     font-family: var(--font-mono);
 }}
-.overlap-badge.b4 {{ background: rgba(248,113,113,0.2); color: #f87171; }}
-.overlap-badge.b3 {{ background: rgba(251,146,60,0.2); color: #fb923c; }}
-.overlap-badge.b2 {{ background: rgba(250,204,21,0.2); color: #facc15; }}
+.overlap-badge.b4 {{ background: rgba(158,90,90,0.2); color: var(--nox-red); }}
+.overlap-badge.b3 {{ background: rgba(168,135,106,0.2); color: var(--nox-orange); }}
+.overlap-badge.b2 {{ background: rgba(201,169,110,0.15); color: var(--nox-gold); }}
 .overlap-item {{
     display: flex;
     align-items: center;
@@ -700,7 +1081,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     font-size: 0.85rem;
 }}
 .overlap-item:last-child {{ border-bottom: none; }}
-.overlap-item .ticker {{ font-weight: 600; min-width: 4rem; }}
+.overlap-item .ticker {{ font-family: 'Inter', sans-serif; font-weight: 900; font-size: 0.92rem; min-width: 4rem; }}
 .overlap-item .lists-tag {{
     font-size: 0.7rem;
     padding: 0.1rem 0.4rem;
@@ -888,13 +1269,16 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     font-weight: 500;
 }}
 .tv-link {{
-    color: var(--nox-cyan);
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-weight: 900;
+    font-size: 0.95rem;
     text-decoration: none;
-    border-bottom: 1px dotted var(--nox-cyan);
     transition: opacity 0.15s;
 }}
 .tv-link:hover {{
-    opacity: 0.7;
+    opacity: 0.75;
+    color: var(--nox-gold);
 }}
 .shortlist-badge {{
     display: inline-block;
@@ -917,82 +1301,90 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 </style>
 </head>
 <body>
+<div class="aurora-bg">
+    <div class="aurora-layer aurora-layer-1"></div>
+    <div class="aurora-layer aurora-layer-2"></div>
+    <div class="aurora-layer aurora-layer-3"></div>
+</div>
+<div class="mesh-overlay"></div>
 <div class="briefing-container">
 
-    <!-- HEADER -->
-    <div class="briefing-header">
-        <h1>⬡ NOX Brifing</h1>
-        <div class="subtitle">{now} · Otomatik piyasa analizi</div>
-        <div class="regime-badge" style="color:{regime_color}; border-color:{regime_color}">
-            {regime} (Risk Skoru: {risk_score})
-        </div>
+    <!-- ══════ KATMAN 1: DURUM (sticky) ══════ -->
+    <div class="nox-status-bar" id="statusBar">
+        <span class="logo"><span class="nox-text">NOX</span><span class="brief-text">brief</span></span>
+        <span class="regime-pill" style="color:{regime_color};border-color:{regime_color}">{regime}</span>
+        <span class="macro-pills" id="macroPills"></span>
+        <span class="meta-right">{now}</span>
     </div>
+    <div class="nox-index-warn" id="indexWarn" style="display:none"></div>
 
-    <!-- SHORTLIST -->
-    <h2 class="section-title">⬡ Shortlist — Öncelikli Hisseler</h2>
-    <div id="shortlistContainer"></div>
+    <!-- ══════ KATMAN 2: AKSİYON ══════ -->
+    <div class="layer-title">Aksiyon — Shortlist</div>
+    <div id="actionCards"></div>
 
-    <!-- SECTOR SUMMARY -->
-    <div id="sectorSummary" style="margin-bottom:1.5rem"></div>
+    <!-- ══════ KATMAN 3: RADAR ══════ -->
+    <div class="layer-title">Radar — Keşif</div>
+    <div id="radarContainer"></div>
 
-    <!-- SIGNAL LISTS -->
-    <h2 class="section-title">📊 Sinyal Listeleri</h2>
-    <div class="signal-grid" id="signalGrid"></div>
+    <!-- ══════ KATMAN 4: DETAY ══════ -->
+    <div class="layer-title">Detay</div>
 
-    <!-- OVERLAP -->
-    <h2 class="section-title">🔥 Çapraz Çakışmalar</h2>
-    <div id="overlapContainer"></div>
+    <!-- 4a: Sinyal Listeleri (tab'lı) -->
+    <details class="detail-block" id="signalListsBlock">
+        <summary>Sinyal Listeleri <span class="det-count" id="signalListsCount"></span></summary>
+        <div class="detail-body">
+            <div class="nox-tabs" id="signalTabs"></div>
+            <div id="signalTabPanels"></div>
+        </div>
+    </details>
 
-    <!-- ML RERANK -->
-    <h2 class="section-title">🧠 ML Rerank Değişimi</h2>
-    <div id="rerankContainer"></div>
+    <!-- 4b: AI Analiz -->
+    <details class="detail-block">
+        <summary>AI Analiz</summary>
+        <div class="detail-body briefing-text">{limit_order_html if limit_order_html else '<p style="color:var(--text-muted)">AI giriş stratejisi üretilmedi (--no-ai)</p>'}</div>
+    </details>
 
-    <!-- ML FILTERED -->
-    <h2 class="section-title">⚠️ Filtreyle Elenenler</h2>
-    <div id="filteredContainer"></div>
+    <!-- 4c: ML Rerank + Filtered -->
+    <details class="detail-block" id="mlDetailBlock">
+        <summary>ML Detay <span class="det-count" id="mlDetailCount"></span></summary>
+        <div class="detail-body">
+            <div style="font-weight:600;font-size:0.85rem;margin-bottom:0.5rem">Rerank Değişimi</div>
+            <div id="rerankContainer"></div>
+            <div style="font-weight:600;font-size:0.85rem;margin:1rem 0 0.5rem">Filtreyle Elenenler</div>
+            <div id="filteredContainer"></div>
+        </div>
+    </details>
 
-    <!-- ML GÜÇLÜ -->
-    <h2 class="section-title">🤖 ML Güçlü (skor≥50)</h2>
-    <div id="mlStrongContainer"></div>
+    <!-- 4d: Makro Detay -->
+    <details class="detail-block">
+        <summary>Makro Detay</summary>
+        <div class="detail-body">
+            <div class="macro-signals" id="macroSignals"></div>
+            <div class="category-grid" id="categoryGrid"></div>
+            <div class="macro-grid" id="macroGrid"></div>
+        </div>
+    </details>
 
-    <!-- BİRİKİM→BREAKOUT ML -->
-    <h2 class="section-title">🎯 Birikim→Breakout Tahmini (ML)</h2>
-    <div id="breakoutMLContainer"></div>
+    <!-- 4e: Backtest -->
+    <details class="detail-block">
+        <summary>Backtest Sonuçları</summary>
+        <div class="detail-body">
 
-    <!-- LIMIT ORDER TP -->
-    <h2 class="section-title">🎯 Limit Order TP</h2>
-    <div id="limitTPContainer"></div>
-
-    <!-- LIMIT ORDER STRATEGY (AI) -->
-    <h2 class="section-title">💰 Giriş Stratejisi</h2>
-    <div id="limitOrderContainer" class="briefing-text">{limit_order_html if limit_order_html else '<p style="color:var(--text-muted)">AI giriş stratejisi üretilmedi (--no-ai)</p>'}</div>
-
-    <!-- MACRO -->
-    <h2 class="section-title">🌍 Makro Durum</h2>
-    <div class="macro-signals" id="macroSignals"></div>
-    <div class="category-grid" id="categoryGrid"></div>
-    <div class="macro-grid" id="macroGrid"></div>
-
-    <!-- BACKTEST SONUÇLARI -->
-    <details style="margin-bottom:1.5rem">
-        <summary class="section-title" style="cursor:pointer;user-select:none">📊 Backtest Sonuçları <span style="font-size:0.7rem;color:var(--text-muted)">(tıkla)</span></summary>
-        <div style="margin-top:0.75rem">
-
-        <h3 style="color:var(--nox-cyan);font-size:0.9rem;margin:1rem 0 0.5rem">Özet Sıralama (5G WR)</h3>
+        <h3 style="color:var(--nox-cyan);font-size:0.9rem;margin:0 0 0.5rem">Özet Sıralama (5G WR)</h3>
         <div style="overflow-x:auto">
         <table class="confluence-table" style="font-size:0.75rem">
             <thead><tr><th>#</th><th>Strateji</th><th>N</th><th>5G WR</th><th>5G ORT</th><th>5G MED</th></tr></thead>
             <tbody>
-            <tr><td>1</td><td>OL rt+tavan</td><td>26</td><td style="color:#4ade80;font-weight:600">71.4%</td><td>+9.04%</td><td>+8.82%</td></tr>
-            <tr><td>2</td><td>Rejim (RT)</td><td>102</td><td style="color:#4ade80;font-weight:600">66.7%</td><td>+4.55%</td><td>+2.63%</td></tr>
-            <tr><td>3</td><td>ML≥0.50</td><td>200</td><td style="color:#4ade80;font-weight:600">64.5%</td><td>+4.04%</td><td>+2.92%</td></tr>
-            <tr><td>4</td><td>ML≥0.55</td><td>103</td><td style="color:#4ade80;font-weight:600">63.1%</td><td>+4.11%</td><td>+3.20%</td></tr>
-            <tr><td>5</td><td>OL nw+tavan</td><td>16</td><td style="color:#4ade80">61.5%</td><td>+5.93%</td><td>+4.14%</td></tr>
-            <tr><td>6</td><td>OL 3+ liste</td><td>5</td><td style="color:#4ade80">60.0%</td><td>+5.34%</td><td>+4.14%</td></tr>
-            <tr><td>7</td><td>NW Elmas</td><td>1140</td><td style="color:#eab308">59.6%</td><td>+2.16%</td><td>+1.05%</td></tr>
-            <tr><td>8</td><td>AL/SAT</td><td>29</td><td style="color:#eab308">58.6%</td><td>+4.74%</td><td>+2.60%</td></tr>
-            <tr><td>9</td><td>Tier2</td><td>180</td><td style="color:#eab308">58.5%</td><td>+3.71%</td><td>+2.20%</td></tr>
-            <tr><td>10</td><td>T+Y (Taze+Yeni)</td><td>63</td><td style="color:#eab308">58.2%</td><td>+4.50%</td><td>+5.62%</td></tr>
+            <tr><td>1</td><td>OL rt+tavan</td><td>26</td><td style="color:#7a9e7a;font-weight:600">71.4%</td><td>+9.04%</td><td>+8.82%</td></tr>
+            <tr><td>2</td><td>Rejim (RT)</td><td>102</td><td style="color:#7a9e7a;font-weight:600">66.7%</td><td>+4.55%</td><td>+2.63%</td></tr>
+            <tr><td>3</td><td>ML≥0.50</td><td>200</td><td style="color:#7a9e7a;font-weight:600">64.5%</td><td>+4.04%</td><td>+2.92%</td></tr>
+            <tr><td>4</td><td>ML≥0.55</td><td>103</td><td style="color:#7a9e7a;font-weight:600">63.1%</td><td>+4.11%</td><td>+3.20%</td></tr>
+            <tr><td>5</td><td>OL nw+tavan</td><td>16</td><td style="color:#7a9e7a">61.5%</td><td>+5.93%</td><td>+4.14%</td></tr>
+            <tr><td>6</td><td>OL 3+ liste</td><td>5</td><td style="color:#7a9e7a">60.0%</td><td>+5.34%</td><td>+4.14%</td></tr>
+            <tr><td>7</td><td>NW Elmas</td><td>1140</td><td style="color:#c9a96e">59.6%</td><td>+2.16%</td><td>+1.05%</td></tr>
+            <tr><td>8</td><td>AL/SAT</td><td>29</td><td style="color:#c9a96e">58.6%</td><td>+4.74%</td><td>+2.60%</td></tr>
+            <tr><td>9</td><td>Tier2</td><td>180</td><td style="color:#c9a96e">58.5%</td><td>+3.71%</td><td>+2.20%</td></tr>
+            <tr><td>10</td><td>T+Y (Taze+Yeni)</td><td>63</td><td style="color:#c9a96e">58.2%</td><td>+4.50%</td><td>+5.62%</td></tr>
             </tbody>
         </table>
         </div>
@@ -1003,16 +1395,16 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
             <table class="confluence-table" style="font-size:0.7rem">
                 <thead><tr><th>Strateji</th><th>N</th><th>1G ORT</th><th>1G WR</th><th>3G ORT</th><th>3G WR</th><th>5G ORT</th><th>5G WR</th></tr></thead>
                 <tbody>
-                <tr><td>OL rt+tavan</td><td>26</td><td>4.57</td><td>70.8</td><td>8.32</td><td>77.3</td><td>9.04</td><td style="color:#4ade80">71.4</td></tr>
+                <tr><td>OL rt+tavan</td><td>26</td><td>4.57</td><td>70.8</td><td>8.32</td><td>77.3</td><td>9.04</td><td style="color:#7a9e7a">71.4</td></tr>
                 <tr><td>OL 3+ liste</td><td>5</td><td>4.76</td><td>100.0</td><td>6.29</td><td>80.0</td><td>5.34</td><td>60.0</td></tr>
                 <tr><td>T+Y (Taze+Yeni)</td><td>63</td><td>3.36</td><td>62.3</td><td>6.81</td><td>68.4</td><td>4.50</td><td>58.2</td></tr>
                 <tr><td>OL nw+tavan</td><td>16</td><td>3.19</td><td>68.8</td><td>5.50</td><td>71.4</td><td>5.93</td><td>61.5</td></tr>
                 <tr><td>Tier1</td><td>80</td><td>2.73</td><td>61.5</td><td>5.62</td><td>64.4</td><td>3.78</td><td>53.6</td></tr>
-                <tr><td>Rejim (RT)</td><td>102</td><td>0.68</td><td>55.4</td><td>3.75</td><td>58.3</td><td>4.55</td><td style="color:#4ade80">66.7</td></tr>
+                <tr><td>Rejim (RT)</td><td>102</td><td>0.68</td><td>55.4</td><td>3.75</td><td>58.3</td><td>4.55</td><td style="color:#7a9e7a">66.7</td></tr>
                 <tr><td>Tier2</td><td>180</td><td>1.69</td><td>58.1</td><td>2.76</td><td>54.4</td><td>3.71</td><td>58.5</td></tr>
                 <tr><td>AL/SAT</td><td>29</td><td>0.54</td><td>44.8</td><td>2.65</td><td>55.2</td><td>4.74</td><td>58.6</td></tr>
                 <tr><td>Tavan</td><td>180</td><td>0.72</td><td>44.0</td><td>0.90</td><td>48.9</td><td>1.88</td><td>54.2</td></tr>
-                <tr><td>NW Pivot</td><td>162</td><td>0.27</td><td>55.8</td><td>0.52</td><td>50.0</td><td>0.15</td><td style="color:#f87171">45.1</td></tr>
+                <tr><td>NW Pivot</td><td>162</td><td>0.27</td><td>55.8</td><td>0.52</td><td>50.0</td><td>0.15</td><td style="color:#9e5a5a">45.1</td></tr>
                 <tr style="font-weight:600;border-top:2px solid var(--border-dim)"><td>GENEL</td><td>733</td><td>1.07</td><td>53.5</td><td>2.15</td><td>53.5</td><td>2.50</td><td>54.1</td></tr>
                 </tbody>
             </table>
@@ -1027,8 +1419,8 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
                 <tbody>
                 <tr><td>Baseline</td><td>505-649</td><td>1.07</td><td>53.5</td><td>2.15</td><td>53.5</td><td>2.50</td><td>54.1</td></tr>
                 <tr><td>ML≥0.45</td><td>378-481</td><td>1.57</td><td>56.3</td><td>2.50</td><td>54.4</td><td>2.98</td><td>56.6</td></tr>
-                <tr><td style="color:var(--nox-cyan)">ML≥0.50</td><td>200-254</td><td>2.32</td><td>63.0</td><td>3.52</td><td>61.0</td><td>4.04</td><td style="color:#4ade80;font-weight:600">64.5</td></tr>
-                <tr><td>ML≥0.55</td><td>103-129</td><td>3.43</td><td>63.6</td><td>4.65</td><td>63.1</td><td>4.11</td><td style="color:#4ade80">63.1</td></tr>
+                <tr><td style="color:var(--nox-cyan)">ML≥0.50</td><td>200-254</td><td>2.32</td><td>63.0</td><td>3.52</td><td>61.0</td><td>4.04</td><td style="color:#7a9e7a;font-weight:600">64.5</td></tr>
+                <tr><td>ML≥0.55</td><td>103-129</td><td>3.43</td><td>63.6</td><td>4.65</td><td>63.1</td><td>4.11</td><td style="color:#7a9e7a">63.1</td></tr>
                 </tbody>
             </table>
             </div>
@@ -1040,12 +1432,12 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
             <table class="confluence-table" style="font-size:0.7rem">
                 <thead><tr><th>Strateji</th><th>N</th><th>1G ORT</th><th>1G WR</th><th>3G ORT</th><th>3G WR</th><th>5G ORT</th><th>5G WR</th></tr></thead>
                 <tbody>
-                <tr><td>NW Elmas</td><td>1140</td><td>0.41</td><td>51.1</td><td>1.17</td><td>53.5</td><td>2.16</td><td style="color:#eab308">59.6</td></tr>
+                <tr><td>NW Elmas</td><td>1140</td><td>0.41</td><td>51.1</td><td>1.17</td><td>53.5</td><td>2.16</td><td style="color:#c9a96e">59.6</td></tr>
                 <tr><td>RT Volume (sıçrama)</td><td>4793</td><td>0.49</td><td>50.3</td><td>1.13</td><td>51.6</td><td>1.58</td><td>52.7</td></tr>
                 <tr><td>RT Volume (tümü)</td><td>6953</td><td>0.50</td><td>49.9</td><td>1.03</td><td>50.8</td><td>1.53</td><td>52.4</td></tr>
                 <tr><td>SBT Breakout</td><td>2061</td><td>0.39</td><td>50.9</td><td>0.48</td><td>50.1</td><td>0.65</td><td>50.3</td></tr>
-                <tr><td>AL/SAT Dönüş</td><td>8897</td><td>0.15</td><td>46.5</td><td>0.34</td><td>45.7</td><td>0.51</td><td style="color:#f87171">46.8</td></tr>
-                <tr><td>Divergence BUY</td><td>27125</td><td>0.14</td><td>47.3</td><td>0.77</td><td>47.6</td><td>0.69</td><td style="color:#f87171">48.8</td></tr>
+                <tr><td>AL/SAT Dönüş</td><td>8897</td><td>0.15</td><td>46.5</td><td>0.34</td><td>45.7</td><td>0.51</td><td style="color:#9e5a5a">46.8</td></tr>
+                <tr><td>Divergence BUY</td><td>27125</td><td>0.14</td><td>47.3</td><td>0.77</td><td>47.6</td><td>0.69</td><td style="color:#9e5a5a">48.8</td></tr>
                 </tbody>
             </table>
             </div>
@@ -1060,129 +1452,276 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         </div>
     </details>
 
-    <!-- NEWS -->
-    <h2 class="section-title">📰 Piyasa Haberleri</h2>
-    <div id="newsContainer"></div>
+    <!-- 4f: Haberler -->
+    <details class="detail-block">
+        <summary>Piyasa Haberleri</summary>
+        <div class="detail-body" id="newsContainer"></div>
+    </details>
 
-    <!-- CONFLUENCE TABLE -->
-    <h2 class="section-title">⬡ Çakışma Tablosu</h2>
-    <table class="confluence-table" id="confluenceTable">
-        <thead>
-            <tr>
-                <th>Hisse</th>
-                <th>Skor</th>
-                <th>Yapısal</th>
-                <th>Taktik</th>
-                <th>Sonuç</th>
-                <th>Durum</th>
-                <th>Detaylar</th>
-            </tr>
-        </thead>
-        <tbody></tbody>
-    </table>
+    <!-- 4g: Çakışma Tablosu (en sonda) -->
+    <details class="detail-block">
+        <summary>Çakışma Tablosu <span class="det-count" id="confluenceCount"></span></summary>
+        <div class="detail-body" style="overflow-x:auto">
+            <table class="confluence-table" id="confluenceTable">
+                <thead>
+                    <tr>
+                        <th>Hisse</th>
+                        <th>Skor</th>
+                        <th>Yapısal</th>
+                        <th>Taktik</th>
+                        <th>Sonuç</th>
+                        <th>Durum</th>
+                        <th>Detaylar</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </details>
+
+    <!-- 4h: Sözlük -->
+    <details class="detail-block">
+        <summary>Kısaltmalar ve Terimler</summary>
+        <div class="detail-body">
+            <div class="glossary-grid">
+                <div class="glossary-group">
+                    <div class="glossary-cat">Sinyal Kaynakları</div>
+                    <div class="glossary-row"><span class="glossary-key">NOX-Tek</span><span class="glossary-val">NOX Teknik Sinyal — teknik dönüş sinyalleri (RSI, MACD, hacim)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NOX9</span><span class="glossary-val">NOX 9 — tavan/kilitli tavan adayları, streak takibi</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NOX-Dip</span><span class="glossary-val">NOX Dip Pivot — haftalık Elmas pivot kırılım sinyalleri</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NOX-Trend</span><span class="glossary-val">NOX Trend — rejim geçiş sinyalleri (trend başlangıcı)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NOX-Krlm</span><span class="glossary-val">NOX Kırılım — birikim→kırılım pattern tespiti</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">Tier Sistemi</div>
+                    <div class="glossary-row"><span class="glossary-key">T1</span><span class="glossary-val">Tier 1 — 2+ listede çakışan, en güçlü sinyaller</span></div>
+                    <div class="glossary-row"><span class="glossary-key">T2A</span><span class="glossary-val">Tier 2A — Taktik (1G momentum), kısa vadeli fırsatlar</span></div>
+                    <div class="glossary-row"><span class="glossary-key">T2B</span><span class="glossary-val">Tier 2B — Swing-Lite, orta vadeli izleme listesi</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">ML Skorları</div>
+                    <div class="glossary-row"><span class="glossary-key">S##</span><span class="glossary-val">ML Short skoru — 1 günlük yükseliş olasılığı (%)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">W##</span><span class="glossary-val">ML Swing skoru — 3 günlük yükseliş olasılığı (%)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">🟢 ≥60</span><span class="glossary-val">Güçlü ML sinyali</span></div>
+                    <div class="glossary-row"><span class="glossary-key">🟡 40-59</span><span class="glossary-val">Orta ML sinyali</span></div>
+                    <div class="glossary-row"><span class="glossary-key">🔴 &lt;40</span><span class="glossary-val">Zayıf ML sinyali</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">SBT Bucket</div>
+                    <div class="glossary-row"><span class="glossary-key">SBT:A+</span><span class="glossary-val">En güçlü breakout adayı</span></div>
+                    <div class="glossary-row"><span class="glossary-key">SBT:A</span><span class="glossary-val">Güçlü breakout adayı</span></div>
+                    <div class="glossary-row"><span class="glossary-key">SBT:B</span><span class="glossary-val">Orta — izlemeye devam</span></div>
+                    <div class="glossary-row"><span class="glossary-key">SBT:X</span><span class="glossary-val">Zayıf/bozulmuş setup → gate cezası</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">ICE (Kurumsal Teyit)</div>
+                    <div class="glossary-row"><span class="glossary-key">ICE×1.15</span><span class="glossary-val">Kurumsal çarpan — ≥1.15 güçlü kurumsal destek</span></div>
+                    <div class="glossary-row"><span class="glossary-key">r=0.95</span><span class="glossary-val">Maliyet avantajı oranı — SM broker ortalama maliyeti / fiyat. &lt;1 = kurumsal karda</span></div>
+                    <div class="glossary-row"><span class="glossary-key">SM4g💪</span><span class="glossary-val">Smart Money streak — 4 gün üst üste net alım, güçlü momentum</span></div>
+                    <div class="glossary-row"><span class="glossary-key">Δ+2.3%</span><span class="glossary-val">Pozisyon değişimi — kurumsal net alım yüzdesi (son gün)</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">Breakout ML</div>
+                    <div class="glossary-row"><span class="glossary-key">BRK🎯T5</span><span class="glossary-val">Birikim→Breakout Top 5 — en yüksek kırılım olasılığı</span></div>
+                    <div class="glossary-row"><span class="glossary-key">BRK⚡T10</span><span class="glossary-val">Birikim→Breakout Top 6-10 — izle</span></div>
+                    <div class="glossary-row"><span class="glossary-key">F##</span><span class="glossary-val">Fusion skoru — 0.4×Master + 0.6×ML_S birleşik tahmin</span></div>
+                    <div class="glossary-row"><span class="glossary-key">⛔ALMA</span><span class="glossary-val">ML tarafından elenen (zayıf breakout + zayıf ML)</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">Hacim & Sektör</div>
+                    <div class="glossary-row"><span class="glossary-key">🥇ALTIN</span><span class="glossary-val">Altın hacim tier — ortalama hacmin 3x+ sıçrama</span></div>
+                    <div class="glossary-row"><span class="glossary-key">🥈GUMUS</span><span class="glossary-val">Gümüş hacim tier — ortalama hacmin 2-3x sıçrama</span></div>
+                    <div class="glossary-row"><span class="glossary-key">✅XUHIZ</span><span class="glossary-val">Sektör endeksi AL — endeks rejimi yükseliş trendinde</span></div>
+                    <div class="glossary-row"><span class="glossary-key">⚠️XBANK↓</span><span class="glossary-val">Sektör endeksi PASİF — endeks rejimi düşüş/nötr</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">Giriş Stratejisi</div>
+                    <div class="glossary-row"><span class="glossary-key">Limit</span><span class="glossary-val">Limit emir fiyatı (kapanışın -%1.5 altı)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">TP</span><span class="glossary-val">Take Profit — hedef fiyat (%4 yukarı)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">streak</span><span class="glossary-val">Ardışık tavan/güçlü gün sayısı</span></div>
+                    <div class="glossary-row"><span class="glossary-key">##p</span><span class="glossary-val">Rule engine puanı — sinyal güç skoru</span></div>
+                </div>
+                <div class="glossary-group">
+                    <div class="glossary-cat">Makro</div>
+                    <div class="glossary-row"><span class="glossary-key">RISK_ON</span><span class="glossary-val">Piyasa olumlu — alım için uygun ortam</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NÖTR</span><span class="glossary-val">Kararsız — seçici ol</span></div>
+                    <div class="glossary-row"><span class="glossary-key">RISK_OFF</span><span class="glossary-val">Piyasa olumsuz — defansif kal</span></div>
+                </div>
+            </div>
+        </div>
+    </details>
+
+    <div class="nox-footer">by AAK. YTD.</div>
 </div>
 
 <script>
-const TV_BASE = 'https://www.tradingview.com/chart/?symbol=BIST:';
+const TV = 'https://www.tradingview.com/chart/?symbol=BIST:';
 const LISTS = {lists_json};
 const OVERLAP = {overlap_json};
-const MACRO_DETAIL = {macro_detail_json};
+const MD = {macro_detail_json};
 const MACRO = {macro_json};
-const CONFLUENCE = {confluence_json};
+const CONF = {confluence_json};
 const NEWS = {news_json};
-const SHORTLIST_SET = new Set({shortlist_set_json});
+const SL_SET = new Set({shortlist_set_json});
 const SAT_SET = new Set({sat_set_json});
-const RERANK_DATA = {rerank_json};
-const FILTERED_DATA = {filtered_json};
-const ML_STRONG = {ml_strong_json};
-const BREAKOUT_ML = {breakout_ml_json};
-const LIMIT_TP = {limit_tp_json};
-const SHORTLIST = {shortlist_json};
-const SECTOR_SUMMARY = {sector_summary_json};
+const RERANK = {rerank_json};
+const FILTERED = {filtered_json};
+const ML_S = {ml_strong_json};
+const BRK_ML = {breakout_ml_json};
+const LTP = {limit_tp_json};
+const SL = {shortlist_json};
+const SEC = {sector_summary_json};
+const SCAN = {{
+    'alsat': '{_bist_base}/',
+    'tavan': '{_bist_base}/tavan.html',
+    'nw': '{_nox_base}/nox_v3_weekly.html',
+    'rt': '{_nox_base}/regime_transition.html',
+    'sbt': '{_nox_base}/smart_breakout.html',
+}};
 
-// ── Shortlist (Tier1/2A/2B) ──
+// ── Utility: Badge render helpers ──
+function tvL(t) {{ return `<a href="${{TV}}${{t}}" target="_blank" class="tv-link">${{t}}</a>`; }}
+function mlBadge(item) {{
+    const mk = (v,p) => {{
+        if(v==null) return '';
+        const n=Math.round(v*100), c=v>=0.60?'ml-strong':v>=0.40?'ml-mid':'ml-weak';
+        return `<span class="ml-${{p}} ${{c}}">${{p.toUpperCase()}}${{n}}</span>`;
+    }};
+    if(item.ml_score_short!=null||item.ml_score_swing!=null)
+        return `<span class="ml-dual">${{mk(item.ml_score_short,'s')}}${{mk(item.ml_score_swing,'w')}}</span>`;
+    return '';
+}}
+function sbtBadge(item) {{
+    if(!item.sbt_bucket) return '';
+    const c={{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket]||'';
+    return `<span class="sbt-badge ${{c}}">SBT:${{item.sbt_bucket}}</span>`;
+}}
+function sectorBadge(item) {{
+    if(!item.sector_index) return '';
+    return item.sector_regime==='AL'
+        ? `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`
+        : `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
+}}
+function brkBadge(item) {{
+    if(item.brk_avoid) return `<span class="brk-avoid">⛔ALMA</span>`;
+    if(item.breakout_tier==='top5') {{
+        const f=item.breakout_fusion?Math.round(item.breakout_fusion*100):'';
+        return `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{f?'·F'+f:''}}</span>`;
+    }}
+    if(item.breakout_tier==='top10') {{
+        const f=item.breakout_fusion?Math.round(item.breakout_fusion*100):'';
+        return `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{f?'·F'+f:''}}</span>`;
+    }}
+    return '';
+}}
+function iceBadge(item) {{
+    if(item.ice_mult==null) return '';
+    const c=item.ice_mult>=1.15?'#7a9e7a':item.ice_mult>=1.02?'#c9a96e':item.ice_mult>=0.90?'#8a8580':'#9e5a5a';
+    let x='';
+    if(item.streak_days>=3) {{ const m=item.streak_momentum==='GÜÇLÜ'?'💪':''; x+=` SM${{item.streak_days}}g${{m}}`; }}
+    if(item.position_change_pct!=null&&Math.abs(item.position_change_pct)>=0.5) {{ x+=` Δ${{item.position_change_pct>0?'+':''}}${{item.position_change_pct.toFixed(1)}}%`; }}
+    if(item.cost_ratio) x+=` r=${{item.cost_ratio.toFixed(2)}}`;
+    return `<span style="background:${{c}}18;color:${{c}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{x}}</span>`;
+}}
+function volBadge(item) {{
+    if(!item.vol_tier||item.vol_tier==='NORMAL') return '';
+    const c={{'ALTIN':'vt-altin','GUMUS':'vt-gumus','BRONZ':'vt-bronz'}}[item.vol_tier]||'';
+    return `<span class="vol-tier ${{c}}">${{item.vol_tier_icon||''}}${{item.vol_tier}}</span>`;
+}}
+function filterReasons(reasons) {{
+    return (reasons||[]).filter(r=>!r.startsWith('🤖')&&!r.startsWith('SBT:')&&!r.startsWith('✅')&&!(r.startsWith('⚠️')&&!r.startsWith('⚠️taban')));
+}}
+
+// ══════ KATMAN 1: Makro pills (sticky bar) ══════
 (function() {{
-    const container = document.getElementById('shortlistContainer');
-    if (!SHORTLIST || Object.keys(SHORTLIST).length === 0) {{
+    const pills = document.getElementById('macroPills');
+    // Key macro instruments for pills
+    const keyNames = ['XU100', 'USDTRY', 'SPY', 'VIX'];
+    const keyItems = MACRO.filter(m => keyNames.some(k => (m.name||'').toUpperCase().includes(k)));
+    keyItems.forEach(item => {{
+        if(!item.price) return;
+        const chg = item.chg_1d != null ? item.chg_1d.toFixed(1) : '-';
+        const arrow = item.chg_1d > 0 ? '↑' : item.chg_1d < 0 ? '↓' : '→';
+        const color = item.chg_1d > 0 ? 'var(--nox-green)' : item.chg_1d < 0 ? 'var(--nox-red)' : 'var(--text-muted)';
+        pills.innerHTML += `<span class="mpill"><b style="color:${{color}}">${{arrow}}</b> ${{item.name}} <b style="color:${{color}}">${{chg}}%</b></span>`;
+    }});
+    // Add AL count from categories
+    const cats = MD.categories || {{}};
+    const bistCat = cats['BIST'];
+    if(bistCat) {{
+        pills.innerHTML += `<span class="mpill">BIST <b>${{bistCat.regime}}</b></span>`;
+    }}
+}})();
+
+// ── Index warnings (sadece ⚠️ olanlar) ──
+(function() {{
+    const container = document.getElementById('indexWarn');
+    if(!SEC || !SEC.groups || SEC.groups.length===0) return;
+    let warns = [];
+    SEC.groups.forEach(g => {{
+        if(g.pasif && g.pasif.length > 0) {{
+            g.pasif.forEach(s => warns.push(s));
+        }}
+    }});
+    if(warns.length === 0) return;
+    container.style.display = 'flex';
+    const alCount = SEC.groups.reduce((s,g) => s + (g.al?g.al.length:0), 0);
+    container.innerHTML = `<span style="font-size:0.75rem;color:var(--text-muted);margin-right:0.3rem">⚠️ Pasif endeksler (${{warns.length}}/${{SEC.total}}):</span>` +
+        warns.map(s => `<span class="sector-badge sector-warn" style="font-size:0.7rem">${{s}}</span>`).join(' ');
+}})();
+
+// ══════ KATMAN 2: AKSİYON KARTLARI ══════
+(function() {{
+    const container = document.getElementById('actionCards');
+    if(!SL || Object.keys(SL).length===0) {{
         container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Shortlist verisi yok</div>';
         return;
     }}
-    const TV_BASE = '{_TV_BASE}';
+    // Build limit TP lookup: ticker -> entry data
+    const ltpMap = {{}};
+    (LTP||[]).forEach(ltp => {{ ltpMap[ltp.ticker] = ltp; }});
+
     let html = '';
-    ['tier1', 'tier2a', 'tier2b'].forEach(key => {{
-        const list = SHORTLIST[key];
-        if (!list || list.items.length === 0) return;
-        html += `<div style="margin-bottom:1rem">
-            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
-                <span style="font-size:1.1rem">${{list.icon}}</span>
-                <span style="font-weight:600;color:var(--text-primary)">${{list.label}}</span>
-                <span style="color:var(--text-muted);font-size:0.75rem">${{list.total}} hisse</span>
-            </div>`;
-        list.items.forEach((item, i) => {{
-            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !(r.startsWith('⚠️') && !r.startsWith('⚠️taban'))).slice(0, 3).join(' ');
-            const listsTag = (item.in_lists || []).map(l => ({{alsat:'AS',tavan:'TVN',nw:'NW',rt:'RT',sbt:'SBT'}})[l] || l).join('+');
-            // ML badge
-            let mlBadge = '';
-            if (item.ml_score_short != null || item.ml_score_swing != null) {{
-                const mkB = (val, pfx) => {{
-                    if (val == null) return '';
-                    const p = Math.round(val * 100);
-                    const c = val >= 0.60 ? 'ml-strong' : val >= 0.40 ? 'ml-mid' : 'ml-weak';
-                    return `<span class="ml-${{pfx}} ${{c}}">${{pfx.toUpperCase()}}${{p}}</span>`;
-                }};
-                mlBadge = `<span class="ml-dual">${{mkB(item.ml_score_short,'s')}}${{mkB(item.ml_score_swing,'w')}}</span>`;
+    const tierConf = {{
+        tier1:  {{ cls:'tier1', tag:'T1', tagCls:'t1' }},
+        tier2a: {{ cls:'tier2a', tag:'T2A', tagCls:'t2a' }},
+        tier2b: {{ cls:'tier2b', tag:'T2B', tagCls:'t2b' }},
+    }};
+    let cardIdx = 0;
+    ['tier1','tier2a','tier2b'].forEach(key => {{
+        const list = SL[key];
+        if(!list || list.items.length===0) return;
+        const tc = tierConf[key];
+        html += `<div class="tier-group-label">${{list.icon}} ${{list.label}} <span class="cnt">${{list.total}}</span></div>`;
+        html += '<div class="action-grid">';
+        list.items.forEach((item,i) => {{
+            const delay = (cardIdx * 0.04).toFixed(2);
+            cardIdx++;
+            const reasons = filterReasons(item.reasons).slice(0,3).join(' · ');
+            const listsTag = (item.in_lists||[]).map(l=>({{alsat:'NOX-Tek',tavan:'NOX9',nw:'NOX-Dip',rt:'NOX-Trend',sbt:'NOX-Krlm'}})[l]||l).join('+');
+            // Entry info from limit TP
+            const ltp = ltpMap[item.ticker];
+            let entryHtml = '';
+            if(ltp) {{
+                entryHtml = `<div class="card-entry">
+                    <span><span class="e-label">Limit</span> <span class="e-limit">${{ltp.limit_price.toFixed(2)}}</span></span>
+                    <span><span class="e-label">TP</span> <span class="e-tp">${{ltp.tp_price.toFixed(2)}}</span></span>
+                    <span class="e-tp">+%${{ltp.net_pct.toFixed(1)}}</span>
+                    <span style="color:var(--text-muted)">streak=${{ltp.streak}}</span>
+                </div>`;
             }}
-            // SBT badge
-            let sbtBadge = '';
-            if (item.sbt_bucket) {{
-                const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
-                sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
-            }}
-            // Sector badge
-            let sectorBadge = '';
-            if (item.sector_index) {{
-                if (item.sector_regime === 'AL') {{
-                    sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
-                }} else {{
-                    sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
-                }}
-            }}
-            // BRK badge
-            let brkBadge = '';
-            if (item.brk_avoid) {{
-                brkBadge = `<span class="brk-avoid">⛔ALMA</span>`;
-            }} else if (item.breakout_tier === 'top5') {{
-                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
-                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{fPct ? '·F'+fPct : ''}}</span>`;
-            }} else if (item.breakout_tier === 'top10') {{
-                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
-                brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
-            }}
-            // ICE kurumsal badge
-            let iceBadge = '';
-            if (item.ice_mult != null) {{
-                const iceColor = item.ice_mult >= 1.15 ? '#4ade80' : item.ice_mult >= 1.02 ? '#fbbf24' : item.ice_mult >= 0.90 ? '#a1a1aa' : '#f87171';
-                let iceExtra = '';
-                if (item.streak_days >= 3) {{
-                    const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
-                    iceExtra += ` SM${{item.streak_days}}g${{mIcon}}`;
-                }}
-                if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
-                    const sign = item.position_change_pct > 0 ? '+' : '';
-                    iceExtra += ` Δ${{sign}}${{item.position_change_pct.toFixed(1)}}%`;
-                }}
-                if (item.cost_ratio) {{
-                    iceExtra += ` r=${{item.cost_ratio.toFixed(2)}}`;
-                }}
-                iceBadge = `<span style="background:${{iceColor}}18;color:${{iceColor}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{iceExtra}}</span>`;
-            }}
-            html += `<div class="signal-card">
-                <span class="rank">${{i+1}}</span>
-                <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
-                ${{listsTag ? `<span class="lists-tag">${{listsTag}}</span>` : ''}}
-                <span class="reasons">${{reasons}}</span>
-                ${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{iceBadge}}
-                <span class="score-pill">${{item.score}}p</span>
+            html += `<div class="action-card ${{tc.cls}}" style="animation-delay:${{delay}}s">
+                <div class="card-head">
+                    ${{tvL(item.ticker)}}
+                    <span class="tier-tag ${{tc.tagCls}}">${{tc.tag}}</span>
+                    ${{listsTag ? `<span style="font-size:0.65rem;color:var(--text-muted);font-family:var(--font-mono)">${{listsTag}}</span>` : ''}}
+                    <span class="score-pill">${{item.score}}p</span>
+                </div>
+                <div class="card-badges">
+                    ${{mlBadge(item)}}${{sbtBadge(item)}}${{sectorBadge(item)}}${{brkBadge(item)}}${{iceBadge(item)}}${{volBadge(item)}}
+                </div>
+                <div class="card-reasons">${{reasons}}</div>
+                ${{entryHtml}}
             </div>`;
         }});
         html += '</div>';
@@ -1190,536 +1729,214 @@ const SECTOR_SUMMARY = {sector_summary_json};
     container.innerHTML = html;
 }})();
 
-// ── Endeks & Sektör Özeti ──
+// ══════ KATMAN 3: RADAR ══════
 (function() {{
-    const container = document.getElementById('sectorSummary');
-    if (!SECTOR_SUMMARY || !SECTOR_SUMMARY.groups || SECTOR_SUMMARY.groups.length === 0) return;
-    let html = '<div style="padding:0.5rem 0.8rem;background:var(--bg-card);border-radius:8px;border:1px solid var(--border-subtle)">';
-    html += '<div style="font-weight:600;margin-bottom:0.4rem;font-size:0.85rem">📊 Endeks & Sektör Durumu <small style="color:var(--text-muted)">(' + SECTOR_SUMMARY.total + ' endeks)</small></div>';
-    SECTOR_SUMMARY.groups.forEach(g => {{
-        const alCount = g.al ? g.al.length : 0;
-        html += '<div style="font-size:0.78rem;margin-bottom:0.25rem">';
-        html += `<span style="font-weight:500">${{g.label}}</span> <small style="color:var(--text-muted)">${{alCount}}/${{g.total}} AL</small> `;
-        if (g.al) g.al.forEach(s => {{ html += `<span class="sector-badge sector-ok">✅${{s}}</span> `; }});
-        if (g.pasif) g.pasif.forEach(s => {{ html += `<span class="sector-badge sector-warn">⚠️${{s}}</span> `; }});
-        html += '</div>';
+    const container = document.getElementById('radarContainer');
+    // Combine ML Güçlü + Breakout ML + Limit TP (exclude those already in shortlist)
+    const slTickers = new Set();
+    ['tier1','tier2a','tier2b'].forEach(k => {{
+        if(SL[k]) SL[k].items.forEach(it => slTickers.add(it.ticker));
+    }});
+
+    let items = [];
+
+    // ML Güçlü (shortlist'te olmayanlar)
+    (ML_S||[]).forEach(m => {{
+        if(slTickers.has(m.ticker)) return;
+        items.push({{ticker:m.ticker, type:'ml', sort:m.best,
+            html:`<span class="tag ml">ML S${{m.ml_short}}·W${{m.ml_swing}}</span><span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono)">${{m.sources.join('+')}}</span>`}});
+    }});
+    // Breakout ML (shortlist'te olmayanlar)
+    (BRK_ML||[]).forEach(b => {{
+        if(slTickers.has(b.ticker) || items.some(x=>x.ticker===b.ticker)) return;
+        const fC = b.fusion>=80?'var(--nox-green)':b.fusion>=60?'#c9a96e':'var(--text-secondary)';
+        items.push({{ticker:b.ticker, type:'brk', sort:b.fusion,
+            html:`<span class="tag brk">BRK F${{b.fusion}}</span><span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono)">TVN:${{b.tavan_prob}} S:${{b.ml_s}}</span>`}});
+    }});
+    // Limit TP (shortlist'te olmayanlar)
+    (LTP||[]).forEach(ltp => {{
+        if(slTickers.has(ltp.ticker) || items.some(x=>x.ticker===ltp.ticker)) return;
+        items.push({{ticker:ltp.ticker, type:'ltp', sort:90,
+            html:`<span class="tag ltp">LTP +%${{ltp.net_pct.toFixed(1)}}</span><span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono)">streak=${{ltp.streak}} S${{ltp.ml_s}}</span>`}});
+    }});
+
+    items.sort((a,b) => b.sort - a.sort);
+
+    if(items.length===0) {{
+        container.innerHTML = '<div class="radar-section"><div style="color:var(--text-muted);font-size:0.85rem">Radar boş — tüm güçlü sinyaller shortlistte</div></div>';
+        return;
+    }}
+    let html = '<div class="radar-section"><div class="radar-header">🔭 Keşif <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400">shortlist dışı güçlü sinyaller</span></div>';
+    items.slice(0,15).forEach((it,i) => {{
+        html += `<div class="radar-item">
+            <span class="rank">${{i+1}}</span>
+            <span class="ticker">${{tvL(it.ticker)}}</span>
+            ${{it.html}}
+        </div>`;
     }});
     html += '</div>';
     container.innerHTML = html;
 }})();
 
-// ── Sinyal Listeleri (2x2 grid) ──
+// ══════ KATMAN 4a: Sinyal Listeleri (tab'lı) ══════
 (function() {{
-    const grid = document.getElementById('signalGrid');
-    const order = ['alsat', 'tavan', 'nw', 'rt', 'sbt'];
-    const scanUrls = {{
-        'alsat': '{_bist_base}/',
-        'tavan': '{_bist_base}/tavan.html',
-        'nw': '{_nox_base}/nox_v3_weekly.html',
-        'rt': '{_nox_base}/regime_transition.html',
-        'sbt': '{_nox_base}/smart_breakout.html',
-    }};
-    order.forEach(key => {{
+    const tabsEl = document.getElementById('signalTabs');
+    const panelsEl = document.getElementById('signalTabPanels');
+    const order = ['alsat','tavan','nw','rt','sbt'];
+    let totalSignals = 0;
+    order.forEach((key,idx) => {{
         const list = LISTS[key];
-        if (!list) return;
-        const sec = document.createElement('div');
-        sec.className = 'signal-section';
-        const scanUrl = scanUrls[key] || '#';
-        let html = `<div class="list-header">
-            <span><a href="${{scanUrl}}" target="_blank" style="color:inherit;text-decoration:none">${{list.icon}} ${{list.label}}</a></span>
-            <span class="count">${{list.total}} sinyal</span>
-        </div>`;
-        if (list.items.length === 0) {{
+        if(!list) return;
+        totalSignals += list.total;
+        const isFirst = idx === 0;
+        // Tab button
+        tabsEl.innerHTML += `<button class="nox-tab${{isFirst?' active':''}}" data-tab="${{key}}">${{list.icon}} ${{list.short}} <span style="font-size:0.65rem;color:var(--text-muted)">${{list.total}}</span></button>`;
+        // Tab panel
+        const scanUrl = SCAN[key] || '#';
+        let html = `<div class="nox-tab-panel${{isFirst?' active':''}}" data-tab="${{key}}">`;
+        html += `<div style="margin-bottom:0.5rem;font-size:0.8rem"><a href="${{scanUrl}}" target="_blank" style="color:var(--nox-cyan);text-decoration:none">${{list.label}} →</a></div>`;
+        if(list.items.length===0) {{
             html += '<div style="color:var(--text-muted);font-size:0.8rem">Sinyal yok</div>';
         }}
-        list.items.forEach((item, i) => {{
-            // Filter out ML/SBT/sector badges from reasons (rendered separately)
-            const reasons = item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !(r.startsWith('⚠️') && !r.startsWith('⚠️taban'))).slice(0, 4).join(' ');
-            // Dual ML badge
-            let mlBadge = '';
-            if (item.ml_score_short != null || item.ml_score_swing != null) {{
-                const mkBadge = (val, prefix) => {{
-                    if (val == null) return '';
-                    const pct = Math.round(val * 100);
-                    const cls = val >= 0.60 ? 'ml-strong' : val >= 0.40 ? 'ml-mid' : 'ml-weak';
-                    return `<span class="ml-${{prefix}} ${{cls}}">${{prefix.toUpperCase()}}${{pct}}</span>`;
-                }};
-                mlBadge = `<span class="ml-dual">${{mkBadge(item.ml_score_short,'s')}}${{mkBadge(item.ml_score_swing,'w')}}</span>`;
-            }} else if (item.ml_score != null) {{
-                const mlPct = Math.round(item.ml_score * 100);
-                const mlCls = item.ml_score >= 0.60 ? 'ml-strong' : item.ml_score >= 0.40 ? 'ml-mid' : 'ml-weak';
-                mlBadge = `<span class="ml-badge ${{mlCls}}">ML${{mlPct}}</span>`;
-            }}
-            // SBT badge
-            let sbtBadge = '';
-            if (item.sbt_bucket) {{
-                const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
-                sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
-            }}
+        list.items.forEach((item,i) => {{
+            const reasons = filterReasons(item.reasons).slice(0,4).join(' ');
             // Gate tag
             let gateTag = '';
-            if (item.gate_penalty >= 99) {{
-                gateTag = '<span class="gate-tag">HARD</span>';
-            }} else if (item.gate_penalty >= 1) {{
-                gateTag = '<span class="gate-tag">soft</span>';
-            }}
-            // Breakout ML badge + avoid
-            let brkBadge = '';
-            if (item.brk_avoid) {{
-                brkBadge = `<span class="brk-avoid">⛔ALMA</span>`;
-            }} else if (item.breakout_tier === 'top5') {{
-                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
-                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{fPct ? '·F'+fPct : ''}}</span>`;
-            }} else if (item.breakout_tier === 'top10') {{
-                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
-                brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
-            }} else if (item.breakout_master && item.breakout_master >= 0.10) {{
-                const brkPct = Math.round(item.breakout_master * 100);
-                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK${{brkPct}}%</span>`;
-            }}
-            // Vol tier badge (RT hacim-donus)
-            let volBadge = '';
-            if (item.vol_tier && item.vol_tier !== 'NORMAL') {{
-                const vtCls = {{'ALTIN':'vt-altin','GUMUS':'vt-gumus','BRONZ':'vt-bronz'}}[item.vol_tier] || '';
-                const vtIcon = item.vol_tier_icon || '';
-                volBadge = `<span class="vol-tier ${{vtCls}}">${{vtIcon}}${{item.vol_tier}}</span>`;
-            }}
-            // Sector badge
-            let sectorBadge = '';
-            if (item.sector_index) {{
-                if (item.sector_regime === 'AL') {{
-                    sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
-                }} else {{
-                    sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
-                }}
-            }}
-            // ICE kurumsal badge
-            let iceBadge = '';
-            if (item.ice_mult != null) {{
-                const iceColor = item.ice_mult >= 1.15 ? '#4ade80' : item.ice_mult >= 1.02 ? '#fbbf24' : item.ice_mult >= 0.90 ? '#a1a1aa' : '#f87171';
-                let iceExtra = '';
-                if (item.streak_days >= 3) {{
-                    const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
-                    iceExtra += ` SM${{item.streak_days}}g${{mIcon}}`;
-                }}
-                if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
-                    const sign = item.position_change_pct > 0 ? '+' : '';
-                    iceExtra += ` Δ${{sign}}${{item.position_change_pct.toFixed(1)}}%`;
-                }}
-                if (item.cost_ratio) {{
-                    iceExtra += ` r=${{item.cost_ratio.toFixed(2)}}`;
-                }}
-                iceBadge = `<span style="background:${{iceColor}}18;color:${{iceColor}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{iceExtra}}</span>`;
-            }}
+            if(item.gate_penalty>=99) gateTag='<span class="gate-tag">HARD</span>';
+            else if(item.gate_penalty>=1) gateTag='<span class="gate-tag">soft</span>';
             html += `<div class="signal-card">
                 <span class="rank">${{i+1}}</span>
-                <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
+                <a href="${{TV}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{gateTag}}${{iceBadge}}
+                ${{volBadge(item)}}${{sectorBadge(item)}}${{sbtBadge(item)}}${{mlBadge(item)}}${{brkBadge(item)}}${{gateTag}}${{iceBadge(item)}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
-        sec.innerHTML = html;
-        grid.appendChild(sec);
+        html += '</div>';
+        panelsEl.innerHTML += html;
+    }});
+    document.getElementById('signalListsCount').textContent = totalSignals + ' sinyal';
+    // Tab switch logic
+    tabsEl.addEventListener('click', e => {{
+        const btn = e.target.closest('.nox-tab');
+        if(!btn) return;
+        const key = btn.dataset.tab;
+        tabsEl.querySelectorAll('.nox-tab').forEach(b => b.classList.toggle('active', b.dataset.tab===key));
+        panelsEl.querySelectorAll('.nox-tab-panel').forEach(p => p.classList.toggle('active', p.dataset.tab===key));
     }});
 }})();
 
-// ── Çapraz Çakışmalar ──
+// ══════ KATMAN 4c: ML Rerank + Filtered ══════
 (function() {{
-    const container = document.getElementById('overlapContainer');
-    if (!OVERLAP || OVERLAP.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Çakışma bulunamadı</div>';
-        return;
+    let cnt = 0;
+    // Rerank
+    const rc = document.getElementById('rerankContainer');
+    if(!RERANK || RERANK.length===0) {{
+        rc.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem">Rerank verisi yok</div>';
+    }} else {{
+        cnt += RERANK.length;
+        const ups = RERANK.filter(r=>r.delta>0).sort((a,b)=>b.delta-a.delta);
+        const downs = RERANK.filter(r=>r.delta<0).sort((a,b)=>a.delta-b.delta);
+        let h = '';
+        if(ups.length) {{
+            h += '<div style="font-size:0.78rem;color:var(--nox-green);margin-bottom:0.3rem">↑ Yükselenler</div>';
+            ups.slice(0,8).forEach(r => {{
+                h += `<div class="rerank-item">${{tvL(r.ticker)}} <span class="lists-tag">${{r.list_tag}}</span> <span style="font-size:0.78rem;color:var(--text-muted)">${{r.old_rank}}→${{r.new_rank}}</span> <span class="rerank-delta up">+${{r.delta}}</span></div>`;
+            }});
+        }}
+        if(downs.length) {{
+            h += '<div style="font-size:0.78rem;color:var(--nox-red);margin:0.5rem 0 0.3rem">↓ Düşenler</div>';
+            downs.slice(0,8).forEach(r => {{
+                h += `<div class="rerank-item">${{tvL(r.ticker)}} <span class="lists-tag">${{r.list_tag}}</span> <span style="font-size:0.78rem;color:var(--text-muted)">${{r.old_rank}}→${{r.new_rank}}</span> <span class="rerank-delta down">${{r.delta}}</span></div>`;
+            }});
+        }}
+        rc.innerHTML = h;
     }}
-    const badgeClass = {{4: 'b4', 3: 'b3', 2: 'b2'}};
-    OVERLAP.forEach(group => {{
-        const sec = document.createElement('div');
-        sec.className = 'overlap-section';
-        const bc = badgeClass[group.overlap_count] || 'b2';
-        let html = `<div class="group-header">
-            <span class="overlap-badge ${{bc}}">${{group.overlap_count}}x</span>
-            <span>${{group.label}}</span>
-            <span style="color:var(--text-muted);font-size:0.75rem;margin-left:auto">${{group.total}} hisse</span>
-        </div>`;
-        group.items.forEach(item => {{
-            const listsTag = (item.in_lists || []).map(l => {{
-                const short = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT','sbt':'SBT'}}[l] || l;
-                return short;
-            }}).join('+');
-            const relaxed = item.relaxed ? ' [RT↓]' : '';
-            const reason0 = item.reasons && item.reasons.length > 0
-                ? item.reasons.filter(r => !r.startsWith('🤖') && !r.startsWith('SBT:') && !r.startsWith('✅') && !(r.startsWith('⚠️') && !r.startsWith('⚠️taban')))[0] || ''
-                : '';
-            // Dual ML badge
-            let mlBadge = '';
-            if (item.ml_score_short != null || item.ml_score_swing != null) {{
-                const mkB = (val, pfx) => {{
-                    if (val == null) return '';
-                    const p = Math.round(val * 100);
-                    const c = val >= 0.60 ? 'ml-strong' : val >= 0.40 ? 'ml-mid' : 'ml-weak';
-                    return `<span class="ml-${{pfx}} ${{c}}">${{pfx.toUpperCase()}}${{p}}</span>`;
-                }};
-                mlBadge = `<span class="ml-dual">${{mkB(item.ml_score_short,'s')}}${{mkB(item.ml_score_swing,'w')}}</span>`;
-            }} else if (item.ml_score != null) {{
-                const mlPct = Math.round(item.ml_score * 100);
-                const mlCls = item.ml_score >= 0.60 ? 'ml-strong' : item.ml_score >= 0.40 ? 'ml-mid' : 'ml-weak';
-                mlBadge = `<span class="ml-badge ${{mlCls}}">ML${{mlPct}}</span>`;
-            }}
-            // SBT badge
-            let sbtBadge = '';
-            if (item.sbt_bucket) {{
-                const sbtCls = {{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket] || '';
-                sbtBadge = `<span class="sbt-badge ${{sbtCls}}">SBT:${{item.sbt_bucket}}</span>`;
-            }}
-            // Vol tier badge
-            let volBadge = '';
-            if (item.vol_tier && item.vol_tier !== 'NORMAL') {{
-                const vtCls = {{'ALTIN':'vt-altin','GUMUS':'vt-gumus','BRONZ':'vt-bronz'}}[item.vol_tier] || '';
-                const vtIcon = item.vol_tier_icon || '';
-                volBadge = `<span class="vol-tier ${{vtCls}}">${{vtIcon}}${{item.vol_tier}}</span>`;
-            }}
-            // Sector badge
-            let sectorBadge = '';
-            if (item.sector_index) {{
-                if (item.sector_regime === 'AL') {{
-                    sectorBadge = `<span class="sector-badge sector-ok">✅${{item.sector_index}}</span>`;
-                }} else {{
-                    sectorBadge = `<span class="sector-badge sector-warn">⚠️${{item.sector_index}}↓</span>`;
-                }}
-            }}
-            // BRK badge
-            let brkBadge = '';
-            if (item.brk_avoid) {{
-                brkBadge = `<span class="brk-avoid">⛔ALMA</span>`;
-            }} else if (item.breakout_tier === 'top5') {{
-                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
-                brkBadge = `<span class="ml-badge ml-strong" style="font-size:0.65rem">BRK🎯T5${{fPct ? '·F'+fPct : ''}}</span>`;
-            }} else if (item.breakout_tier === 'top10') {{
-                const fPct = item.breakout_fusion ? Math.round(item.breakout_fusion * 100) : '';
-                brkBadge = `<span class="ml-badge ml-mid" style="font-size:0.65rem">BRK⚡T10${{fPct ? '·F'+fPct : ''}}</span>`;
-            }}
-            // ICE kurumsal badge
-            let iceBadge = '';
-            if (item.ice_mult != null) {{
-                const iceColor = item.ice_mult >= 1.15 ? '#4ade80' : item.ice_mult >= 1.02 ? '#fbbf24' : item.ice_mult >= 0.90 ? '#a1a1aa' : '#f87171';
-                let iceExtra = '';
-                if (item.streak_days >= 3) {{
-                    const mIcon = item.streak_momentum === 'GÜÇLÜ' ? '💪' : '';
-                    iceExtra += ` SM${{item.streak_days}}g${{mIcon}}`;
-                }}
-                if (item.position_change_pct != null && Math.abs(item.position_change_pct) >= 0.5) {{
-                    const sign = item.position_change_pct > 0 ? '+' : '';
-                    iceExtra += ` Δ${{sign}}${{item.position_change_pct.toFixed(1)}}%`;
-                }}
-                if (item.cost_ratio) {{
-                    iceExtra += ` r=${{item.cost_ratio.toFixed(2)}}`;
-                }}
-                iceBadge = `<span style="background:${{iceColor}}18;color:${{iceColor}};padding:0.1rem 0.35rem;border-radius:0.25rem;font-size:0.65rem;font-weight:600;white-space:nowrap">ICE×${{item.ice_mult.toFixed(2)}}${{iceExtra}}</span>`;
-            }}
-            html += `<div class="overlap-item">
-                <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
-                <span class="lists-tag">${{listsTag}}${{relaxed}}</span>
-                <span class="reasons-text">${{reason0}}</span>
-                ${{volBadge}}${{sectorBadge}}${{sbtBadge}}${{mlBadge}}${{brkBadge}}${{iceBadge}}
-                <span class="quality">${{item.quality}}p</span>
-            </div>`;
+    // Filtered
+    const fc = document.getElementById('filteredContainer');
+    const LS = {{'alsat':'NOX-Tek','tavan':'NOX9','nw':'NOX-Dip','rt':'NOX-Trend','sbt':'NOX-Krlm','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
+    if(!FILTERED || FILTERED.length===0) {{
+        fc.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem">Elenen sinyal yok</div>';
+    }} else {{
+        cnt += FILTERED.length;
+        let h = `<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.4rem">Rule güçlü ama ML zayıf — ${{FILTERED.length}} hisse</div>`;
+        FILTERED.slice(0,10).forEach(item => {{
+            h += `<div class="filtered-item">${{tvL(item.ticker)}} <span class="lists-tag">${{LS[item.list]||item.list}}</span> <span style="font-family:var(--font-mono);font-size:0.72rem">rule:${{item.rule_score}}p</span> <span class="reason">${{item.reason}}</span></div>`;
         }});
-        sec.innerHTML = html;
-        container.appendChild(sec);
-    }});
+        fc.innerHTML = h;
+    }}
+    document.getElementById('mlDetailCount').textContent = cnt ? cnt + ' kayıt' : '';
 }})();
 
-// ── ML Rerank Değişimi ──
+// ══════ KATMAN 4d: Makro Detay ══════
 (function() {{
-    const container = document.getElementById('rerankContainer');
-    if (!RERANK_DATA || RERANK_DATA.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">ML rerank verisi yok</div>';
-        return;
-    }}
-    const sec = document.createElement('div');
-    sec.className = 'overlap-section';
-    const ups = RERANK_DATA.filter(r => r.delta > 0).sort((a,b) => b.delta - a.delta);
-    const downs = RERANK_DATA.filter(r => r.delta < 0).sort((a,b) => a.delta - b.delta);
-    let html = '';
-    if (ups.length > 0) {{
-        html += '<div style="font-size:0.8rem;color:var(--nox-green);margin-bottom:0.3rem">↑ Yükselenler</div>';
-        ups.slice(0, 8).forEach(r => {{
-            html += `<div class="rerank-item">
-                <a href="${{TV_BASE}}${{r.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{r.ticker}}</a>
-                <span class="lists-tag">${{r.list_tag}}</span>
-                <span style="font-size:0.8rem;color:var(--text-muted)">${{r.old_rank}}→${{r.new_rank}}</span>
-                <span class="rerank-delta up">+${{r.delta}}</span>
-            </div>`;
-        }});
-    }}
-    if (downs.length > 0) {{
-        html += '<div style="font-size:0.8rem;color:var(--nox-red);margin:0.5rem 0 0.3rem">↓ Düşenler</div>';
-        downs.slice(0, 8).forEach(r => {{
-            html += `<div class="rerank-item">
-                <a href="${{TV_BASE}}${{r.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{r.ticker}}</a>
-                <span class="lists-tag">${{r.list_tag}}</span>
-                <span style="font-size:0.8rem;color:var(--text-muted)">${{r.old_rank}}→${{r.new_rank}}</span>
-                <span class="rerank-delta down">${{r.delta}}</span>
-            </div>`;
-        }});
-    }}
-    sec.innerHTML = html;
-    container.appendChild(sec);
-}})();
-
-// ── Filtreyle Elenenler ──
-(function() {{
-    const container = document.getElementById('filteredContainer');
-    if (!FILTERED_DATA || FILTERED_DATA.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Elenen sinyal yok</div>';
-        return;
-    }}
-    const listShort = {{'alsat':'AS','tavan':'TVN','nw':'NW','rt':'RT','sbt':'SBT','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
-    const sec = document.createElement('div');
-    sec.className = 'overlap-section';
-    let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Rule güçlü ama ML zayıf — ${{FILTERED_DATA.length}} hisse elendi</div>`;
-    FILTERED_DATA.slice(0, 10).forEach(item => {{
-        const tag = listShort[item.list] || item.list;
-        html += `<div class="filtered-item">
-            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
-            <span class="lists-tag">${{tag}}</span>
-            <span style="font-family:var(--font-mono);font-size:0.75rem">rule:${{item.rule_score}}p</span>
-            <span class="reason">${{item.reason}}</span>
-        </div>`;
-    }});
-    sec.innerHTML = html;
-    container.appendChild(sec);
-}})();
-
-// ── ML Güçlü ──
-(function() {{
-    const container = document.getElementById('mlStrongContainer');
-    if (!ML_STRONG || ML_STRONG.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">ML≥50 sinyal yok</div>';
-        return;
-    }}
-    const sec = document.createElement('div');
-    sec.className = 'overlap-section';
-    let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">ML skor ≥50 — ${{ML_STRONG.length}} hisse</div>`;
-    ML_STRONG.slice(0, 15).forEach((item, idx) => {{
-        const srcStr = item.sources ? item.sources.join('+') : '';
-        const sColor = item.ml_short >= 55 ? 'var(--nox-cyan)' : item.ml_short >= 50 ? '#eab308' : 'var(--text-muted)';
-        const wColor = item.ml_swing >= 55 ? 'var(--nox-cyan)' : item.ml_swing >= 50 ? '#eab308' : 'var(--text-muted)';
-        html += `<div class="filtered-item">
-            <span style="color:var(--text-muted);font-size:0.75rem;min-width:1.2rem">${{idx+1}}.</span>
-            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
-            <span style="font-family:var(--font-mono);font-size:0.8rem">S<span style="color:${{sColor}}">${{item.ml_short}}</span>·W<span style="color:${{wColor}}">${{item.ml_swing}}</span></span>
-            <span class="lists-tag">${{srcStr}}</span>
-        </div>`;
-    }});
-    sec.innerHTML = html;
-    container.appendChild(sec);
-}})();
-
-// ── Birikim→Breakout ML ──
-(function() {{
-    const container = document.getElementById('breakoutMLContainer');
-    if (!BREAKOUT_ML || BREAKOUT_ML.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Breakout ML verisi yok (BREAKOUT_ML_ENABLED=1 ile etkinleştir)</div>';
-        return;
-    }}
-    const sec = document.createElement('div');
-    sec.className = 'overlap-section';
-    const top5 = BREAKOUT_ML.filter(x => x.tier === 'top5');
-    const top10 = BREAKOUT_ML.filter(x => x.tier === 'top10');
-    let html = `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Birikim→Breakout — Fusion skor (0.40×Master + 0.60×ML_S)</div>`;
-    const renderItem = (item, idx) => {{
-        const fColor = item.fusion >= 80 ? 'var(--nox-green)' : item.fusion >= 60 ? '#eab308' : 'var(--text-secondary)';
-        const xref = item.in_shortlist ? `<span style="color:var(--nox-cyan);font-size:0.7rem;margin-left:0.3rem">★SL</span>` : '';
-        return `<div class="filtered-item">
-            <span style="color:var(--text-muted);font-size:0.75rem;min-width:1.2rem">${{idx}}.</span>
-            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
-            <span style="font-family:var(--font-mono);font-size:0.85rem;font-weight:600;color:${{fColor}}">F${{item.fusion}}</span>
-            <span style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">TVN:${{item.tavan_prob}} RLI:${{item.rally_prob}} S:${{item.ml_s}}</span>
-            ${{xref}}
-        </div>`;
-    }};
-    if (top5.length > 0) {{
-        html += '<div style="font-size:0.8rem;font-weight:600;color:var(--nox-green);margin:0.3rem 0">🎯 Yüksek Güven (Top 5)</div>';
-        top5.forEach((item, i) => {{ html += renderItem(item, i + 1); }});
-    }}
-    if (top10.length > 0) {{
-        html += '<div style="font-size:0.8rem;font-weight:600;color:#eab308;margin:0.5rem 0 0.3rem">⚡ İzle (Top 6-10)</div>';
-        top10.forEach((item, i) => {{ html += renderItem(item, i + 6); }});
-    }}
-    sec.innerHTML = html;
-    container.appendChild(sec);
-}})();
-
-// ── Limit Order TP ──
-(function() {{
-    const container = document.getElementById('limitTPContainer');
-    if (!LIMIT_TP || LIMIT_TP.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Filtre koşullarını karşılayan sinyal yok (score≥400 · streak≥2 · ML S≥58)</div>';
-        return;
-    }}
-    const sec = document.createElement('div');
-    sec.className = 'overlap-section';
-    let html = `<div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem">
-        <div style="background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.2);border-radius:0.5rem;padding:0.5rem 0.8rem;font-size:0.8rem">
-            <span style="color:var(--text-muted)">Backtest</span><br>
-            <span style="color:var(--nox-green);font-weight:600">WR %93</span> · <span style="color:var(--nox-green)">PF 9.3</span> · <span style="color:var(--text-secondary)">Ort +%3.26</span>
-        </div>
-        <div style="background:rgba(161,161,170,0.08);border:1px solid rgba(161,161,170,0.2);border-radius:0.5rem;padding:0.5rem 0.8rem;font-size:0.8rem">
-            <span style="color:var(--text-muted)">Strateji</span><br>
-            <span style="color:var(--text-secondary)">-%1.5 limit giriş → %4 TP → 1g hold</span>
-        </div>
-    </div>`;
-    LIMIT_TP.forEach((item, idx) => {{
-        const streakColor = item.streak >= 3 ? 'var(--nox-green)' : '#eab308';
-        const mlColor = item.ml_s >= 65 ? 'var(--nox-green)' : '#eab308';
-        html += `<div class="filtered-item">
-            <span style="color:var(--text-muted);font-size:0.75rem;min-width:1.2rem">${{idx+1}}.</span>
-            <a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link" style="font-weight:600;min-width:4rem">${{item.ticker}}</a>
-            <span style="font-family:var(--font-mono);font-size:0.8rem">
-                Limit:<span style="color:var(--nox-cyan)">${{item.limit_price.toFixed(2)}}</span>
-                TP:<span style="color:var(--nox-green)">${{item.tp_price.toFixed(2)}}</span>
-                <span style="color:var(--nox-green);font-weight:600">+%${{item.net_pct.toFixed(2)}}</span>
-            </span>
-            <span style="background:${{streakColor}}22;color:${{streakColor}};padding:0.1rem 0.4rem;border-radius:0.25rem;font-size:0.72rem;font-weight:600">streak=${{item.streak}}</span>
-            <span style="background:${{mlColor}}22;color:${{mlColor}};padding:0.1rem 0.4rem;border-radius:0.25rem;font-size:0.72rem;font-weight:600">S${{item.ml_s}}</span>
-            <span class="lists-tag">${{item.list_source}}</span>
-        </div>`;
-    }});
-    sec.innerHTML = html;
-    container.appendChild(sec);
-}})();
-
-// ── Makro Detay ──
-(function() {{
-    // Rejim sinyalleri
-    const sigContainer = document.getElementById('macroSignals');
-    if (MACRO_DETAIL.signals && MACRO_DETAIL.signals.length > 0) {{
-        MACRO_DETAIL.signals.forEach(sig => {{
+    const sigC = document.getElementById('macroSignals');
+    if(MD.signals && MD.signals.length>0) {{
+        MD.signals.forEach(sig => {{
             const el = document.createElement('div');
             el.className = 'regime-signal';
             el.textContent = sig;
-            sigContainer.appendChild(el);
+            sigC.appendChild(el);
         }});
     }} else {{
-        sigContainer.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem">Makro veri yok</div>';
+        sigC.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem">Makro veri yok</div>';
     }}
-
-    // Kategori rejimleri
     const catGrid = document.getElementById('categoryGrid');
-    const catOrder = ['BIST', 'US', 'FX', 'Emtia', 'Kripto', 'Faiz'];
-    const regimeColors = {{
-        'GÜÇLÜ_YUKARI': 'var(--nox-green)', 'YUKARI': 'var(--nox-green)',
-        'NÖTR': 'var(--text-muted)',
-        'AŞAĞI': 'var(--nox-red)', 'GÜÇLÜ_AŞAĞI': 'var(--nox-red)',
-    }};
-    const cats = MACRO_DETAIL.categories || {{}};
+    const catOrder = ['BIST','US','FX','Emtia','Kripto','Faiz'];
+    const rc = {{'GÜÇLÜ_YUKARI':'var(--nox-green)','YUKARI':'var(--nox-green)','NÖTR':'var(--text-muted)','AŞAĞI':'var(--nox-red)','GÜÇLÜ_AŞAĞI':'var(--nox-red)'}};
+    const cats = MD.categories || {{}};
     catOrder.forEach(cat => {{
-        const data = cats[cat];
-        if (!data) return;
+        const d = cats[cat]; if(!d) return;
         const card = document.createElement('div');
         card.className = 'category-regime';
-        const color = regimeColors[data.regime] || 'var(--text-secondary)';
-        card.innerHTML = `
-            <div class="cat-name">${{cat}}</div>
-            <div class="cat-regime" style="color:${{color}}">${{data.regime}}</div>
-            <div class="cat-score">skor: ${{data.score}}</div>
-        `;
+        card.innerHTML = `<div class="cat-name">${{cat}}</div><div class="cat-regime" style="color:${{rc[d.regime]||'var(--text-secondary)'}}">${{d.regime}}</div><div class="cat-score">skor: ${{d.score}}</div>`;
         catGrid.appendChild(card);
     }});
-
-    // Enstruman grid
-    const macroGrid = document.getElementById('macroGrid');
+    const mg = document.getElementById('macroGrid');
     MACRO.forEach(item => {{
-        if (!item.price) return;
-        const chg1d = item.chg_1d != null ? item.chg_1d.toFixed(1) : '-';
-        const chg5d = item.chg_5d != null ? item.chg_5d.toFixed(1) : '-';
-        const chg1m = item.chg_1m != null ? item.chg_1m.toFixed(1) : '-';
-        const color = item.chg_1d > 0 ? 'var(--nox-green)' : item.chg_1d < 0 ? 'var(--nox-red)' : 'var(--text-muted)';
-        const trend = item.trend === 'UP' ? '↑' : item.trend === 'DOWN' ? '↓' : '→';
-        const emaTag = item.above_ema21 ? '<span style="color:var(--nox-green)">EMA↑</span>' : '<span style="color:var(--nox-red)">EMA↓</span>';
+        if(!item.price) return;
+        const c1 = item.chg_1d!=null?item.chg_1d.toFixed(1):'-';
+        const c5 = item.chg_5d!=null?item.chg_5d.toFixed(1):'-';
+        const cm = item.chg_1m!=null?item.chg_1m.toFixed(1):'-';
+        const clr = item.chg_1d>0?'var(--nox-green)':item.chg_1d<0?'var(--nox-red)':'var(--text-muted)';
+        const t = item.trend==='UP'?'↑':item.trend==='DOWN'?'↓':'→';
+        const ema = item.above_ema21?'<span style="color:var(--nox-green)">EMA↑</span>':'<span style="color:var(--nox-red)">EMA↓</span>';
         const card = document.createElement('div');
         card.className = 'macro-card';
-        card.innerHTML = `
-            <div class="name">${{item.name}}</div>
-            <div class="price">${{item.price.toLocaleString('tr-TR')}}</div>
-            <div class="change" style="color:${{color}}">${{trend}} 1G:${{chg1d}}% · 5G:${{chg5d}}%</div>
-            <div class="detail">1A:${{chg1m}}% ${{emaTag}}</div>
-        `;
-        macroGrid.appendChild(card);
+        card.innerHTML = `<div class="name">${{item.name}}</div><div class="price">${{item.price.toLocaleString('tr-TR')}}</div><div class="change" style="color:${{clr}}">${{t}} 1G:${{c1}}% · 5G:${{c5}}%</div><div class="detail">1A:${{cm}}% ${{ema}}</div>`;
+        mg.appendChild(card);
     }});
 }})();
 
-// ── Piyasa Haberleri ──
+// ══════ KATMAN 4f: Haberler ══════
 (function() {{
-    const container = document.getElementById('newsContainer');
-    if (!NEWS || NEWS.length === 0) {{
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Haber bulunamadı</div>';
-        return;
-    }}
-    const sec = document.createElement('div');
-    sec.className = 'news-section';
-    let html = '';
+    const c = document.getElementById('newsContainer');
+    if(!NEWS || NEWS.length===0) {{ c.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Haber bulunamadı</div>'; return; }}
+    let h = '';
     NEWS.forEach(item => {{
-        const title = item.title || '';
-        const link = item.link || '#';
-        const source = item.source || '';
-        const pubDate = item.pub_date || '';
-        // Basit tarih parse
-        let dateStr = '';
-        if (pubDate) {{
-            try {{
-                const d = new Date(pubDate);
-                dateStr = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR', {{hour:'2-digit', minute:'2-digit'}});
-            }} catch(e) {{
-                dateStr = pubDate;
-            }}
-        }}
-        html += `<div class="news-item">
-            <a href="${{link}}" target="_blank">${{title}}</a>
-            <div class="news-meta">${{source}}${{source && dateStr ? ' — ' : ''}}${{dateStr}}</div>
-        </div>`;
+        let ds = '';
+        if(item.pub_date) {{ try {{ const d=new Date(item.pub_date); ds=d.toLocaleDateString('tr-TR')+' '+d.toLocaleTimeString('tr-TR',{{hour:'2-digit',minute:'2-digit'}}); }} catch(e){{ ds=item.pub_date; }} }}
+        h += `<div class="news-item"><a href="${{item.link||'#'}}" target="_blank">${{item.title||''}}</a><div class="news-meta">${{item.source||''}}${{item.source&&ds?' — ':''}}${{ds}}</div></div>`;
     }});
-    sec.innerHTML = html;
-    container.appendChild(sec);
+    c.innerHTML = h;
 }})();
 
-// ── Çakışma Tablosu ──
+// ══════ KATMAN 4g: Çakışma Tablosu ══════
 (function() {{
     const tbody = document.querySelector('#confluenceTable tbody');
-    const recColors = {{
-        'TRADEABLE': '#4ade80',
-        'TAKTİK': '#60a5fa',
-        'İZLE': '#fbbf24',
-        'BEKLE': '#fb923c',
-        'ELE': '#f87171',
-        'VERİ_YOK': '#71717a',
-    }};
-    CONFLUENCE.forEach(item => {{
+    const recC = {{'TRADEABLE':'#7a9e7a','TAKTİK':'#7a8fa5','İZLE':'#c9a96e','BEKLE':'#a8876a','ELE':'#9e5a5a','VERİ_YOK':'#555250'}};
+    document.getElementById('confluenceCount').textContent = CONF.length ? CONF.length + ' hisse' : '';
+    CONF.forEach(item => {{
         const tr = document.createElement('tr');
-        const scoreColor = item.score >= 5 ? '#4ade80' : item.score >= 3 ? '#fbbf24' : item.score <= 0 ? '#f87171' : '#a1a1aa';
-        const hasConflict = item.has_conflict || (SAT_SET.has(item.ticker) && item.recommendation !== 'BEKLE');
-        const displayRec = hasConflict ? 'BEKLE' : item.recommendation;
-        const recColor = recColors[displayRec] || '#a1a1aa';
-        const details = (item.details || []).slice(0, 3).join('<br>');
-        const structScore = item.structural_score || 0;
-        const tactScore = item.tactical_score || 0;
-        // Durum badge
-        let durumHtml = '<span class="shortlist-badge not-in">—</span>';
-        if (hasConflict) {{
-            durumHtml = '<span class="shortlist-badge conflict">ÇELİŞKİ</span>';
-        }} else if (SHORTLIST_SET.has(item.ticker)) {{
-            durumHtml = '<span class="shortlist-badge in-list">SHORTLIST</span>';
-        }}
-        tr.innerHTML = `
-            <td><a href="${{TV_BASE}}${{item.ticker}}" target="_blank" class="tv-link"><b>${{item.ticker}}</b></a></td>
-            <td><span class="score-badge" style="background:${{scoreColor}}20;color:${{scoreColor}}">${{item.score}}</span></td>
-            <td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{structScore}}</td>
-            <td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{tactScore}}</td>
-            <td><span class="rec-badge" style="background:${{recColor}}20;color:${{recColor}}">${{displayRec}}</span></td>
-            <td>${{durumHtml}}</td>
-            <td style="font-size:0.8rem;color:var(--text-secondary)">${{details}}</td>
-        `;
+        const sc = item.score>=5?'#7a9e7a':item.score>=3?'#c9a96e':item.score<=0?'#9e5a5a':'#8a8580';
+        const hc = item.has_conflict||(SAT_SET.has(item.ticker)&&item.recommendation!=='BEKLE');
+        const dr = hc?'BEKLE':item.recommendation;
+        const rc = recC[dr]||'#8a8580';
+        const det = (item.details||[]).slice(0,3).join('<br>');
+        let dur = '<span class="shortlist-badge not-in">—</span>';
+        if(hc) dur='<span class="shortlist-badge conflict">ÇELİŞKİ</span>';
+        else if(SL_SET.has(item.ticker)) dur='<span class="shortlist-badge in-list">SHORTLIST</span>';
+        tr.innerHTML = `<td>${{tvL(item.ticker)}}</td><td><span class="score-badge" style="background:${{sc}}20;color:${{sc}}">${{item.score}}</span></td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.structural_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.tactical_score||0}}</td><td><span class="rec-badge" style="background:${{rc}}20;color:${{rc}}">${{dr}}</span></td><td>${{dur}}</td><td style="font-size:0.8rem;color:var(--text-secondary)">${{det}}</td>`;
         tbody.appendChild(tr);
     }});
 }})();
