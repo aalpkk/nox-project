@@ -129,42 +129,80 @@ def _score_single_df(df):
     }
 
 
-def _fetch_tv_batch(symbols):
+def _fetch_tv_single(tv, code, interval, n_bars=130):
+    """Tek sembol çek — thread içinden çağrılır."""
+    df = tv.get_hist(code, 'BIST', interval=interval, n_bars=n_bars)
+    if df is not None and len(df) >= 30:
+        return df.drop(columns=['symbol'], errors='ignore')
+    return None
+
+
+def _fetch_tv_batch(symbols, per_symbol_timeout=15, total_timeout=300):
     """tvDatafeed ile batch endeks verisi çek.
+
+    Her sembol ayrı thread'de per_symbol_timeout ile çekilir —
+    bir tanesi takılırsa sadece o atlanır, diğerleri çekilir.
+    total_timeout: tüm batch için üst sınır.
 
     Args:
         symbols: ['XBANK', 'XUTEK', 'XU100', ...]
+        per_symbol_timeout: Sembol başına max bekleme (saniye). Default 15s.
+        total_timeout: Toplam max bekleme (saniye). Default 300s (5dk).
 
     Returns: {code: DataFrame, ...} — başarılı olanlar
     """
     import time
+    import concurrent.futures
     from tvDatafeed import TvDatafeed, Interval
 
-    tv = TvDatafeed()
     results = {}
-    failed = []
+    t0 = time.time()
 
+    # İlk bağlantı — timeout korumalı
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(TvDatafeed)
+            tv = future.result(timeout=per_symbol_timeout)
+    except Exception as e:
+        print(f"  ⚠️ tvDatafeed bağlantı hatası: {e}")
+        return results
+
+    failed = []
     for code in symbols:
+        if time.time() - t0 > total_timeout:
+            print(f"  ⚠️ tvDatafeed toplam {total_timeout}s aşıldı — "
+                  f"{len(results)}/{len(symbols)} çekildi")
+            break
         try:
-            df = tv.get_hist(code, 'BIST', interval=Interval.in_daily, n_bars=130)
-            if df is not None and len(df) >= 30:
-                df = df.drop(columns=['symbol'], errors='ignore')
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_fetch_tv_single, tv, code,
+                                   Interval.in_daily)
+                df = future.result(timeout=per_symbol_timeout)
+            if df is not None:
                 results[code] = df
             else:
                 failed.append(code)
+        except concurrent.futures.TimeoutError:
+            print(f"    ⏳ {code} timeout ({per_symbol_timeout}s) — atlanıyor")
+            failed.append(code)
         except Exception:
             failed.append(code)
 
-    # Retry — connection drop olabilir
-    if failed:
-        time.sleep(1)
+    # Retry başarısızlar — yeni bağlantı ile
+    if failed and (time.time() - t0) < total_timeout:
         try:
-            tv2 = TvDatafeed()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(TvDatafeed)
+                tv2 = future.result(timeout=per_symbol_timeout)
             for code in failed:
+                if time.time() - t0 > total_timeout:
+                    break
                 try:
-                    df = tv2.get_hist(code, 'BIST', interval=Interval.in_daily, n_bars=130)
-                    if df is not None and len(df) >= 30:
-                        df = df.drop(columns=['symbol'], errors='ignore')
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                        future = ex.submit(_fetch_tv_single, tv2, code,
+                                           Interval.in_daily)
+                        df = future.result(timeout=per_symbol_timeout)
+                    if df is not None:
                         results[code] = df
                 except Exception:
                     continue

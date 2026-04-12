@@ -1,7 +1,7 @@
 name: NOX Agent Briefing
 on:
   schedule:
-    - cron: '45 15 * * 1-5'  # 18:45 TR — tüm screener'lardan sonra
+    - cron: '45 16 * * 1-5'  # 19:45 TR — SBT deploy sonrası
   workflow_dispatch:  # Manuel tetikleme
 
 concurrency:
