@@ -23,13 +23,13 @@ _TICKER_EXCLUDE = {
     'ONERI', 'UYARI', 'ALTIN', 'DOVIZ', 'FAIZ', 'EMTIA',
 }
 
-_LIST_SHORT = {'alsat': 'NOX-Tek', 'tavan': 'NOX9', 'nw': 'NOX-Dip', 'rt': 'NOX-Trend', 'sbt': 'NOX-Krlm'}
+_LIST_SHORT = {'alsat': 'NYX-Tek', 'tavan': 'NYX9', 'nw': 'NYX-Dip', 'rt': 'NYX-Trend', 'sbt': 'NYX-Krlm'}
 _LIST_LABELS = {
-    'alsat': 'NOX Teknik Sinyal',
-    'tavan': 'NOX 9',
-    'nw': 'NOX Dip Pivot',
-    'rt': 'NOX Trend',
-    'sbt': 'NOX Kırılım',
+    'alsat': 'NYX Teknik Sinyal',
+    'tavan': 'NYX 9',
+    'nw': 'NYX Dip Pivot',
+    'rt': 'NYX Trend',
+    'sbt': 'NYX Kırılım',
 }
 _LIST_ICONS = {
     'alsat': '',
@@ -391,7 +391,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
 
     # ML Güçlü listesi (≥0.50)
-    _LIST_SHORT_HTML = {'alsat': 'NOX-Tek', 'tavan': 'NOX9', 'nw': 'NOX-Dip', 'rt': 'NOX-Trend', 'sbt': 'NOX-Krlm'}
+    _LIST_SHORT_HTML = {'alsat': 'NYX-Tek', 'tavan': 'NYX9', 'nw': 'NYX-Dip', 'rt': 'NYX-Trend', 'sbt': 'NYX-Krlm'}
     ml_strong_items = []
     if lists_dict:
         _ml_seen_html = set()
@@ -452,7 +452,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NOX Brifing — {now}</title>
+<title>NYX Brifing — {now}</title>
 <style>
 {_NOX_CSS}
 
@@ -1311,7 +1311,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 
     <!-- ══════ KATMAN 1: DURUM (sticky) ══════ -->
     <div class="nox-status-bar" id="statusBar">
-        <span class="logo"><span class="nox-text">NOX</span><span class="brief-text">brief</span></span>
+        <span class="logo"><span class="nox-text">NYX</span><span class="brief-text">brief</span></span>
         <span class="regime-pill" style="color:{regime_color};border-color:{regime_color}">{regime}</span>
         <span class="macro-pills" id="macroPills"></span>
         <span class="meta-right">{now}</span>
@@ -1486,11 +1486,11 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
             <div class="glossary-grid">
                 <div class="glossary-group">
                     <div class="glossary-cat">Sinyal Kaynakları</div>
-                    <div class="glossary-row"><span class="glossary-key">NOX-Tek</span><span class="glossary-val">NOX Teknik Sinyal — teknik dönüş sinyalleri (RSI, MACD, hacim)</span></div>
-                    <div class="glossary-row"><span class="glossary-key">NOX9</span><span class="glossary-val">NOX 9 — tavan/kilitli tavan adayları, streak takibi</span></div>
-                    <div class="glossary-row"><span class="glossary-key">NOX-Dip</span><span class="glossary-val">NOX Dip Pivot — haftalık Elmas pivot kırılım sinyalleri</span></div>
-                    <div class="glossary-row"><span class="glossary-key">NOX-Trend</span><span class="glossary-val">NOX Trend — rejim geçiş sinyalleri (trend başlangıcı)</span></div>
-                    <div class="glossary-row"><span class="glossary-key">NOX-Krlm</span><span class="glossary-val">NOX Kırılım — birikim→kırılım pattern tespiti</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NYX-Tek</span><span class="glossary-val">NYX Teknik Sinyal — teknik dönüş sinyalleri (RSI, MACD, hacim)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NYX9</span><span class="glossary-val">NYX 9 — tavan/kilitli tavan adayları, streak takibi</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NYX-Dip</span><span class="glossary-val">NYX Dip Pivot — haftalık Elmas pivot kırılım sinyalleri</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NYX-Trend</span><span class="glossary-val">NYX Trend — rejim geçiş sinyalleri (trend başlangıcı)</span></div>
+                    <div class="glossary-row"><span class="glossary-key">NYX-Krlm</span><span class="glossary-val">NYX Kırılım — birikim→kırılım pattern tespiti</span></div>
                 </div>
                 <div class="glossary-group">
                     <div class="glossary-cat">Tier Sistemi</div>
@@ -1698,7 +1698,7 @@ function filterReasons(reasons) {{
             const delay = (cardIdx * 0.04).toFixed(2);
             cardIdx++;
             const reasons = filterReasons(item.reasons).slice(0,3).join(' · ');
-            const listsTag = (item.in_lists||[]).map(l=>({{alsat:'NOX-Tek',tavan:'NOX9',nw:'NOX-Dip',rt:'NOX-Trend',sbt:'NOX-Krlm'}})[l]||l).join('+');
+            const listsTag = (item.in_lists||[]).map(l=>({{alsat:'NYX-Tek',tavan:'NYX9',nw:'NYX-Dip',rt:'NYX-Trend',sbt:'NYX-Krlm'}})[l]||l).join('+');
             // Entry info from limit TP
             const ltp = ltpMap[item.ticker];
             let entryHtml = '';
@@ -1854,7 +1854,7 @@ function filterReasons(reasons) {{
     }}
     // Filtered
     const fc = document.getElementById('filteredContainer');
-    const LS = {{'alsat':'NOX-Tek','tavan':'NOX9','nw':'NOX-Dip','rt':'NOX-Trend','sbt':'NOX-Krlm','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
+    const LS = {{'alsat':'NYX-Tek','tavan':'NYX9','nw':'NYX-Dip','rt':'NYX-Trend','sbt':'NYX-Krlm','tier2a':'T2A','tier2b':'T2B','tier2':'T2'}};
     if(!FILTERED || FILTERED.length===0) {{
         fc.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem">Elenen sinyal yok</div>';
     }} else {{
