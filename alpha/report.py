@@ -384,7 +384,7 @@ def generate_live_scan_report(candidates: list, portfolio: dict = None,
         stop_color = 'var(--green)' if c['stop_pct'] <= 7 else ('var(--gold)' if c['stop_pct'] <= 10 else 'var(--red)')
         rows += f'''<tr>
           <td style="font-weight:600;">{i+1}</td>
-          <td style="font-weight:700;color:var(--gold);">{c['ticker']}</td>
+          <td style="font-weight:700;"><a href="https://www.tradingview.com/chart/?symbol=BIST:{c['ticker']}" target="_blank" style="color:var(--gold);text-decoration:none;">{c['ticker']}</a></td>
           <td>{c['ml_1g']:.2f}</td>
           <td>{ml3g}</td>
           <td style="font-weight:600;">{c['composite']:.1f}</td>
@@ -405,7 +405,7 @@ def generate_live_scan_report(candidates: list, portfolio: dict = None,
             ticker = t.replace('.IS', '')
             bar_w = max(4, w * 500)
             p_rows += f'''<tr>
-              <td style="font-weight:700;color:var(--gold);">{ticker}</td>
+              <td style="font-weight:700;"><a href="https://www.tradingview.com/chart/?symbol=BIST:{ticker}" target="_blank" style="color:var(--gold);text-decoration:none;">{ticker}</a></td>
               <td>{w*100:.1f}%</td>
               <td><div style="background:var(--gold);height:16px;width:{bar_w}px;border-radius:3px;opacity:0.7;"></div></td>
             </tr>'''
@@ -452,7 +452,11 @@ h1 {{ font-size:28px; color:var(--gold); margin-bottom:6px; }}
 .card .value.neutral {{ color:var(--gold); }}
 table {{ width:100%; border-collapse:collapse; font-size:13px; }}
 th {{ background:var(--elevated); color:var(--dim); font-weight:600; padding:10px 12px;
-      text-align:left; border-bottom:1px solid var(--border); position:sticky; top:0; }}
+      text-align:left; border-bottom:1px solid var(--border); position:sticky; top:0;
+      cursor:pointer; user-select:none; }}
+th:hover {{ color:var(--gold); }}
+th.sort-asc::after {{ content:' ▲'; font-size:10px; }}
+th.sort-desc::after {{ content:' ▼'; font-size:10px; }}
 td {{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text);
       font-family:'JetBrains Mono',monospace; font-size:12px; }}
 tr:hover td {{ background:var(--elevated); }}
@@ -505,6 +509,31 @@ tr:hover td {{ background:var(--elevated); }}
 </p>
 
 </div>
+<script>
+document.querySelectorAll('.section table').forEach(table => {{
+  const thead = table.querySelector('thead');
+  if(!thead) return;
+  const ths = thead.querySelectorAll('th');
+  ths.forEach((th, colIdx) => {{
+    th.addEventListener('click', () => {{
+      const tbody = table.querySelector('tbody');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const cur = th.classList.contains('sort-asc') ? 'asc' : (th.classList.contains('sort-desc') ? 'desc' : 'none');
+      ths.forEach(h => h.classList.remove('sort-asc','sort-desc'));
+      const dir = cur === 'asc' ? 'desc' : 'asc';
+      th.classList.add('sort-' + dir);
+      rows.sort((a, b) => {{
+        let av = a.cells[colIdx]?.textContent.replace('%','').replace('—','').trim() || '';
+        let bv = b.cells[colIdx]?.textContent.replace('%','').replace('—','').trim() || '';
+        const an = parseFloat(av), bn = parseFloat(bv);
+        if(!isNaN(an) && !isNaN(bn)) return dir==='asc' ? an-bn : bn-an;
+        return dir==='asc' ? av.localeCompare(bv,'tr') : bv.localeCompare(av,'tr');
+      }});
+      rows.forEach(r => tbody.appendChild(r));
+    }});
+  }});
+}});
+</script>
 </body>
 </html>"""
 
