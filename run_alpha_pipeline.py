@@ -108,57 +108,144 @@ def run_backtest(args):
 
 
 def run_live_scan(args):
-    """Canlı tarama — bugünkü sinyaller ve önerilen portföy."""
+    """Canlı tarama — bugünkü sinyaller ve önerilen portföy (ML destekli)."""
+    from alpha.config import (
+        ML_STAGE1_ENABLED, ML_SCORE_THRESHOLD, ML_SWING_THRESHOLD,
+        ML_SLOPE_LOOKBACK, ML_SLOPE_MIN, ML_COMPOSITE_WEIGHT,
+        CONFIRMATION_MIN_SCORE,
+    )
+    from core.indicators import calc_atr
+
     print("=" * 60)
     print("  NYX ALPHA PIPELINE — CANLI TARAMA")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
 
     # Veri çek
-    print("\n[1/3] Veri çekiliyor...")
+    t0 = time.time()
+    print("\n[1/4] Veri çekiliyor...")
     tickers = get_all_bist_tickers()
     all_data = fetch_data(tickers, period='1y')
     xu_df = fetch_benchmark(period='1y')
     all_data = _filter_liquid(all_data, MIN_VOLUME_TL)
-    print(f"  {len(all_data)} hisse")
+    print(f"  {len(all_data)} hisse ({time.time()-t0:.0f}s)")
 
-    # Aşama 1-3
-    print("\n[2/3] Evren taranıyor (Aşama 1-3)...")
-    candidates = scan_universe(all_data)
-    passed = [c for c in candidates if c.get('passed')]
+    # ML Tarama
+    passed = []
+    if ML_STAGE1_ENABLED:
+        print("\n[2/4] ML tarama (Aşama 1-2)...")
+        t1 = time.time()
+        try:
+            from ml.scorer import MLScorer
+            from ml.features import compute_all_features
+            ml_scorer = MLScorer()
+            ml_scorer._load_models()
+            if ml_scorer.loaded:
+                from alpha.stages import stage3_confirmation
+                ml_candidates = []
+                for ticker, df in all_data.items():
+                    if df is None or len(df) < 80:
+                        continue
+                    try:
+                        feats = compute_all_features(df, xu_df=xu_df)
+                        if feats.empty or len(feats) < 5:
+                            continue
+                        row = feats.iloc[-1]
+                        vec = ml_scorer._make_feature_vector(row)
+                        if vec is None:
+                            continue
+                        preds = ml_scorer._predict_all(vec)
+                        ml_1g = preds['ml_a_1g']
+                        ml_3g = preds['ml_a_3g']
+                        if ml_1g is None or ml_1g < ML_SCORE_THRESHOLD:
+                            continue
+                        if ml_3g is not None and ml_3g < ML_SWING_THRESHOLD:
+                            continue
+                        # ML eğim kontrolü
+                        if len(feats) > ML_SLOPE_LOOKBACK:
+                            row_ago = feats.iloc[-1 - ML_SLOPE_LOOKBACK]
+                            vec_ago = ml_scorer._make_feature_vector(row_ago)
+                            if vec_ago is not None:
+                                p_ago = ml_scorer._predict_all(vec_ago)
+                                if p_ago['ml_a_1g'] is not None and (ml_1g - p_ago['ml_a_1g']) < ML_SLOPE_MIN:
+                                    continue
+                        # Stage 3 teknik onay
+                        confirmation = stage3_confirmation(df)
+                        if confirmation['score'] < CONFIRMATION_MIN_SCORE:
+                            continue
+                        # Composite skor
+                        ml_avg = ml_1g if ml_3g is None else (ml_1g + ml_3g) / 2
+                        composite = ml_avg * 100 * ML_COMPOSITE_WEIGHT + confirmation['score'] * 10 * (1 - ML_COMPOSITE_WEIGHT)
+                        # ATR ve stop hesapla
+                        atr_val = 0.0
+                        if len(df) >= 20:
+                            _atr = calc_atr(df)
+                            if not pd.isna(_atr.iloc[-1]):
+                                atr_val = float(_atr.iloc[-1])
+                        close_px = float(df['Close'].iloc[-1])
+                        stop_dist_pct = (atr_val * 2.0 / close_px * 100) if close_px > 0 else 0
 
-    print(f"  Aşama 1-2 adayları: {len(candidates)}")
-    print(f"  Aşama 3 onaylı:     {len(passed)}")
+                        ml_candidates.append({
+                            'ticker': ticker.replace('.IS', ''),
+                            'ml_1g': ml_1g,
+                            'ml_3g': ml_3g,
+                            'composite': round(min(100, composite), 1),
+                            'adx': confirmation['adx'],
+                            'cmf': confirmation['cmf'],
+                            'rsi': confirmation['rsi'],
+                            'conf_score': confirmation['score'],
+                            'close': close_px,
+                            'atr': atr_val,
+                            'stop': round(close_px - 2.0 * atr_val, 2),
+                            'stop_pct': round(stop_dist_pct, 1),
+                            'trail_target': round(close_px + 1.5 * atr_val, 2),
+                            'passed': True,
+                        })
+                    except Exception:
+                        continue
+                ml_candidates.sort(key=lambda x: x['composite'], reverse=True)
+                passed = ml_candidates
+                print(f"  {len(passed)} aday bulundu ({time.time()-t1:.0f}s)")
+        except ImportError:
+            print("  [UYARI] ML modülleri yüklenemedi, klasik taramaya düşüyor")
 
-    if candidates:
-        print(f"\n  {'Hisse':<10} {'Tip':<14} {'Skor':>5} {'Eğim':>7} {'ADX':>5} {'CMF':>6} {'RSI':>5} {'Mum':<12} {'Durum':<6}")
-        print("  " + "-" * 75)
-        for c in candidates[:25]:
-            m = c['momentum']
-            s = c['slope']
-            cf = c['confirmation']
-            status = '✅' if c['passed'] else '❌'
-            candle = cf.get('candle_pattern') or '—'
-            print(f"  {c['ticker']:<10} {m['momentum_type'] or '—':<14} "
-                  f"{c['composite_score']:>5.1f} {s['price_slope']:>+6.2f}% "
-                  f"{cf['adx']:>5.1f} {cf['cmf']:>+5.3f} {cf['rsi']:>5.1f} "
-                  f"{candle:<12} {status}")
+    # Klasik fallback
+    if not passed:
+        print("\n[2/4] Klasik tarama (Aşama 1-3)...")
+        candidates = scan_universe(all_data)
+        passed = [c for c in candidates if c.get('passed')]
+        print(f"  {len(passed)} aday")
 
-    # Aşama 4-5
+    # Sonuçları göster
+    print(f"\n[3/4] Sonuçlar...")
+    if passed:
+        print(f"\n  {'Hisse':<8} {'ML1g':>5} {'ML3g':>5} {'Skor':>5} {'ADX':>5} {'CMF':>6} {'RSI':>5} {'Fiyat':>8} {'Stop':>8} {'Stop%':>6} {'Trail':>8}")
+        print("  " + "-" * 85)
+        for c in passed[:30]:
+            ml3g_str = f"{c['ml_3g']:.2f}" if c.get('ml_3g') else "  —"
+            print(f"  {c['ticker']:<8} {c['ml_1g']:>5.2f} {ml3g_str:>5} {c['composite']:>5.1f} "
+                  f"{c['adx']:>5.1f} {c['cmf']:>+5.3f} {c['rsi']:>5.1f} "
+                  f"{c['close']:>8.2f} {c['stop']:>8.2f} {c['stop_pct']:>5.1f}% "
+                  f"{c['trail_target']:>8.2f}")
+
+    # Portföy optimizasyonu
     if len(passed) >= 3:
-        print("\n[3/3] Portföy optimizasyonu (Aşama 4-5)...")
-        portfolio = build_portfolio(all_data, candidates)
+        print(f"\n[4/4] Portföy optimizasyonu...")
+        # passed'ı build_portfolio formatına çevir
+        bp_candidates = [{'ticker': c['ticker'] + '.IS' if not c['ticker'].endswith('.IS') else c['ticker'],
+                          'composite_score': c['composite'], 'passed': True} for c in passed]
+        portfolio = build_portfolio(all_data, bp_candidates)
         if portfolio['n_stocks'] > 0:
             print(f"\n  Max Sharpe Portföy (Sharpe: {portfolio['sharpe_ratio']:.2f})")
             print(f"  Beklenen Getiri: {portfolio['expected_return']:+.1f}%  Risk: {portfolio['expected_risk']:.1f}%")
             print(f"\n  {'Hisse':<10} {'Ağırlık':>8}")
             print("  " + "-" * 20)
             for t, w in sorted(portfolio['weights'].items(), key=lambda x: -x[1]):
-                print(f"  {t:<10} {w*100:>7.1f}%")
+                print(f"  {t.replace('.IS',''):<10} {w*100:>7.1f}%")
         else:
-            print("  Portföy oluşturulamadı (yetersiz aday)")
+            print("  Portföy oluşturulamadı")
     else:
-        print(f"\n  Aşama 3'ten {len(passed)} hisse geçti — minimum 3 gerekli, portföy oluşturulamıyor")
+        print(f"\n  {len(passed)} aday — minimum 3 gerekli, portföy oluşturulamıyor")
 
     print("\n" + "=" * 60)
 

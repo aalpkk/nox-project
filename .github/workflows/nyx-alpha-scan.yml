@@ -1,0 +1,139 @@
+name: NYX Alpha Scan
+on:
+  schedule:
+    - cron: '30 15 * * 1-5'  # 18:30 TR — kapanış sonrası
+  workflow_dispatch:  # Manuel tetikleme
+
+concurrency:
+  group: nyx-alpha
+  cancel-in-progress: true
+
+jobs:
+  alpha-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt "tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git"
+
+      - name: Restore YF price cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            output/yf_price_cache.parquet
+            output/yf_xu100_cache.parquet
+          key: alpha-cache-${{ github.run_number }}
+          restore-keys: |
+            alpha-cache-
+
+      - name: Run Alpha Pipeline Live Scan
+        run: python run_alpha_pipeline.py --live 2>&1 | tee alpha_output.txt
+
+      - name: Send Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, requests
+
+          output_file = "alpha_output.txt"
+          with open(output_file, "r") as f:
+              raw = f.read()
+
+          # Çıktıyı parse et
+          lines = raw.strip().split("\n")
+
+          # Header
+          msg = "🎯 <b>NYX Alpha Pipeline — Günlük Tarama</b>\n\n"
+
+          # Aday tablosunu bul
+          in_table = False
+          table_lines = []
+          portfolio_lines = []
+          in_portfolio = False
+          aday_count = ""
+
+          for line in lines:
+              if "aday bulundu" in line:
+                  aday_count = line.strip()
+              if "Hisse" in line and "ML1g" in line:
+                  in_table = True
+                  continue
+              if in_table and line.strip().startswith("---"):
+                  continue
+              if in_table and line.strip() and not line.strip().startswith("[") and not line.strip().startswith("="):
+                  table_lines.append(line.strip())
+              elif in_table and (line.strip().startswith("[") or line.strip().startswith("=")):
+                  in_table = False
+
+              if "Max Sharpe" in line:
+                  in_portfolio = True
+                  portfolio_lines.append(line.strip())
+                  continue
+              if in_portfolio and "Beklenen" in line:
+                  portfolio_lines.append(line.strip())
+                  continue
+              if in_portfolio and "%" in line and ("." in line) and len(line.strip()) < 30:
+                  portfolio_lines.append(line.strip())
+              if in_portfolio and ("oluşturulamadı" in line or "=" in line):
+                  in_portfolio = False
+
+          if aday_count:
+              msg += f"📊 {aday_count}\n\n"
+
+          # Aday tablosu
+          if table_lines:
+              msg += "<b>Top Adaylar:</b>\n<pre>"
+              msg += f"{'Hisse':<8} {'ML':>4} {'Skor':>5} {'Fiyat':>8} {'Stop':>8} {'S%':>5}\n"
+              msg += "-" * 42 + "\n"
+              for line in table_lines[:15]:
+                  parts = line.split()
+                  if len(parts) >= 10:
+                      ticker = parts[0]
+                      ml1g = parts[1]
+                      score = parts[3]
+                      price = parts[7]
+                      stop = parts[8]
+                      stop_pct = parts[9]
+                      msg += f"{ticker:<8} {ml1g:>4} {score:>5} {price:>8} {stop:>8} {stop_pct:>5}\n"
+              msg += "</pre>\n"
+
+          # Portföy
+          if portfolio_lines:
+              msg += "\n<b>Önerilen Portföy:</b>\n<pre>"
+              for pl in portfolio_lines:
+                  msg += pl + "\n"
+              msg += "</pre>\n"
+
+          if not table_lines:
+              msg += "❌ Bugün sinyal bulunamadı.\n"
+
+          # Telegram gönder
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              url = f"https://api.telegram.org/bot{token}/sendMessage"
+              resp = requests.post(url, json={
+                  "chat_id": chat_id,
+                  "text": msg[:4096],
+                  "parse_mode": "HTML",
+                  "disable_web_page_preview": True,
+              })
+              print(f"Telegram: {resp.status_code}")
+          else:
+              print("TG_BOT_TOKEN veya TG_CHAT_ID yok, mesaj gönderilmedi")
+              print(msg)
+          PYEOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alpha-scan-${{ github.run_number }}
+          path: alpha_output.txt
