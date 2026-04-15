@@ -23,13 +23,14 @@ _TICKER_EXCLUDE = {
     'ONERI', 'UYARI', 'ALTIN', 'DOVIZ', 'FAIZ', 'EMTIA',
 }
 
-_LIST_SHORT = {'alsat': 'NYX-Tek', 'tavan': 'NYX9', 'nw': 'NYX-Dip', 'rt': 'NYX-Trend', 'sbt': 'NYX-Krlm'}
+_LIST_SHORT = {'alsat': 'NYX-Tek', 'tavan': 'NYX9', 'nw': 'NYX-Dip', 'rt': 'NYX-Trend', 'sbt': 'NYX-Krlm', 'alpha': 'NYX-Alpha'}
 _LIST_LABELS = {
     'alsat': 'NYX Teknik Sinyal',
     'tavan': 'NYX 9',
     'nw': 'NYX Dip Pivot',
     'rt': 'NYX Trend',
     'sbt': 'NYX Kırılım',
+    'alpha': 'NYX Alpha',
 }
 _LIST_ICONS = {
     'alsat': '',
@@ -37,6 +38,7 @@ _LIST_ICONS = {
     'nw': '',
     'rt': '',
     'sbt': '',
+    'alpha': '🎯',
 }
 
 
@@ -60,7 +62,7 @@ def _linkify_tickers(html_text):
 def _prepare_lists_json(lists_dict, max_per_list=15):
     """4 listenin her birinden top N sinyali JSON-serializable dict'e cevir."""
     result = {}
-    for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+    for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'):
         items = lists_dict.get(key, [])
         entries = []
         for ticker, score, reasons, sig in items[:max_per_list]:
@@ -115,6 +117,20 @@ def _prepare_lists_json(lists_dict, max_per_list=15):
                     entry['streak_momentum'] = sig.get('streak_momentum', '')
                 if sig.get('position_change_pct') is not None:
                     entry['position_change_pct'] = sig['position_change_pct']
+                # Alpha pipeline alanları
+                if sig.get('ml_1g') is not None:
+                    entry['alpha_ml1g'] = sig['ml_1g']
+                if sig.get('ml_3g') is not None:
+                    entry['alpha_ml3g'] = sig['ml_3g']
+                if sig.get('composite') is not None:
+                    entry['alpha_composite'] = sig['composite']
+                if sig.get('stop') is not None:
+                    entry['alpha_stop'] = sig['stop']
+                    entry['alpha_stop_pct'] = sig.get('stop_pct', 0)
+                if sig.get('trail_target') is not None:
+                    entry['alpha_trail'] = sig['trail_target']
+                if sig.get('close') is not None:
+                    entry['alpha_close'] = sig['close']
             entries.append(entry)
         result[key] = {
             'label': _LIST_LABELS.get(key, key),
@@ -1469,6 +1485,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
                         <th>Skor</th>
                         <th>Yapısal</th>
                         <th>Taktik</th>
+                        <th>Kaynaklar</th>
                         <th>Sonuç</th>
                         <th>Durum</th>
                         <th>Detaylar</th>
@@ -1577,6 +1594,7 @@ const SCAN = {{
     'nw': '{_nox_base}/nox_v3_weekly.html',
     'rt': '{_nox_base}/regime_transition.html',
     'sbt': '{_nox_base}/smart_breakout.html',
+    'alpha': '#',
 }};
 
 // ── Utility: Badge render helpers ──
@@ -1698,7 +1716,7 @@ function filterReasons(reasons) {{
             const delay = (cardIdx * 0.04).toFixed(2);
             cardIdx++;
             const reasons = filterReasons(item.reasons).slice(0,3).join(' · ');
-            const listsTag = (item.in_lists||[]).map(l=>({{alsat:'NYX-Tek',tavan:'NYX9',nw:'NYX-Dip',rt:'NYX-Trend',sbt:'NYX-Krlm'}})[l]||l).join('+');
+            const listsTag = (item.in_lists||[]).map(l=>({{alsat:'NYX-Tek',tavan:'NYX9',nw:'NYX-Dip',rt:'NYX-Trend',sbt:'NYX-Krlm',alpha:'ALP'}})[l]||l).join('+');
             // Entry info from limit TP
             const ltp = ltpMap[item.ticker];
             let entryHtml = '';
@@ -1782,7 +1800,7 @@ function filterReasons(reasons) {{
 (function() {{
     const tabsEl = document.getElementById('signalTabs');
     const panelsEl = document.getElementById('signalTabPanels');
-    const order = ['alsat','tavan','nw','rt','sbt'];
+    const order = ['alsat','tavan','nw','rt','sbt','alpha'];
     let totalSignals = 0;
     order.forEach((key,idx) => {{
         const list = LISTS[key];
@@ -1936,7 +1954,9 @@ function filterReasons(reasons) {{
         let dur = '<span class="shortlist-badge not-in">—</span>';
         if(hc) dur='<span class="shortlist-badge conflict">ÇELİŞKİ</span>';
         else if(SL_SET.has(item.ticker)) dur='<span class="shortlist-badge in-list">SHORTLIST</span>';
-        tr.innerHTML = `<td>${{tvL(item.ticker)}}</td><td><span class="score-badge" style="background:${{sc}}20;color:${{sc}}">${{item.score}}</span></td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.structural_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.tactical_score||0}}</td><td><span class="rec-badge" style="background:${{rc}}20;color:${{rc}}">${{dr}}</span></td><td>${{dur}}</td><td style="font-size:0.8rem;color:var(--text-secondary)">${{det}}</td>`;
+        const srcMap = {{alsat:'AS',nox_v3_weekly:'NW',regime_transition:'RT',tavan:'TVN',kademe:'KDM',mkk:'MKK',smart_breakout:'SBT',alpha:'ALP'}};
+        const srcTags = (item.sources||[]).map(s=>srcMap[s]||s).join('+');
+        tr.innerHTML = `<td>${{tvL(item.ticker)}}</td><td><span class="score-badge" style="background:${{sc}}20;color:${{sc}}">${{item.score}}</span></td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.structural_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.tactical_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.75rem;color:var(--nox-cyan)">${{srcTags}}</td><td><span class="rec-badge" style="background:${{rc}}20;color:${{rc}}">${{dr}}</span></td><td>${{dur}}</td><td style="font-size:0.8rem;color:var(--text-secondary)">${{det}}</td>`;
         tbody.appendChild(tr);
     }});
 }})();

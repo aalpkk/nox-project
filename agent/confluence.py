@@ -363,6 +363,7 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
         "details": details,
         "recommendation": recommendation,
         "source_count": source_count,
+        "sources": sorted(sources),
         "signals": ticker_signals,
     }
 
