@@ -322,6 +322,14 @@ class WalkForwardBacktester:
                         confirmation = stage3_confirmation(truncated[ticker])
                         if confirmation['score'] < CONFIRMATION_MIN_SCORE:
                             continue
+                        # Uzama filtresi
+                        from alpha.config import MAX_RALLY_PCT, MAX_RALLY_DAYS
+                        if MAX_RALLY_PCT > 0:
+                            _df = truncated[ticker]
+                            if len(_df) >= MAX_RALLY_DAYS:
+                                _rally = (_df['Close'].iloc[-1] / _df['Close'].iloc[-MAX_RALLY_DAYS] - 1) * 100
+                                if _rally >= MAX_RALLY_PCT:
+                                    continue
                         ml_avg = ml_1g if ml_3g is None else (ml_1g + ml_3g) / 2
                         composite = ml_avg * 100 * ML_COMPOSITE_WEIGHT + confirmation['score'] * 10 * (1 - ML_COMPOSITE_WEIGHT)
                         ml_candidates.append({

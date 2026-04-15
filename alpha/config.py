@@ -95,6 +95,10 @@ REGIME_EMA_LENGTH = 21          # XU100 trend EMA periyodu
 REGIME_BULL_WEIGHT = 1.0        # Bull rejimde tam ağırlık
 REGIME_BEAR_WEIGHT = 0.5        # Bear rejimde yarı ağırlık
 
+# ── UZAMA FİLTRESİ ────────────────────────────────────────
+MAX_RALLY_PCT = 0               # 0 = devre dışı, >0 = son N günde %X+ çıkanı ele
+MAX_RALLY_DAYS = 40             # Uzama ölçüm penceresi (iş günü)
+
 # ── VERİ ───────────────────────────────────────────────────
 DATA_PERIOD = "2y"              # Backtest veri penceresi
 MIN_VOLUME_TL = 5_000_000      # Minimum ortalama günlük hacim (TL)

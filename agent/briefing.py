@@ -338,6 +338,9 @@ def _calc_taban_risk(df):
     }
 
 
+_ALL_LIST_KEYS = ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha')
+
+
 def _taban_risk_overlay(lists_dict):
     """Tüm listelere taban riski bilgi label'ı ekle (skor cezası yok).
 
@@ -348,7 +351,7 @@ def _taban_risk_overlay(lists_dict):
     """
     # 1) Ticker toplama
     all_tickers = set()
-    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+    for key in _ALL_LIST_KEYS:
         for item in lists_dict.get(key, []):
             all_tickers.add(item[0])
     if not all_tickers:
@@ -371,7 +374,7 @@ def _taban_risk_overlay(lists_dict):
     warned = 0
 
     # 4) Her listeye bilgi label'ı ekle (skor değişmez, sıralama değişmez)
-    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+    for key in _ALL_LIST_KEYS:
         items = lists_dict.get(key, [])
         for (ticker, score, reasons, sig) in items:
             tr = taban_risks.get(ticker)
@@ -591,7 +594,7 @@ def _ml_overlay_v2(lists_dict, latest_signals):
 
         # ── Step 1: Ticker toplama ──
         all_tickers = set()
-        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in _ALL_LIST_KEYS:
             for item in lists_dict.get(key, []):
                 all_tickers.add(item[0])
 
@@ -664,13 +667,13 @@ def _ml_overlay_v2(lists_dict, latest_signals):
         # ── Step 6: Pre-ML sıralama snapshot ──
         _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
         pre_ml_ranks = {}  # {key: {ticker: rank_index}}
-        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in _ALL_LIST_KEYS:
             items = lists_dict.get(key, [])
             pre_ml_ranks[key] = {item[0]: i for i, item in enumerate(items)}
 
         # Ticker → kaç listede mevcut (Tier1 dahil değil — tier1 zaten overlap)
         ticker_source_count = {}
-        for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'):
             for item in lists_dict.get(key, []):
                 ticker_source_count.setdefault(item[0], set()).add(key)
         for t, sources in ticker_source_count.items():
@@ -680,7 +683,7 @@ def _ml_overlay_v2(lists_dict, latest_signals):
         ml_filtered = []   # Hard gate / weak filter tarafından elenen
         rank_changes = []  # Rerank sonrası sıra değişiklikleri
 
-        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in _ALL_LIST_KEYS:
             items = lists_dict.get(key, [])
             for i, (ticker, score, reasons, sig_or_meta) in enumerate(items):
                 ml_data = ml_scores.get(ticker)
@@ -778,7 +781,7 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                     reasons.append(f"SBT:{sbt_bucket}")
 
         # ── Step 9: Re-sort + rank delta ──
-        for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'):
             items = lists_dict.get(key, [])
             items.sort(key=lambda x: -x[1])
             # Rank delta hesapla
@@ -894,7 +897,7 @@ def _sector_regime_overlay(lists_dict):
 
         # Shortlist'teki unique sektör endekslerini topla
         needed_sectors = set()
-        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in _ALL_LIST_KEYS:
             for item in lists_dict.get(key, []):
                 ticker = item[0]
                 si = ticker_to_sector.get(ticker)
@@ -925,7 +928,7 @@ def _sector_regime_overlay(lists_dict):
                 print(f"  [{group_name.upper():8s}] {total} endeks: {al} AL, {total-al} pasif")
 
         # Her sinyal'e badge enjekte
-        for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for key in _ALL_LIST_KEYS:
             items = lists_dict.get(key, [])
             for i, (ticker, score, reasons, sig_or_meta) in enumerate(items):
                 info = get_ticker_sector_regime(ticker, sector_regimes, ticker_to_sector)
@@ -1063,7 +1066,7 @@ def _get_sm_info(ticker, ice_results, sms_scores):
 def _extract_list_tickers(lists_dict):
     """Shortlist'teki benzersiz hisse kodlarını çıkar."""
     tickers = set()
-    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'):
+    for key in _ALL_LIST_KEYS:
         for item in lists_dict.get(key, []):
             tickers.add(item[0])
     return list(tickers)
@@ -1292,7 +1295,7 @@ def _inject_ice_data(lists_dict, ice_results):
     """ICE verilerini sinyal dict'lerine inject et (HTML rapor için)."""
     if not ice_results:
         return
-    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+    for key in _ALL_LIST_KEYS:
         for item in lists_dict.get(key, []):
             ticker = item[0]
             sig_or_meta = item[3] if len(item) > 3 else {}
@@ -2190,7 +2193,7 @@ def _push_priority_tickers(lists_dict):
     seen = set()
     tickers = []
     details = []
-    for list_name in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+    for list_name in _ALL_LIST_KEYS:
         for item in lists_dict.get(list_name, []):
             ticker = item[0]
             if ticker not in seen:
@@ -3432,7 +3435,7 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     print("\n📊 HTML rapor oluşturuluyor...")
     _shortlist_tickers = set()
     if lists_dict:
-        for _ln in ('tier1', 'tier2', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for _ln in _ALL_LIST_KEYS:
             for _item in lists_dict.get(_ln, []):
                 _shortlist_tickers.add(_item[0])
     _sat_tickers = {s['ticker'] for s in latest_signals
