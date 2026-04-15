@@ -370,6 +370,149 @@ def _build_rebalance_table(rebalances: list) -> str:
       <tbody>{rows}</tbody></table>'''
 
 
+def generate_live_scan_report(candidates: list, portfolio: dict = None,
+                              output_dir: str = 'output') -> str:
+    """Live scan HTML raporu üret."""
+    os.makedirs(output_dir, exist_ok=True)
+    today = datetime.now().strftime('%Y%m%d')
+    filepath = os.path.join(output_dir, f'alpha_scan_{today}.html')
+
+    # Aday tablosu
+    rows = ''
+    for i, c in enumerate(candidates):
+        ml3g = f"{c['ml_3g']:.2f}" if c.get('ml_3g') else '—'
+        stop_color = 'var(--green)' if c['stop_pct'] <= 7 else ('var(--gold)' if c['stop_pct'] <= 10 else 'var(--red)')
+        rows += f'''<tr>
+          <td style="font-weight:600;">{i+1}</td>
+          <td style="font-weight:700;color:var(--gold);">{c['ticker']}</td>
+          <td>{c['ml_1g']:.2f}</td>
+          <td>{ml3g}</td>
+          <td style="font-weight:600;">{c['composite']:.1f}</td>
+          <td>{c['adx']:.1f}</td>
+          <td class="{'pnl-pos' if c['cmf']>0 else 'pnl-neg'}">{c['cmf']:+.3f}</td>
+          <td>{c['rsi']:.1f}</td>
+          <td style="font-weight:600;">{c['close']:.2f}</td>
+          <td style="color:var(--red);font-weight:600;">{c['stop']:.2f}</td>
+          <td style="color:{stop_color};font-weight:600;">{c['stop_pct']:.1f}%</td>
+          <td style="color:var(--green);font-weight:600;">{c['trail_target']:.2f}</td>
+        </tr>'''
+
+    # Portföy tablosu
+    portfolio_html = ''
+    if portfolio and portfolio.get('n_stocks', 0) > 0:
+        p_rows = ''
+        for t, w in sorted(portfolio['weights'].items(), key=lambda x: -x[1]):
+            ticker = t.replace('.IS', '')
+            bar_w = max(4, w * 500)
+            p_rows += f'''<tr>
+              <td style="font-weight:700;color:var(--gold);">{ticker}</td>
+              <td>{w*100:.1f}%</td>
+              <td><div style="background:var(--gold);height:16px;width:{bar_w}px;border-radius:3px;opacity:0.7;"></div></td>
+            </tr>'''
+        portfolio_html = f'''
+        <div class="section">
+          <h2>Onerilen Portfoy</h2>
+          <div class="cards" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;">
+            <div class="card"><div class="label">Sharpe</div><div class="value neutral">{portfolio.get('sharpe_ratio',0):.2f}</div></div>
+            <div class="card"><div class="label">Beklenen Getiri</div><div class="value pos">{portfolio.get('expected_return',0):+.1f}%</div></div>
+            <div class="card"><div class="label">Beklenen Risk</div><div class="value neg">{portfolio.get('expected_risk',0):.1f}%</div></div>
+          </div>
+          <table><thead><tr><th>Hisse</th><th>Agirlik</th><th></th></tr></thead>
+          <tbody>{p_rows}</tbody></table>
+        </div>'''
+
+    html = f"""<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYX Alpha Scan — {datetime.now().strftime('%Y-%m-%d')}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+:root {{
+  --bg: #060709; --card: #0d0d10; --elevated: #141417;
+  --border: #1e1e23; --text: #e8e4dc; --dim: #8a8580; --muted: #555250;
+  --gold: #c9a96e; --green: #7a9e7a; --red: #9e5a5a; --blue: #7a8fa5;
+}}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text);
+        min-height:100vh; padding:20px; }}
+.container {{ max-width:1200px; margin:0 auto; }}
+h1 {{ font-size:28px; color:var(--gold); margin-bottom:6px; }}
+.subtitle {{ color:var(--dim); font-size:14px; margin-bottom:24px; }}
+.cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+          gap:12px; margin-bottom:28px; }}
+.card {{ background:var(--card); border:1px solid var(--border); border-radius:12px;
+         padding:16px; text-align:center; }}
+.card .label {{ font-size:11px; color:var(--dim); text-transform:uppercase;
+                letter-spacing:1px; margin-bottom:6px; }}
+.card .value {{ font-size:22px; font-weight:700; }}
+.card .value.pos {{ color:var(--green); }}
+.card .value.neg {{ color:var(--red); }}
+.card .value.neutral {{ color:var(--gold); }}
+table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+th {{ background:var(--elevated); color:var(--dim); font-weight:600; padding:10px 12px;
+      text-align:left; border-bottom:1px solid var(--border); position:sticky; top:0; }}
+td {{ padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text);
+      font-family:'JetBrains Mono',monospace; font-size:12px; }}
+tr:hover td {{ background:var(--elevated); }}
+.pnl-pos {{ color:var(--green); font-weight:600; }}
+.pnl-neg {{ color:var(--red); font-weight:600; }}
+.section {{ margin-bottom:28px; }}
+.section h2 {{ font-size:16px; color:var(--gold); margin-bottom:12px;
+               padding-bottom:6px; border-bottom:1px solid var(--border); }}
+.legend {{ display:flex; gap:20px; margin:16px 0; flex-wrap:wrap; }}
+.legend-item {{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); }}
+.legend-dot {{ width:10px; height:10px; border-radius:50%; }}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>NYX Alpha Scan</h1>
+<p class="subtitle">Gunluk ML Tarama &mdash; {datetime.now().strftime('%Y-%m-%d %H:%M')} &mdash; {len(candidates)} aday</p>
+
+<div class="cards">
+  <div class="card"><div class="label">Toplam Aday</div><div class="value neutral">{len(candidates)}</div></div>
+  <div class="card"><div class="label">Ort. ML Skor</div><div class="value neutral">{np.mean([c['ml_1g'] for c in candidates]):.2f}</div></div>
+  <div class="card"><div class="label">Ort. Stop%</div><div class="value neg">{np.mean([c['stop_pct'] for c in candidates]):.1f}%</div></div>
+  <div class="card"><div class="label">Min Stop%</div><div class="value pos">{min(c['stop_pct'] for c in candidates):.1f}%</div></div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--gold);"></div>ML 1g: 1 gunluk yukaridaysa</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--green);"></div>ML 3g: 3 gunluk swing</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--red);"></div>Stop: Entry - 2xATR</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--blue);"></div>Trail: Entry + 1.5xATR</div>
+</div>
+
+<div class="section">
+  <h2>Aday Listesi</h2>
+  <table>
+    <thead><tr>
+      <th>#</th><th>Hisse</th><th>ML 1g</th><th>ML 3g</th><th>Skor</th>
+      <th>ADX</th><th>CMF</th><th>RSI</th><th>Fiyat</th>
+      <th>Stop</th><th>Stop%</th><th>Trail</th>
+    </tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>
+
+{portfolio_html}
+
+<p style="color:var(--muted);font-size:11px;margin-top:40px;text-align:center;">
+  NYX Alpha Pipeline &mdash; ML + Cok Asamali Cikis Stratejisi &mdash; Backtest: Sharpe 1.05, Alpha +131%, DD -19%
+</p>
+
+</div>
+</body>
+</html>"""
+
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(html)
+    return filepath
+
+
 def _build_funnel(funnel: list) -> str:
     if not funnel:
         return '<p style="color:var(--dim);">Veri yok</p>'

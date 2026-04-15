@@ -32,7 +32,7 @@ from alpha.stages import scan_universe
 from alpha.portfolio import build_portfolio
 from alpha.backtest_wf import WalkForwardBacktester
 from alpha.metrics import compute_alpha_metrics, compute_monthly_returns, compute_trade_stats
-from alpha.report import generate_alpha_report
+from alpha.report import generate_alpha_report, generate_live_scan_report
 
 
 def _filter_liquid(all_data: dict, min_vol_tl: float) -> dict:
@@ -244,8 +244,15 @@ def run_live_scan(args):
                 print(f"  {t.replace('.IS',''):<10} {w*100:>7.1f}%")
         else:
             print("  Portföy oluşturulamadı")
+            portfolio = None
     else:
         print(f"\n  {len(passed)} aday — minimum 3 gerekli, portföy oluşturulamıyor")
+        portfolio = None
+
+    # HTML rapor
+    if passed:
+        filepath = generate_live_scan_report(passed, portfolio)
+        print(f"\n  Rapor: {filepath}")
 
     print("\n" + "=" * 60)
 

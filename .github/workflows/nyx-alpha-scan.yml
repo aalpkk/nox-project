@@ -136,4 +136,6 @@ jobs:
         if: always()
         with:
           name: alpha-scan-${{ github.run_number }}
-          path: alpha_output.txt
+          path: |
+            alpha_output.txt
+            output/alpha_scan_*.html
