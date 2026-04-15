@@ -1063,7 +1063,7 @@ def _get_sm_info(ticker, ice_results, sms_scores):
 def _extract_list_tickers(lists_dict):
     """Shortlist'teki benzersiz hisse kodlarını çıkar."""
     tickers = set()
-    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt'):
+    for key in ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'):
         for item in lists_dict.get(key, []):
             tickers.add(item[0])
     return list(tickers)
@@ -1686,9 +1686,102 @@ def _compute_4_lists(latest_signals, confluence_results=None):
 
     sbt_items.sort(key=lambda x: -x[1])
 
+    # ── LİSTE 6: ALPHA Pipeline (ML momentum + teknik onay) ──
+    alpha_items = []
+    try:
+        from markets.bist.data import get_all_bist_tickers, fetch_data, fetch_benchmark
+        from alpha.config import (
+            ML_STAGE1_ENABLED, ML_SCORE_THRESHOLD, ML_SWING_THRESHOLD,
+            ML_SLOPE_LOOKBACK, ML_SLOPE_MIN, ML_COMPOSITE_WEIGHT,
+            CONFIRMATION_MIN_SCORE, MIN_VOLUME_TL, MIN_DATA_DAYS,
+        )
+        from core.indicators import calc_atr
+        if ML_STAGE1_ENABLED:
+            from ml.scorer import MLScorer
+            from ml.features import compute_all_features
+            from alpha.stages import stage3_confirmation
+            print("  [ALPHA] ML tarama başlıyor...")
+            import time as _atime
+            _at0 = _atime.time()
+            _a_tickers = get_all_bist_tickers()
+            _a_data = fetch_data(_a_tickers, period='1y')
+            _a_xu = fetch_benchmark(period='1y')
+            # Likidite filtresi
+            _a_filtered = {}
+            for _at, _adf in _a_data.items():
+                if _adf is None or len(_adf) < MIN_DATA_DAYS:
+                    continue
+                if (_adf['Close'] * _adf['Volume']).tail(20).mean() >= MIN_VOLUME_TL:
+                    _a_filtered[_at] = _adf
+            _ml_sc = MLScorer()
+            _ml_sc._load_models()
+            if _ml_sc.loaded:
+                for _at, _adf in _a_filtered.items():
+                    try:
+                        _feats = compute_all_features(_adf, xu_df=_a_xu)
+                        if _feats.empty or len(_feats) < 5:
+                            continue
+                        _row = _feats.iloc[-1]
+                        _vec = _ml_sc._make_feature_vector(_row)
+                        if _vec is None:
+                            continue
+                        _preds = _ml_sc._predict_all(_vec)
+                        _ml1 = _preds['ml_a_1g']
+                        _ml3 = _preds['ml_a_3g']
+                        if _ml1 is None or _ml1 < ML_SCORE_THRESHOLD:
+                            continue
+                        if _ml3 is not None and _ml3 < ML_SWING_THRESHOLD:
+                            continue
+                        # ML eğim
+                        if len(_feats) > ML_SLOPE_LOOKBACK:
+                            _row_ago = _feats.iloc[-1 - ML_SLOPE_LOOKBACK]
+                            _vec_ago = _ml_sc._make_feature_vector(_row_ago)
+                            if _vec_ago is not None:
+                                _p_ago = _ml_sc._predict_all(_vec_ago)
+                                if _p_ago['ml_a_1g'] is not None and (_ml1 - _p_ago['ml_a_1g']) < ML_SLOPE_MIN:
+                                    continue
+                        _conf = stage3_confirmation(_adf)
+                        if _conf['score'] < CONFIRMATION_MIN_SCORE:
+                            continue
+                        _ml_avg = _ml1 if _ml3 is None else (_ml1 + _ml3) / 2
+                        _composite = _ml_avg * 100 * ML_COMPOSITE_WEIGHT + _conf['score'] * 10 * (1 - ML_COMPOSITE_WEIGHT)
+                        _composite = round(min(100, _composite), 1)
+                        # ATR ve stop
+                        _close = float(_adf['Close'].iloc[-1])
+                        _atr_v = _close * 0.03
+                        if len(_adf) >= 20:
+                            _atr_s = calc_atr(_adf)
+                            if not pd.isna(_atr_s.iloc[-1]):
+                                _atr_v = float(_atr_s.iloc[-1])
+                        _stop = round(_close - 2.0 * _atr_v, 2)
+                        _stop_pct = round(_atr_v * 2.0 / _close * 100, 1)
+                        _trail = round(_close + 1.5 * _atr_v, 2)
+
+                        _score = int(_composite * 3)  # Normalize: 50→150
+                        _reasons = ['⏳3G', f'ML:{_ml1:.2f}']
+                        if _ml3:
+                            _reasons.append(f'SW:{_ml3:.2f}')
+                        _reasons += [f'C{_composite:.0f}', f'S{_stop_pct:.0f}%']
+
+                        _sig = {
+                            'ticker': _at, 'screener': 'alpha',
+                            'ml_1g': _ml1, 'ml_3g': _ml3,
+                            'composite': _composite, 'conf_score': _conf['score'],
+                            'adx': _conf['adx'], 'cmf': _conf['cmf'], 'rsi': _conf['rsi'],
+                            'close': _close, 'stop': _stop, 'stop_pct': _stop_pct,
+                            'trail_target': _trail, 'atr': _atr_v,
+                        }
+                        alpha_items.append((_at, _score, _reasons, _sig))
+                    except Exception:
+                        continue
+                alpha_items.sort(key=lambda x: -x[1])
+                print(f"  [ALPHA] {len(alpha_items)} aday ({_atime.time()-_at0:.0f}s)")
+    except Exception as e:
+        print(f"  [ALPHA] Hata: {e}")
+
     # ── Çapraz Çakışma Tagging ──
-    list_data = {'alsat': alsat_items, 'tavan': tavan_items, 'nw': nw_items, 'rt': rt_items, 'sbt': sbt_items}
-    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+    list_data = {'alsat': alsat_items, 'tavan': tavan_items, 'nw': nw_items, 'rt': rt_items, 'sbt': sbt_items, 'alpha': alpha_items}
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT', 'alpha': 'ALP'}
     ticker_list_count = {}
     for list_name, items in list_data.items():
         for ticker, _, _, _ in items:
@@ -1709,7 +1802,7 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         """Normalize overlap quality: farklı kaynak kalitelerini eşit tartır."""
         quality = 0
         in_lists = []
-        for list_name in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
+        for list_name in ('alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'):
             for t, sc, reas, sig in list_data[list_name]:
                 if t != ticker:
                     continue
@@ -1797,6 +1890,23 @@ def _compute_4_lists(latest_signals, confluence_results=None):
                         quality += 10
                     elif vol > 3.0:
                         quality -= 10
+                elif list_name == 'alpha':
+                    _ml1 = sig.get('ml_1g', 0) or 0
+                    _comp = sig.get('composite', 0) or 0
+                    # ML skor bazlı kalite
+                    if _ml1 >= 0.65:
+                        quality += 40
+                    elif _ml1 >= 0.55:
+                        quality += 30
+                    elif _ml1 >= 0.48:
+                        quality += 20
+                    # Composite bonus
+                    if _comp >= 50:
+                        quality += 10
+                    # Stop mesafesi makul ise bonus
+                    _sp = sig.get('stop_pct', 99) or 99
+                    if _sp <= 7:
+                        quality += 10
                 break
         # Çakışma çeşitliliği bonusu
         if len(in_lists) >= 3:
@@ -1805,7 +1915,7 @@ def _compute_4_lists(latest_signals, confluence_results=None):
             quality += 5
         # RT veya NW içeren çakışma daha anlamlı (farklı soru cevaplıyorlar)
         has_technical = bool({'alsat', 'tavan'} & set(in_lists))
-        has_structural = bool({'nw', 'rt'} & set(in_lists))
+        has_structural = bool({'nw', 'rt', 'alpha'} & set(in_lists))
         if has_technical and has_structural:
             quality += 15  # Teknik + yapısal çakışma bonusu
         return quality, in_lists
@@ -1814,6 +1924,7 @@ def _compute_4_lists(latest_signals, confluence_results=None):
     _PREMIUM_OVERLAPS = [
         {'rt', 'tavan'}, {'nw', 'tavan'}, {'nw', 'rt'}, {'alsat', 'nw'},
         {'sbt', 'rt'}, {'sbt', 'nw'},
+        {'alpha', 'rt'}, {'alpha', 'nw'}, {'alpha', 'sbt'}, {'alpha', 'tavan'},
     ]
 
     tier1 = []
@@ -1867,7 +1978,7 @@ def _compute_4_lists(latest_signals, confluence_results=None):
         # Horizon mismatch tespiti: TVN=⚡1G, AS/RT=⏳3G/🔄SW
         # Farklı horizon'lu overlap → tactical (premium değil)
         _1G_LISTS = {'tavan', 'nw', 'sbt'}      # ⚡1G horizon
-        _SWING_LISTS = {'alsat', 'rt'}   # ⏳3G / 🔄SW horizon
+        _SWING_LISTS = {'alsat', 'rt', 'alpha'}   # ⏳3G / 🔄SW horizon
         has_1g = bool(ls & _1G_LISTS)
         has_swing = bool(ls & _SWING_LISTS)
         horizon_mismatch = has_1g and has_swing and len(in_lists) == 2
@@ -2034,7 +2145,7 @@ def _compute_4_lists(latest_signals, confluence_results=None):
     _TIER2_PER_LIST = 3
     tier1_tickers = {t for t, _, _, _ in tier1}
     tier2_all = []
-    for list_name in ('nw', 'rt', 'alsat', 'tavan', 'sbt'):
+    for list_name in ('nw', 'rt', 'alsat', 'tavan', 'sbt', 'alpha'):
         items = list_data[list_name]
         count = 0
         for ticker, score, reasons, sig in items:
@@ -2257,7 +2368,7 @@ def _build_shortlist_message(lists_dict,
     now = datetime.now(_TZ_TR)
 
     has_sm = bool(takas_data or mkk_data or ice_results)
-    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
+    _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT', 'alpha': 'ALP'}
 
     lines = [
         f"<b>⬡ NOX Ön Analiz — {now.strftime('%d.%m.%Y %H:%M')}</b>",
@@ -2395,7 +2506,27 @@ def _build_shortlist_message(lists_dict,
         lines.append("")
         lines.append("ℹ️ SBT ML: veri yok, breakout-quality bonus uygulanmadı")
 
-    # ── 6. ML Güçlü (≥0.50) ──
+    # ── 6. Alpha Pipeline ──
+    alpha_list = lists_dict.get('alpha', [])
+    if alpha_list:
+        lines.append("")
+        lines.append(f'🎯 <b>6. Alpha Pipeline</b> (ML momentum, {len(alpha_list)} sinyal)')
+        lines.append("")
+        for i, (ticker, score, reasons, sig) in enumerate(alpha_list[:15], 1):
+            _t = ticker.replace('.IS', '')
+            _ml1 = sig.get('ml_1g', 0) if isinstance(sig, dict) else 0
+            _comp = sig.get('composite', 0) if isinstance(sig, dict) else 0
+            _stop_p = sig.get('stop_pct', 0) if isinstance(sig, dict) else 0
+            _close = sig.get('close', 0) if isinstance(sig, dict) else 0
+            _stop = sig.get('stop', 0) if isinstance(sig, dict) else 0
+            _trail = sig.get('trail_target', 0) if isinstance(sig, dict) else 0
+            lines.append(f"{i}. <b>{_t}</b> — ML:{_ml1:.2f} C{_comp:.0f} | {_close:.2f}₺ → S:{_stop:.2f} ({_stop_p:.0f}%) T:{_trail:.2f}")
+            if has_sm:
+                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
+                if sm_line:
+                    lines.append(sm_line)
+
+    # ── 7. ML Güçlü (≥0.50) ──
     ml_strong = []
     _ml_seen = set()
     for key in ('alsat', 'tavan', 'nw', 'rt', 'sbt'):
@@ -3183,9 +3314,10 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
             ('nw', '📊 NW Pivot AL (günlük gate açık)'),
             ('rt', '⚡ Regime Transition (F≥3 OE≤2)'),
             ('sbt', '🚀 SBT Breakout'),
+            ('alpha', '🎯 Alpha Pipeline (ML momentum)'),
         ]
-        core_total = sum(len(lists_dict.get(k, [])) for k in ('alsat', 'tavan', 'nw', 'rt', 'sbt'))
-        print(f"  Toplam: {core_total} sinyal (5 liste)\n")
+        core_total = sum(len(lists_dict.get(k, [])) for k in ('alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha'))
+        print(f"  Toplam: {core_total} sinyal (6 liste)\n")
         for key, label in _LIST_LABELS:
             items = lists_dict.get(key, [])
             if not items:
