@@ -1943,6 +1943,17 @@ function filterReasons(reasons) {{
 (function() {{
     const tbody = document.querySelector('#confluenceTable tbody');
     const recC = {{'TRADEABLE':'#7a9e7a','TAKTİK':'#7a8fa5','İZLE':'#c9a96e','BEKLE':'#a8876a','ELE':'#9e5a5a','VERİ_YOK':'#555250'}};
+    // Screener → liste kısa adı (liste olmayanları atla)
+    const srcMap = {{alsat:'AS',nox_v3_weekly:'NW',regime_transition:'RT',tavan:'TVN',smart_breakout:'SBT',alpha:'ALP'}};
+    // Confluence'da olmayan listeleri LISTS verisinden ekle
+    const extraLists = {{'sbt':'SBT','alpha':'ALP'}};
+    const extraTickers = {{}};
+    Object.entries(extraLists).forEach(([key,tag]) => {{
+        if(LISTS[key]) LISTS[key].items.forEach(it => {{
+            if(!extraTickers[it.ticker]) extraTickers[it.ticker] = [];
+            extraTickers[it.ticker].push(tag);
+        }});
+    }});
     document.getElementById('confluenceCount').textContent = CONF.length ? CONF.length + ' hisse' : '';
     CONF.forEach(item => {{
         const tr = document.createElement('tr');
@@ -1954,9 +1965,10 @@ function filterReasons(reasons) {{
         let dur = '<span class="shortlist-badge not-in">—</span>';
         if(hc) dur='<span class="shortlist-badge conflict">ÇELİŞKİ</span>';
         else if(SL_SET.has(item.ticker)) dur='<span class="shortlist-badge in-list">SHORTLIST</span>';
-        const srcMap = {{alsat:'AS',nox_v3_weekly:'NW',regime_transition:'RT',tavan:'TVN',kademe:'KDM',mkk:'MKK',smart_breakout:'SBT',alpha:'ALP'}};
-        const srcTags = (item.sources||[]).map(s=>srcMap[s]||s).join('+');
-        tr.innerHTML = `<td>${{tvL(item.ticker)}}</td><td><span class="score-badge" style="background:${{sc}}20;color:${{sc}}">${{item.score}}</span></td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.structural_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.tactical_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.75rem;color:var(--nox-cyan)">${{srcTags}}</td><td><span class="rec-badge" style="background:${{rc}}20;color:${{rc}}">${{dr}}</span></td><td>${{dur}}</td><td style="font-size:0.8rem;color:var(--text-secondary)">${{det}}</td>`;
+        const tags = (item.sources||[]).map(s=>srcMap[s]).filter(Boolean);
+        (extraTickers[item.ticker]||[]).forEach(t => {{ if(!tags.includes(t)) tags.push(t); }});
+        const srcTags = tags.join('+');
+        tr.innerHTML = `<td>${{tvL(item.ticker)}}</td><td><span class="score-badge" style="background:${{sc}}20;color:${{sc}}">${{item.score}}</span></td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.structural_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.85rem;color:var(--text-secondary)">${{item.tactical_score||0}}</td><td style="font-family:var(--font-mono);font-size:0.75rem;color:var(--nox-cyan)">${{srcTags||'—'}}</td><td><span class="rec-badge" style="background:${{rc}}20;color:${{rc}}">${{dr}}</span></td><td>${{dur}}</td><td style="font-size:0.8rem;color:var(--text-secondary)">${{det}}</td>`;
         tbody.appendChild(tr);
     }});
 }})();
