@@ -32,6 +32,9 @@ jobs:
             alpha-cache-
 
       - name: Run Alpha Pipeline Live Scan
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
         run: python run_alpha_pipeline.py --live 2>&1 | tee alpha_output.txt
 
       - name: Send Telegram notification

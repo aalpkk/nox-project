@@ -1594,7 +1594,7 @@ const SCAN = {{
     'nw': '{_nox_base}/nox_v3_weekly.html',
     'rt': '{_nox_base}/regime_transition.html',
     'sbt': '{_nox_base}/smart_breakout.html',
-    'alpha': '#',
+    'alpha': '{_nox_base}/alpha_scan.html',
 }};
 
 // ── Utility: Badge render helpers ──

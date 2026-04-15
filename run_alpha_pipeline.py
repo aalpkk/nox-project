@@ -254,6 +254,16 @@ def run_live_scan(args):
         filepath = generate_live_scan_report(passed, portfolio)
         print(f"\n  Rapor: {filepath}")
 
+        # GitHub Pages'e deploy
+        try:
+            from core.reports import push_html_to_github
+            with open(filepath, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            push_html_to_github(html_content, 'alpha_scan.html',
+                                datetime.now().strftime('%Y-%m-%d'))
+        except Exception as e:
+            print(f"  ⚠️ GitHub Pages deploy: {e}")
+
     print("\n" + "=" * 60)
 
 
