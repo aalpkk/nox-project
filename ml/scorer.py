@@ -226,7 +226,7 @@ class MLScorer:
         if not os.path.isdir(self.model_dir):
             self.model_dir = _FALLBACK_MODEL_DIR
 
-        # 4-model slots
+        # 4-model slots (LightGBM)
         self._universe_1g = None
         self._universe_3g = None
         self._reranker_1g = None
@@ -234,6 +234,11 @@ class MLScorer:
         self._feat_cols = None
         self.loaded = False
         self._load_attempted = False
+
+        # MLP ensemble slots
+        self._mlp_up_1g = None
+        self._mlp_up_3g = None
+        self._ensemble_weight = float(os.environ.get('ML_ENSEMBLE_WEIGHT', '0.7'))
 
         # Backward compat aliases
         self._booster_a = None  # = _universe_1g
@@ -284,17 +289,55 @@ class MLScorer:
         # Backward compat aliases
         self._booster_a = self._universe_1g
         self._booster_b = self._reranker_1g
-        print(f"  [ML] {loaded_count} model yüklendi")
+
+        # MLP ensemble modelleri (opsiyonel)
+        mlp_count = 0
+        for slot, filename in [('_mlp_up_1g', 'mlp_up_1g.pkl'), ('_mlp_up_3g', 'mlp_up_3g.pkl')]:
+            path = os.path.join(self.model_dir, filename)
+            if os.path.exists(path):
+                try:
+                    import joblib
+                    setattr(self, slot, joblib.load(path))
+                    mlp_count += 1
+                except Exception:
+                    pass
+        mlp_info = f" + {mlp_count} MLP" if mlp_count else ""
+        print(f"  [ML] {loaded_count} LightGBM{mlp_info} model yüklendi")
 
     def _predict_all(self, vec):
         """Feature vektörü için 4 modelin tahminlerini hesapla.
 
+        MLP modeller varsa ensemble (LightGBM * w + MLP * (1-w)) yapılır.
         Returns: dict with keys ml_a_1g, ml_a_3g, ml_b_1g, ml_b_3g (None if unavailable)
         """
         x = vec.reshape(1, -1)
+
+        # LightGBM tahminleri
+        lgb_1g = float(self._universe_1g.predict(x)[0]) if self._universe_1g else None
+        lgb_3g = float(self._universe_3g.predict(x)[0]) if self._universe_3g else None
+
+        # MLP ensemble (varsa)
+        w = self._ensemble_weight
+        ml_a_1g = lgb_1g
+        ml_a_3g = lgb_3g
+
+        if lgb_1g is not None and self._mlp_up_1g is not None:
+            try:
+                mlp_1g = float(self._mlp_up_1g.predict_proba(x)[0, 1])
+                ml_a_1g = w * lgb_1g + (1 - w) * mlp_1g
+            except Exception:
+                pass
+
+        if lgb_3g is not None and self._mlp_up_3g is not None:
+            try:
+                mlp_3g = float(self._mlp_up_3g.predict_proba(x)[0, 1])
+                ml_a_3g = w * lgb_3g + (1 - w) * mlp_3g
+            except Exception:
+                pass
+
         result = {
-            'ml_a_1g': float(self._universe_1g.predict(x)[0]) if self._universe_1g else None,
-            'ml_a_3g': float(self._universe_3g.predict(x)[0]) if self._universe_3g else None,
+            'ml_a_1g': ml_a_1g,
+            'ml_a_3g': ml_a_3g,
             'ml_b_1g': float(self._reranker_1g.predict(x)[0]) if self._reranker_1g else None,
             'ml_b_3g': float(self._reranker_3g.predict(x)[0]) if self._reranker_3g else None,
         }

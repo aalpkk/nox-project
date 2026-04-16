@@ -1779,6 +1779,18 @@ def _compute_4_lists(latest_signals, confluence_results=None):
                         continue
                 alpha_items.sort(key=lambda x: -x[1])
                 print(f"  [ALPHA] {len(alpha_items)} aday ({_atime.time()-_at0:.0f}s)")
+                # Max Sharpe portföy
+                if len(alpha_items) >= 3:
+                    try:
+                        from alpha.portfolio import build_portfolio
+                        _bp_cands = [{'ticker': t, 'composite_score': s / 3, 'passed': True}
+                                     for t, s, _, _ in alpha_items]
+                        _alpha_pf = build_portfolio(_a_filtered, _bp_cands)
+                        if _alpha_pf and _alpha_pf.get('n_stocks', 0) > 0:
+                            lists_dict['_alpha_portfolio'] = _alpha_pf
+                            print(f"  [ALPHA] Portföy: {_alpha_pf['n_stocks']} hisse, Sharpe={_alpha_pf['sharpe_ratio']:.2f}")
+                    except Exception as _pe:
+                        print(f"  [ALPHA] Portföy hatası: {_pe}")
     except Exception as e:
         print(f"  [ALPHA] Hata: {e}")
 

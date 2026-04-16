@@ -402,6 +402,15 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         _sanitize(lists_dict.get('_ml_filtered', [])) if lists_dict else [],
         ensure_ascii=False)
 
+    # Alpha portföy
+    _apf = lists_dict.get('_alpha_portfolio', {}) if lists_dict else {}
+    alpha_pf_json = json.dumps(_sanitize({
+        'sharpe': _apf.get('sharpe_ratio', 0),
+        'ret': _apf.get('expected_return', 0),
+        'risk': _apf.get('expected_risk', 0),
+        'weights': {t.replace('.IS', ''): round(w * 100, 1) for t, w in _apf.get('weights', {}).items()},
+    }) if _apf else {}, ensure_ascii=False)
+
     # Scanner base URL'leri (HTML'deki JS linkleri için)
     _nox_base = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
     _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
@@ -1588,6 +1597,7 @@ const BRK_ML = {breakout_ml_json};
 const LTP = {limit_tp_json};
 const SL = {shortlist_json};
 const SEC = {sector_summary_json};
+const ALPHA_PF = {alpha_pf_json};
 const SCAN = {{
     'alsat': '{_bist_base}/',
     'tavan': '{_bist_base}/tavan.html',
@@ -1830,6 +1840,20 @@ function filterReasons(reasons) {{
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});
+        // Alpha portföy kartı
+        if(key==='alpha' && ALPHA_PF && ALPHA_PF.weights && Object.keys(ALPHA_PF.weights).length>0) {{
+            html += `<div style="margin-top:12px;padding:12px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:8px;">`;
+            html += `<div style="font-weight:600;color:var(--nox-gold);margin-bottom:8px;">Max Sharpe Portföy <span style="font-size:0.75rem;color:var(--text-muted)">Sharpe:${{ALPHA_PF.sharpe?.toFixed(2)||'—'}} · Getiri:${{ALPHA_PF.ret?.toFixed(1)||'—'}}% · Risk:${{ALPHA_PF.risk?.toFixed(1)||'—'}}%</span></div>`;
+            Object.entries(ALPHA_PF.weights).sort((a,b)=>b[1]-a[1]).forEach(([t,w]) => {{
+                const bar = Math.max(4, w*3);
+                html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;font-size:0.82rem;">
+                    <a href="${{TV}}${{t}}" target="_blank" class="tv-link" style="min-width:55px;font-weight:700">${{t}}</a>
+                    <div style="background:var(--nox-gold);height:14px;width:${{bar}}px;border-radius:3px;opacity:0.7;"></div>
+                    <span style="color:var(--text-secondary);font-family:var(--font-mono);font-size:0.75rem">${{w.toFixed(1)}}%</span>
+                </div>`;
+            }});
+            html += `</div>`;
+        }}
         html += '</div>';
         panelsEl.innerHTML += html;
     }});
