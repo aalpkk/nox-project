@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from alpha_v2.config import Config
@@ -78,11 +79,30 @@ def _simulate_one_trade(
     entry_price: float,
     stop_price: float,
 ) -> dict:
-    """Layer 4 ile aynı simulator, şimdi gerçek fill olarak. Exit döner."""
+    """Next-day open-fill: sinyal close(bar_idx)'te, gerçek fill open(bar_idx+1)'te.
+
+    Overnight gap P&L'den çıkarılır → realistic fill. Stop/TP seviyeleri de
+    yeni open fill fiyatına göre yeniden hesaplanır (simulator içinde).
+    """
     cfg_bucket = BUCKET_CONFIGS[bucket]
-    _, h, l, c = _extract_ohlc(df)
+    o, h, l, c = _extract_ohlc(df)
     atr = _compute_atr(h, l, c, period=14)
-    result = simulate_exit(df, bar_idx, cfg_bucket, atr=atr, apply_costs=True)
+
+    # Fill bar = bar_idx + 1 (sinyal günü close'unda order, ertesi gün open fill)
+    # Eğer bar_idx df'in son bar'ıysa fill yapılamaz
+    if bar_idx >= len(df) - 1:
+        return {
+            'return_pct_net': 0.0, 'exit_price': entry_price,
+            'exit_bar_idx': bar_idx, 'bars_held': 0, 'reason': 'no_fill',
+        }
+    fill_price = float(o[bar_idx + 1])
+    if not np.isfinite(fill_price) or fill_price <= 0:
+        fill_price = entry_price  # fallback
+
+    result = simulate_exit(
+        df, bar_idx, cfg_bucket, atr=atr,
+        entry_price=fill_price, apply_costs=True,
+    )
     return {
         'return_pct_net': result.return_pct,
         'exit_price': result.exit_price,
