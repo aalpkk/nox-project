@@ -24,10 +24,11 @@ _RATE_MIN = 0.3         # minimum bekleme (429 gelmezse buraya kadar düşer)
 _RATE_MAX = 2.0         # maksimum bekleme (429 gelince buraya kadar çıkar)
 _RATE_STEP_DOWN = 0.05  # her başarılı çağrıda bu kadar düş
 _RATE_STEP_UP = 0.5     # her 429'da bu kadar artır
-_TIMEOUT = 30
+_TIMEOUT = (10, 30)  # (connect, read) — connect hang koruması
 _MSG_ID_COUNTER = 0
 _429_COUNT = 0  # global 429 sayacı
 _429_MAX = 15   # circuit breaker — limit artırıldı (eskiden 10)
+_DEBUG_FIRST_RESP = True  # ilk başarılı response'u logla (auth doğrulama)
 
 _TZ_TR = timezone(timedelta(hours=3))
 
@@ -114,7 +115,7 @@ class MatriksClient:
                 if _429_COUNT >= _429_MAX:
                     print(f"    🛑 Circuit breaker: {_429_COUNT} adet 429 — Matriks API devre dışı")
                     return None
-                wait = min(10 * (2 ** attempt), 60)  # 10, 20, 40, 60 saniye
+                wait = min(5 * (2 ** attempt), 30)  # 5, 10, 20, 30 saniye
                 if attempt < max_retries:
                     print(f"    ⏳ Rate limit (429 #{_429_COUNT}), rate→{_RATE_LIMIT_SEC:.2f}s, {wait}s bekleniyor...")
                     time.sleep(wait)
@@ -128,6 +129,13 @@ class MatriksClient:
         sid = resp.headers.get("mcp-session-id") or resp.headers.get("MCP-Session-ID")
         if sid:
             self.session_id = sid
+
+        global _DEBUG_FIRST_RESP
+        if _DEBUG_FIRST_RESP:
+            _DEBUG_FIRST_RESP = False
+            body_preview = (resp.text or "")[:200].replace("\n", " ")
+            print(f"    [Matriks] İlk response: HTTP {resp.status_code}, "
+                  f"body[:200]={body_preview!r}")
 
         if resp.status_code == 204:
             return None
@@ -495,14 +503,17 @@ class MatriksClient:
 
                 if data:
                     results[ticker] = data
-                    if i % 10 == 0 or i == total:
-                        df = data.get("daily_flows", {})
-                        elapsed_total = time.time() - _batch_start
-                        eta = (elapsed_total / i) * (total - i)
-                        print(f"  Matriks: {i}/{total} hisse, "
-                              f"rate={_RATE_LIMIT_SEC:.2f}s, "
-                              f"API={total_api_calls}, MKK={total_investor}, "
-                              f"ETA={eta/60:.0f}dk")
+
+                # Progress log her durumda (boş data → API/auth sorunu görünür)
+                if i % 10 == 0 or i == total:
+                    elapsed_total = time.time() - _batch_start
+                    eta = (elapsed_total / i) * (total - i)
+                    filled = sum(1 for k, v in results.items()
+                                 if not k.startswith("_") and v)
+                    print(f"  Matriks: {i}/{total} hisse "
+                          f"(dolu={filled}), rate={_RATE_LIMIT_SEC:.2f}s, "
+                          f"API={total_api_calls}, MKK={total_investor}, "
+                          f"ETA={eta/60:.0f}dk")
             except Exception as e:
                 print(f"  ⚠️ Matriks {ticker} hatası: {e}")
                 continue

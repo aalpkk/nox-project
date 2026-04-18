@@ -1180,7 +1180,10 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
                     fetch_tickers, include_history=include_history,
                     history_days=history_days, history_cache=history_store)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            # NOT: `with` bloğu kullanma — shutdown(wait=True) hung thread'de takılır.
+            # Manuel shutdown(wait=False) ile timeout sonrası anında devam et.
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
                 future = ex.submit(_fetch)
                 try:
                     new_data = future.result(timeout=matriks_timeout)
@@ -1188,6 +1191,8 @@ def _fetch_matriks_pipeline(tickers, mkk_data_map, matriks_enabled, matriks_api_
                     new_data = dict(client._partial_results) if client._partial_results else None
                     done = len([k for k in (new_data or {}) if not k.startswith("_")])
                     print(f"  ⚠️ Matriks {matriks_timeout}s timeout — {done}/{len(fetch_tickers)} kısmi veri")
+            finally:
+                ex.shutdown(wait=False, cancel_futures=True)
 
             # Cache güncelle
             if new_data:
