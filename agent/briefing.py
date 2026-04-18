@@ -906,7 +906,7 @@ def _sector_regime_overlay(lists_dict):
 
         # Tüm endeksleri tek seferde çek (sektör + piyasa + tematik + katılım)
         all_codes = list(set(_ALL_INDEX_CODES) | needed_sectors)
-        print(f"  [ENDEKS] {len(all_codes)} endeks çekiliyor (tvDatafeed)...")
+        print(f"  [ENDEKS] {len(all_codes)} endeks çekiliyor (İŞY REST)...")
         all_regimes = fetch_index_regimes(all_codes)
 
         if not all_regimes:

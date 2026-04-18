@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install -r requirements.txt "tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git"
+      - run: pip install -r requirements.txt
 
       # yfinance cache — run'lar arasında parquet dosyalarını koru
       - name: Restore YF price cache
@@ -53,7 +53,7 @@ jobs:
           MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
           MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
-          MATRIKS_TIMEOUT: "1800"
+          MATRIKS_TIMEOUT: "300"
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
@@ -71,7 +71,7 @@ jobs:
           MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
           MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
-          MATRIKS_TIMEOUT: "1800"
+          MATRIKS_TIMEOUT: "300"
 
       - uses: actions/upload-artifact@v4
         with:

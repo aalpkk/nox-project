@@ -1,16 +1,17 @@
 """
-Sektör & Ana Endeks Regime Tespiti — RT AL sinyali bazlı soft gate.
+Sektör & Ana Endeks Regime Tespiti — Close-only EMA bazlı AL/PASIF.
 
-tvDatafeed ile gerçek BIST sektör endeksi verisi çekip RT'nin tam
-pipeline'ını (scan_regime_transition + compute_trade_state) çalıştırır.
-in_trade=True → AL aktif, False → pasif.
+İŞ Yatırım IndexHistoricalAll endpoint'i ile günlük Close çekilir
+(REST, WebSocket yok → hang riski yok). Endeksler için OHLCV döndürmüyor;
+volume=0 olduğu için CMF/OBV zaten anlamsızdı. Close-only logic:
+    - close > EMA21 ve EMA21 > EMA55 → AL (trend up)
+    - EMA21 son 5 bar slope > 0 → ek puan
+    - 20g momentum (close pct) > 0 → ek puan
+    trend_score: 0-3, in_trade = trend_score >= 2
 
 Kullanım:
     from agent.sector_regime import load_sector_map, fetch_sector_regimes, \
         fetch_index_regimes, get_ticker_sector_regime
-
-Not: Endekslerde volume=0 olduğu için participation_score her zaman 0 kalır.
-RT'nin AL sinyali trend_score + expansion_score + regime geçişine bakar.
 """
 import json
 import os
@@ -79,141 +80,132 @@ def load_sector_map():
 
 
 def _score_single_df(df):
-    """Tek bir DataFrame için RT tam pipeline — AL sinyali aktif mi?
+    """Close-only AL/PASIF skoru.
 
-    scan_regime_transition + compute_trade_state çalıştırır.
-    in_trade=True → AL aktif (pozitif), False → AL yok (negatif).
+    Beklenen kolon: 'close' (lowercase). EMA21/EMA55 bazlı:
+        +1: close > EMA21
+        +1: EMA21 > EMA55
+        +1: EMA21 son 5 bar slope > 0
+    in_trade = trend_score >= 2
     """
-    from markets.bist.regime_transition import scan_regime_transition, compute_trade_state
-
-    # Kolonları lowercase yap (RT convention)
-    col_map = {}
-    for col in df.columns:
-        cs = str(col).strip().lower()
-        if cs in ('close', 'adj close'):
-            col_map[col] = 'close'
-        elif cs == 'open':
-            col_map[col] = 'open'
-        elif cs == 'high':
-            col_map[col] = 'high'
-        elif cs == 'low':
-            col_map[col] = 'low'
-        elif cs == 'volume':
-            col_map[col] = 'volume'
-    df = df.rename(columns=col_map)
-
-    if 'close' not in df.columns or len(df) < 30:
+    if 'close' not in df.columns or len(df) < 60:
         return None
 
-    rt = scan_regime_transition(df, weekly_df=None)
-    trade = compute_trade_state(rt['regime'], rt['close'], rt['ema21'])
+    close = df['close'].astype(float)
+    ema21 = close.ewm(span=21, adjust=False).mean()
+    ema55 = close.ewm(span=55, adjust=False).mean()
 
-    regime = int(rt['regime'].iloc[-1])
-    in_trade = bool(trade['in_trade'].iloc[-1])
-    ts = int(rt['trend_score'].iloc[-1])
-    eb = bool(rt['ema_bull'].iloc[-1])
-    sb = bool(rt['st_bull'].iloc[-1])
+    c = float(close.iloc[-1])
+    e21 = float(ema21.iloc[-1])
+    e55 = float(ema55.iloc[-1])
+    e21_5ago = float(ema21.iloc[-6]) if len(ema21) >= 6 else e21
+    slope = (e21 - e21_5ago) / max(abs(e21_5ago), 1e-9)
 
-    if in_trade:
-        label = 'AL'
-    else:
-        label = 'PASIF'
+    above_ema21 = c > e21
+    ema_bull = e21 > e55
+    slope_up = slope > 0
+
+    score = int(above_ema21) + int(ema_bull) + int(slope_up)
+    in_trade = score >= 2
 
     return {
-        'trend_score': ts,
-        'ema_bull': eb,
-        'st_bull': sb,
-        'regime': regime,
+        'trend_score': score,
+        'ema_bull': ema_bull,
+        'st_bull': above_ema21,  # SuperTrend yerine close>EMA21 (geriye uyum)
+        'regime': 1 if in_trade else -1,
         'in_trade': in_trade,
-        'regime_label': label,
+        'regime_label': 'AL' if in_trade else 'PASIF',
     }
 
 
-def _fetch_tv_single(tv, code, interval, n_bars=130):
-    """Tek sembol çek — thread içinden çağrılır."""
-    df = tv.get_hist(code, 'BIST', interval=interval, n_bars=n_bars)
-    if df is not None and len(df) >= 30:
-        return df.drop(columns=['symbol'], errors='ignore')
-    return None
+_ISY_INDEX_URL = (
+    "https://www.isyatirim.com.tr/_Layouts/15/IsYatirim.Website/"
+    "Common/ChartData.aspx/IndexHistoricalAll"
+)
 
 
-def _fetch_tv_batch(symbols, per_symbol_timeout=15, total_timeout=300):
-    """tvDatafeed ile batch endeks verisi çek.
+def _fetch_isy_single(code, lookback_days=200, timeout=15):
+    """İŞ Yatırım'dan tek endeks Close serisi çek.
 
-    Her sembol ayrı thread'de per_symbol_timeout ile çekilir —
-    bir tanesi takılırsa sadece o atlanır, diğerleri çekilir.
-    total_timeout: tüm batch için üst sınır.
+    Returns: DataFrame(close=...) veya None.
+    """
+    import requests
+    from datetime import datetime, timedelta
+
+    end = datetime.now()
+    start = end - timedelta(days=lookback_days)
+    params = {
+        'period': 1440,
+        'from': start.strftime('%Y%m%d') + '000000',
+        'to': end.strftime('%Y%m%d') + '235959',
+        'endeks': code,
+    }
+    try:
+        r = requests.get(_ISY_INDEX_URL, params=params, timeout=timeout)
+        r.raise_for_status()
+        raw = r.json().get('data', [])
+    except Exception:
+        return None
+    if not raw:
+        return None
+
+    import pandas as pd
+    df = pd.DataFrame(raw, columns=['ts_ms', 'value'])
+    df['date'] = pd.to_datetime(df['ts_ms'], unit='ms').dt.normalize()
+    df = df.set_index('date').sort_index()
+    return df[['value']].rename(columns={'value': 'close'})
+
+
+def _fetch_isy_batch(symbols, lookback_days=200, max_workers=8,
+                     per_symbol_timeout=15, throttle_sec=0.05):
+    """İŞ Yatırım REST ile batch endeks verisi çek.
+
+    Paralel ThreadPoolExecutor — REST çağrısı asılmaz, requests timeout'u
+    sert keser. Hata/timeout olan sembol atlanır, diğerleri devam eder.
 
     Args:
         symbols: ['XBANK', 'XUTEK', 'XU100', ...]
-        per_symbol_timeout: Sembol başına max bekleme (saniye). Default 15s.
-        total_timeout: Toplam max bekleme (saniye). Default 300s (5dk).
+        lookback_days: Geriye kaç gün (default 200, EMA55 + slope için yeterli).
+        max_workers: Paralel istek sayısı.
+        per_symbol_timeout: requests timeout (saniye).
+        throttle_sec: Submit'ler arası küçük gecikme (siteyi yormamak için).
 
-    Returns: {code: DataFrame, ...} — başarılı olanlar
+    Returns: {code: DataFrame, ...}
     """
-    import time
     import concurrent.futures
-    from tvDatafeed import TvDatafeed, Interval
+    import time
 
     results = {}
-    t0 = time.time()
-
-    # İlk bağlantı — timeout korumalı
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(TvDatafeed)
-            tv = future.result(timeout=per_symbol_timeout)
-    except Exception as e:
-        print(f"  ⚠️ tvDatafeed bağlantı hatası: {e}")
-        return results
-
     failed = []
-    for code in symbols:
-        if time.time() - t0 > total_timeout:
-            print(f"  ⚠️ tvDatafeed toplam {total_timeout}s aşıldı — "
-                  f"{len(results)}/{len(symbols)} çekildi")
-            break
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_fetch_tv_single, tv, code,
-                                   Interval.in_daily)
-                df = future.result(timeout=per_symbol_timeout)
-            if df is not None:
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {}
+        for code in symbols:
+            fut = ex.submit(_fetch_isy_single, code, lookback_days,
+                            per_symbol_timeout)
+            futures[fut] = code
+            if throttle_sec:
+                time.sleep(throttle_sec)
+        for fut in concurrent.futures.as_completed(futures):
+            code = futures[fut]
+            try:
+                df = fut.result(timeout=per_symbol_timeout + 5)
+            except Exception:
+                df = None
+            if df is not None and len(df) >= 60:
                 results[code] = df
             else:
                 failed.append(code)
-        except concurrent.futures.TimeoutError:
-            print(f"    ⏳ {code} timeout ({per_symbol_timeout}s) — atlanıyor")
-            failed.append(code)
-        except Exception:
-            failed.append(code)
 
-    # Retry başarısızlar — yeni bağlantı ile
-    if failed and (time.time() - t0) < total_timeout:
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(TvDatafeed)
-                tv2 = future.result(timeout=per_symbol_timeout)
-            for code in failed:
-                if time.time() - t0 > total_timeout:
-                    break
-                try:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                        future = ex.submit(_fetch_tv_single, tv2, code,
-                                           Interval.in_daily)
-                        df = future.result(timeout=per_symbol_timeout)
-                    if df is not None:
-                        results[code] = df
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    if failed:
+        print(f"  ⚠️ {len(failed)}/{len(symbols)} endeks alınamadı: "
+              f"{','.join(failed[:8])}{'...' if len(failed)>8 else ''}")
 
     return results
 
 
 def fetch_sector_regimes(sector_codes):
-    """Sektör endekslerini tvDatafeed ile çek + RT AL sinyali hesapla.
+    """Sektör endekslerini İŞY'den çek + Close-only AL sinyali hesapla.
 
     Args:
         sector_codes: {'XBANK', 'XUTEK', ...} unique set
@@ -223,7 +215,7 @@ def fetch_sector_regimes(sector_codes):
         'XUTEK': {'trend_score': 2, 'in_trade': True, 'regime_label': 'AL', ...},
     }
     """
-    dfs = _fetch_tv_batch(list(sector_codes))
+    dfs = _fetch_isy_batch(list(sector_codes))
 
     results = {}
     for code, df in dfs.items():
@@ -235,7 +227,7 @@ def fetch_sector_regimes(sector_codes):
 
 
 def fetch_index_regimes(codes=None):
-    """BIST endekslerini tvDatafeed ile çek + RT AL sinyali.
+    """BIST endekslerini İŞY'den çek + Close-only AL sinyali.
 
     Args:
         codes: Çekilecek endeks kodları (None → tüm endeksler)
@@ -254,7 +246,7 @@ def fetch_index_regimes(codes=None):
         for c in members:
             code_to_group[c] = group
 
-    dfs = _fetch_tv_batch(codes)
+    dfs = _fetch_isy_batch(codes)
 
     results = {}
     for code in codes:
