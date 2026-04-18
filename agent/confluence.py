@@ -291,19 +291,21 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
             details.append(f"ℹ️ Kademe S/A={sa} (satıcı baskısı — bilgi notu)")
 
     # ── 7. SBT (Smart Breakout - taktik) ──
+    # Bucket değerleri: 'A+✓', 'A+', 'A', 'B', 'C', 'X' (✓ = ML onayı)
     sbt_signals = [s for s in ticker_signals if s['screener'] == 'sbt']
     for s in sbt_signals:
-        bucket = (s.get('sbt_bucket') or '').upper()
-        if bucket == 'A+':
+        # Normalize: '✓' işaretini at, A+ ile A'yı ayır
+        raw = (s.get('sbt_bucket') or '').upper().replace('✓', '').strip()
+        if raw.startswith('A+'):
             sources.add('sbt')
             _add(2, 'sbt', "+2 SBT bucket A+ (en güçlü breakout adayı)")
-        elif bucket == 'A':
+        elif raw == 'A':
             sources.add('sbt')
             _add(1, 'sbt', "+1 SBT bucket A (güçlü breakout adayı)")
-        elif bucket == 'B':
+        elif raw == 'B':
             sources.add('sbt')
             details.append("ℹ️ SBT bucket B (orta — izleme)")
-        # X bucket (zayıf) — atlanır
+        # C / X / boş — atlanır (zayıf veya bilinmeyen)
 
     # ── 6b. MKK Yatırımcı Dağılımı ──
     if mkk_data:
