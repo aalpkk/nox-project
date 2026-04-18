@@ -22,7 +22,7 @@ OE/CMF: Bilgi notu — skor etkisi YOK.
 # Yapısal kaynaklar: swing/3G-5G horizon
 _STRUCTURAL = {'nox_v3_weekly', 'regime_transition', 'alsat'}
 # Taktik kaynaklar: 1G burst horizon
-_TACTICAL = {'tavan', 'kademe'}
+_TACTICAL = {'tavan', 'kademe', 'sbt'}
 
 # Rejim çarpanı — final_score = round(raw_score * multiplier)
 _REGIME_MULT = {
@@ -289,6 +289,21 @@ def calc_confluence_score(ticker, signals, macro_regime=None, mkk_data=None,
         elif sa > 1.50:
             sources.add('kademe')
             details.append(f"ℹ️ Kademe S/A={sa} (satıcı baskısı — bilgi notu)")
+
+    # ── 7. SBT (Smart Breakout - taktik) ──
+    sbt_signals = [s for s in ticker_signals if s['screener'] == 'sbt']
+    for s in sbt_signals:
+        bucket = (s.get('sbt_bucket') or '').upper()
+        if bucket == 'A+':
+            sources.add('sbt')
+            _add(2, 'sbt', "+2 SBT bucket A+ (en güçlü breakout adayı)")
+        elif bucket == 'A':
+            sources.add('sbt')
+            _add(1, 'sbt', "+1 SBT bucket A (güçlü breakout adayı)")
+        elif bucket == 'B':
+            sources.add('sbt')
+            details.append("ℹ️ SBT bucket B (orta — izleme)")
+        # X bucket (zayıf) — atlanır
 
     # ── 6b. MKK Yatırımcı Dağılımı ──
     if mkk_data:

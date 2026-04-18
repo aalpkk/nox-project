@@ -1968,9 +1968,9 @@ function filterReasons(reasons) {{
     const tbody = document.querySelector('#confluenceTable tbody');
     const recC = {{'TRADEABLE':'#7a9e7a','TAKTİK':'#7a8fa5','İZLE':'#c9a96e','BEKLE':'#a8876a','ELE':'#9e5a5a','VERİ_YOK':'#555250'}};
     // Screener → liste kısa adı (liste olmayanları atla)
-    const srcMap = {{alsat:'AS',nox_v3_weekly:'NW',regime_transition:'RT',tavan:'TVN',smart_breakout:'SBT',alpha:'ALP'}};
+    const srcMap = {{alsat:'AS',nox_v3_weekly:'NW',regime_transition:'RT',tavan:'TVN',sbt:'SBT',alpha:'ALP'}};
     // Confluence'da olmayan listeleri LISTS verisinden ekle
-    const extraLists = {{'sbt':'SBT','alpha':'ALP'}};
+    const extraLists = {{'alpha':'ALP'}};
     const extraTickers = {{}};
     Object.entries(extraLists).forEach(([key,tag]) => {{
         if(LISTS[key]) LISTS[key].items.forEach(it => {{
