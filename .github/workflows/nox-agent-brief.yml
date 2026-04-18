@@ -40,9 +40,10 @@ jobs:
 
       # Faz 1: Ön analiz shortlist — Matriks kurumsal + sinyal listesi
       - name: Send shortlist (Phase 1)
-        run: python -m agent.briefing --shortlist --notify
+        run: python -u -m agent.briefing --shortlist --notify
         timeout-minutes: 45
         env:
+          PYTHONUNBUFFERED: "1"
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
@@ -57,9 +58,10 @@ jobs:
 
       # Faz 2: Tam brifing — makro + AI analiz + HTML rapor
       - name: Generate full briefing (Phase 2)
-        run: python -m agent.briefing --notify
+        run: python -u -m agent.briefing --notify
         timeout-minutes: 45
         env:
+          PYTHONUNBUFFERED: "1"
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
