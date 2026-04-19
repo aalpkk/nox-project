@@ -51,7 +51,7 @@ jobs:
           BIST_PAGES_BASE_URL: "https://aalpkk.github.io/bist-signals"
           ML_SCORING_ENABLED: "1"
           BREAKOUT_ML_ENABLED: "1"
-          MATRIKS_ENABLED: "0"  # GEÇİCİ: Matriks API 503 (Management API service unavailable) — restore edilecek
+          MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
           MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
           MATRIKS_TIMEOUT: "1800"
@@ -70,7 +70,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ML_SCORING_ENABLED: "1"
           BREAKOUT_ML_ENABLED: "1"
-          MATRIKS_ENABLED: "0"  # GEÇİCİ: Matriks API 503 (Management API service unavailable) — restore edilecek
+          MATRIKS_ENABLED: "1"
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
           MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
           MATRIKS_TIMEOUT: "1800"
