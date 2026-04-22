@@ -37,19 +37,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from agent.matriks_client import MatriksClient  # noqa: E402
 
 
-SIGNALS_PATH = Path("output/nyxexp_backtest_v4C.parquet")
+SIGNALS_CSV = Path("data/nyxexp_topd_signals.csv")
+SIGNALS_PARQUET = Path("output/nyxexp_backtest_v4C.parquet")
 CACHE_PATH = Path("output/nyxexp_intraday_15m_matriks.parquet")
 
 
 def _load_signals() -> pd.DataFrame:
-    if not SIGNALS_PATH.exists():
-        raise FileNotFoundError(f"Signals missing: {SIGNALS_PATH}")
-    df = pd.read_parquet(SIGNALS_PATH)
-    df["date"] = pd.to_datetime(df["date"]).dt.date
-    # (ticker, date) unique çiftlere indirge
-    keys = df[["ticker", "date"]].drop_duplicates().reset_index(drop=True)
-    keys = keys.sort_values(["date", "ticker"]).reset_index(drop=True)
-    return keys
+    """Prefer tracked CSV (GHA friendly); fall back to local parquet."""
+    if SIGNALS_CSV.exists():
+        df = pd.read_csv(SIGNALS_CSV)
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        return df[["ticker", "date"]].sort_values(["date", "ticker"]).reset_index(drop=True)
+    if SIGNALS_PARQUET.exists():
+        df = pd.read_parquet(SIGNALS_PARQUET)
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        keys = df[["ticker", "date"]].drop_duplicates().reset_index(drop=True)
+        return keys.sort_values(["date", "ticker"]).reset_index(drop=True)
+    raise FileNotFoundError(f"Signals missing at {SIGNALS_CSV} or {SIGNALS_PARQUET}")
 
 
 def _load_cache() -> pd.DataFrame:
