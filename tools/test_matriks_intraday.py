@@ -27,21 +27,13 @@ SYMBOL = "GARAN"
 DAYS_SHORT = 10   # intraday testte 10 iş günü yeterli — bar count'ı görmek için
 DAYS_LONG = 365   # historical kapsam testi
 
-# Denenecek param isimleri + değer
-PARAM_CANDIDATES = [
-    ("interval", "5m"),
-    ("interval", "5"),
-    ("interval", "5min"),
-    ("interval", "M5"),
-    ("timeframe", "5m"),
-    ("timeframe", "5min"),
-    ("period", "5m"),
-    ("resolution", "5"),
-    ("resolution", "5m"),
-    ("granularity", "5m"),
-    ("barType", "5m"),
-    ("barInterval", "5"),
-]
+# Matriks schema enum (STEP 1'den doğrulandı 2026-04-22):
+#   interval: 1min | 5min | 15min | 1hour | daily | weekly | monthly
+# Response bar listesi 'allBars' key'inde.
+INTRADAY_INTERVALS = ["1min", "5min", "15min", "1hour"]
+
+# Kapsam testi: interval=15min sabit, farklı date range'ler
+COVERAGE_DAYS = [30, 365, 365 * 3, 365 * 5]
 
 
 def _raw_call(client: MatriksClient, tool_name: str, arguments: dict) -> dict:
@@ -82,7 +74,7 @@ def _probe_bars(resp) -> dict:
     out = {'found_key': None, 'bar_count': 0, 'first': None, 'last': None, 'sample3': []}
     if not isinstance(resp, dict):
         return out
-    for k in ('bars', 'rawBars', 'data', 'historicalBars', 'ohlcv', 'priceData', 'historicalPriceData', 'prices', 'candles'):
+    for k in ('allBars', 'bars', 'rawBars', 'data', 'historicalBars', 'ohlcv', 'priceData', 'historicalPriceData', 'prices', 'candles'):
         v = resp.get(k)
         if isinstance(v, list) and v:
             out['found_key'] = k
@@ -160,17 +152,14 @@ def step2_baseline(client):
 
 
 def step3_try_intraday(client):
-    print("\n═══ STEP 3: INTRADAY PROBES — param ismi + '5m' değeri ═══")
+    print("\n═══ STEP 3: INTRADAY — 4 interval × 10 iş günü ═══")
     start, end = _date_range(DAYS_SHORT)
-    base = {
-        'symbol': SYMBOL, 'startDate': start, 'endDate': end, 'rawBars': True,
-    }
-    best = None
-    for pname, pval in PARAM_CANDIDATES:
-        args = dict(base)
-        args[pname] = pval
-        label = f"{pname}={pval!r}"
-        print(f"\n  → {label}")
+    for iv in INTRADAY_INTERVALS:
+        args = {
+            'symbol': SYMBOL, 'startDate': start, 'endDate': end,
+            'rawBars': True, 'interval': iv,
+        }
+        print(f"\n  → interval={iv!r}")
         t0 = time.time()
         raw = _raw_call(client, 'historicalData', args)
         dt = time.time() - t0
@@ -181,30 +170,50 @@ def step3_try_intraday(client):
         resp = _parse_content(raw)
         probe = _probe_bars(resp)
         if probe['found_key']:
-            bar_n = probe['bar_count']
-            # Intraday heuristic: 10 iş gününde 5m barlar ~= 10 * (480/5) = ~960 bar olmalı
-            # Daily: ~10 bar. Aradaki fark net.
-            is_intraday = bar_n > 50
-            tag = "🎯 INTRADAY" if is_intraday else f"daily-ish (N={bar_n})"
-            print(f"    ✅ {dt:.1f}s  N={bar_n}  {tag}")
+            n = probe['bar_count']
+            print(f"    ✅ {dt:.1f}s  N={n}  key='{probe['found_key']}'")
             print(f"    First: {json.dumps(probe['first'], default=str)[:200]}")
-            if bar_n >= 2:
-                print(f"    Last:  {json.dumps(probe['last'], default=str)[:200]}")
-            if is_intraday and best is None:
-                best = (pname, pval, bar_n)
+            print(f"    Last:  {json.dumps(probe['last'], default=str)[:200]}")
         else:
             print(f"    ⚠ ({dt:.1f}s) bar yok — resp keys: {list(resp.keys()) if isinstance(resp, dict) else '?'}")
-            if isinstance(resp, dict) and '_raw_text' in resp:
-                print(f"    raw_text: {resp['_raw_text'][:200]}")
+        time.sleep(1.5)
 
-    print("\n─── ÖZET ───")
-    if best:
-        pname, pval, n = best
-        print(f"  ✅ INTRADAY DESTEKLİ: {pname}={pval!r} → {n} bar (10 iş günü)")
-        print(f"  Sıradaki: 1 yıllık kapsam testi için bu param ile {DAYS_LONG}g dene.")
-    else:
-        print("  ❌ Hiçbir intraday param kombinasyonu bar üretmedi.")
-        print("  Sonuç: Matriks historicalData sadece daily. Intraday için bu API kapısı kapalı.")
+
+def step4_coverage(client):
+    """interval=15min sabit, 30g→1y→3y→5y kapsam sınırını bul."""
+    print(f"\n═══ STEP 4: COVERAGE — interval='15min' × {COVERAGE_DAYS} gün ═══")
+    for days in COVERAGE_DAYS:
+        start, end = _date_range(days)
+        args = {
+            'symbol': SYMBOL, 'startDate': start, 'endDate': end,
+            'rawBars': True, 'interval': '15min',
+        }
+        print(f"\n  → {days}g ({start} → {end})")
+        t0 = time.time()
+        raw = _raw_call(client, 'historicalData', args)
+        dt = time.time() - t0
+        if 'error' in raw:
+            err = raw.get('error', {})
+            print(f"    ❌ JSON-RPC error ({dt:.1f}s): code={err.get('code')} msg={str(err.get('message'))[:200]}")
+            continue
+        resp = _parse_content(raw)
+        probe = _probe_bars(resp)
+        if probe['found_key']:
+            n = probe['bar_count']
+            # 250 iş günü × 32 bar = 8000 / yıl (15min BIST)
+            expected = int(days * (252/365) * 32)
+            coverage = (n / expected * 100) if expected > 0 else 0
+            print(f"    ✅ {dt:.1f}s  N={n}  beklenen≈{expected}  coverage≈{coverage:.0f}%")
+            print(f"    First: {json.dumps(probe['first'], default=str)[:250]}")
+            print(f"    Last:  {json.dumps(probe['last'], default=str)[:250]}")
+        else:
+            print(f"    ⚠ ({dt:.1f}s) bar yok — resp keys: {list(resp.keys()) if isinstance(resp, dict) else '?'}")
+            if isinstance(resp, dict):
+                # Belki partial döndü — period bilgisi payload'da olabilir
+                period = resp.get('period')
+                if period:
+                    print(f"    period: {json.dumps(period, default=str)[:300]}")
+        time.sleep(1.5)
 
 
 def step4_long_history(client, pname: str, pval: str):
@@ -246,8 +255,8 @@ def main():
     step1_list_tools(client)
     step2_baseline(client)
     step3_try_intraday(client)
-    # step4 manuel: step3'te intraday bulunursa terminalden tekrar elle çağır
-    print("\n✅ Testler tamamlandı. Intraday bulunduysa step4 için tekrar koştur.")
+    step4_coverage(client)
+    print("\n✅ Testler tamamlandı.")
     return 0
 
 
