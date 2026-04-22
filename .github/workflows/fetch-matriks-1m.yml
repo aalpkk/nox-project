@@ -1,0 +1,50 @@
+name: Fetch Matriks 1min bars — v4C top-D (C step)
+on:
+  workflow_dispatch:
+    inputs:
+      canary:
+        description: 'Canary mode — only fetch first N signals (0 = full)'
+        required: false
+        default: '0'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pandas pyarrow
+
+      - name: Download existing cache (if any from prior run)
+        uses: actions/download-artifact@v4
+        with:
+          name: nyxexp_intraday_1m_matriks
+          path: output/
+        continue-on-error: true
+
+      - name: Run fetcher
+        run: |
+          mkdir -p output
+          CANARY="${{ github.event.inputs.canary }}"
+          if [ "$CANARY" != "0" ] && [ -n "$CANARY" ]; then
+            echo "🐤 Canary mode: --canary $CANARY"
+            python nyxexpansion/intraday/fetch_matriks_1m.py --canary "$CANARY"
+          else
+            echo "🚀 Full run"
+            python nyxexpansion/intraday/fetch_matriks_1m.py
+          fi
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+
+      - name: Upload cache artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyxexp_intraday_1m_matriks
+          path: output/nyxexp_intraday_1m_matriks.parquet
+          retention-days: 30
+          overwrite: true
