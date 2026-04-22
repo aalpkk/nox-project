@@ -42,12 +42,15 @@ SIGNALS_PARQUET = Path("output/nyxexp_backtest_v4C.parquet")
 CACHE_PATH = Path("output/nyxexp_intraday_15m_matriks.parquet")
 
 
-def _load_signals() -> pd.DataFrame:
+def _load_signals(override: Path | None = None) -> pd.DataFrame:
     """Prefer tracked CSV (GHA friendly); fall back to local parquet."""
-    if SIGNALS_CSV.exists():
-        df = pd.read_csv(SIGNALS_CSV)
+    csv_path = override if override is not None else SIGNALS_CSV
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
         df["date"] = pd.to_datetime(df["date"]).dt.date
         return df[["ticker", "date"]].sort_values(["date", "ticker"]).reset_index(drop=True)
+    if override is not None:
+        raise FileNotFoundError(f"Signals CSV not found: {csv_path}")
     if SIGNALS_PARQUET.exists():
         df = pd.read_parquet(SIGNALS_PARQUET)
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -122,13 +125,16 @@ def main():
                     help="Only fetch first N signals (sanity/429 check)")
     ap.add_argument("--flush-every", type=int, default=20,
                     help="Write cache to disk every N successful fetches")
+    ap.add_argument("--signals", type=str, default=None,
+                    help="Override signals CSV path (default: data/nyxexp_topd_signals.csv)")
     args = ap.parse_args()
 
     if not os.environ.get("MATRIKS_API_KEY"):
         print("❌ MATRIKS_API_KEY env değişkeni set değil")
         return 1
 
-    keys = _load_signals()
+    override = Path(args.signals) if args.signals else None
+    keys = _load_signals(override)
     cache = _load_cache()
     done = _cached_keys(cache)
 

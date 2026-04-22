@@ -6,6 +6,10 @@ on:
         description: 'Canary mode — only fetch first N signals (0 = full)'
         required: false
         default: '0'
+      signals:
+        description: 'Override signals CSV path (blank = default data/nyxexp_topd_signals.csv)'
+        required: false
+        default: ''
 
 jobs:
   fetch:
@@ -29,13 +33,18 @@ jobs:
         run: |
           mkdir -p output
           CANARY="${{ github.event.inputs.canary }}"
+          SIGNALS="${{ github.event.inputs.signals }}"
+          ARGS=""
           if [ "$CANARY" != "0" ] && [ -n "$CANARY" ]; then
             echo "🐤 Canary mode: --canary $CANARY"
-            python nyxexpansion/intraday/fetch_matriks_15m.py --canary "$CANARY"
-          else
-            echo "🚀 Full run"
-            python nyxexpansion/intraday/fetch_matriks_15m.py
+            ARGS="$ARGS --canary $CANARY"
           fi
+          if [ -n "$SIGNALS" ]; then
+            echo "📋 Signals override: $SIGNALS"
+            ARGS="$ARGS --signals $SIGNALS"
+          fi
+          echo "🚀 python nyxexpansion/intraday/fetch_matriks_15m.py$ARGS"
+          python nyxexpansion/intraday/fetch_matriks_15m.py $ARGS
         env:
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
           MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
