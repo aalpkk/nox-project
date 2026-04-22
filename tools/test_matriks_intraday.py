@@ -256,8 +256,53 @@ def main():
     step2_baseline(client)
     step3_try_intraday(client)
     step4_coverage(client)
+    step5_specific_past_date(client)
     print("\n✅ Testler tamamlandı.")
     return 0
+
+
+def step5_specific_past_date(client):
+    """startDate ignore mi, yoksa tam tarih sorgulanırsa geçmiş dönüyor mu?"""
+    print("\n═══ STEP 5: GEÇMİŞ SPESİFİK TARİH TESTİ ═══")
+    # Birkaç tarih dene — yakın geçmiş, orta geçmiş, uzak geçmiş
+    # Pazartesi (iş günü) seçelim — BIST açık
+    test_dates = [
+        ("2026-04-14", "2026-04-15"),   # 1 hafta önce
+        ("2026-01-13", "2026-01-14"),   # 3 ay önce
+        ("2025-04-14", "2025-04-15"),   # 1 yıl önce
+        ("2024-04-15", "2024-04-16"),   # 2 yıl önce
+        ("2023-04-17", "2023-04-18"),   # 3 yıl önce
+        ("2021-04-19", "2021-04-20"),   # 5 yıl önce
+    ]
+    for start, end in test_dates:
+        args = {
+            'symbol': SYMBOL, 'startDate': start, 'endDate': end,
+            'rawBars': True, 'interval': '15min',
+        }
+        print(f"\n  → startDate={start}, endDate={end}, interval=15min")
+        t0 = time.time()
+        raw = _raw_call(client, 'historicalData', args)
+        dt = time.time() - t0
+        if 'error' in raw:
+            err = raw.get('error', {})
+            print(f"    ❌ JSON-RPC error ({dt:.1f}s): code={err.get('code')} msg={str(err.get('message'))[:200]}")
+            continue
+        resp = _parse_content(raw)
+        probe = _probe_bars(resp)
+        if probe['found_key']:
+            n = probe['bar_count']
+            first_date = probe['first'].get('date') if isinstance(probe['first'], dict) else None
+            last_date = probe['last'].get('date') if isinstance(probe['last'], dict) else None
+            # Istenen tarih mi, yoksa bugün mü?
+            match = "✅ TARİH DOĞRU" if first_date and start <= first_date <= end else f"⚠ TARİH SAPTI (dönen: {first_date})"
+            print(f"    N={n}  first.date={first_date}  last.date={last_date}  {match}")
+        else:
+            print(f"    ⚠ ({dt:.1f}s) bar yok — resp keys: {list(resp.keys()) if isinstance(resp, dict) else '?'}")
+            if isinstance(resp, dict):
+                period = resp.get('period')
+                if period:
+                    print(f"    period: {json.dumps(period, default=str)[:300]}")
+        time.sleep(1.5)
 
 
 if __name__ == '__main__':
