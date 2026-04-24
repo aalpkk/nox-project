@@ -1,0 +1,62 @@
+name: Backfill Matriks 15m — missing OOS pairs
+on:
+  workflow_dispatch:
+    inputs:
+      signals:
+        description: 'Signals CSV path'
+        required: false
+        default: 'data/nyxexp_missing_4219.csv'
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pandas pyarrow
+
+      - name: Slice signals for shard
+        env:
+          SHARD: ${{ matrix.shard }}
+          SIGNALS: ${{ github.event.inputs.signals }}
+        run: |
+          mkdir -p output data
+          python - <<'PY'
+          import os
+          import pandas as pd
+          from pathlib import Path
+          shard = int(os.environ["SHARD"])
+          total = 2
+          src = Path(os.environ.get("SIGNALS") or "data/nyxexp_missing_4219.csv")
+          df = pd.read_csv(src)
+          sub = df.iloc[shard::total].reset_index(drop=True)
+          out = Path("data/_shard.csv")
+          sub.to_csv(out, index=False)
+          print(f"shard {shard}/{total}: {len(sub)} pairs  (src {src})")
+          PY
+
+      - name: Run fetcher
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+        continue-on-error: true
+        run: |
+          python nyxexpansion/intraday/fetch_matriks_15m.py \
+            --signals data/_shard.csv \
+            --flush-every 50
+
+      - name: Upload shard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyxexp_15m_backfill_shard${{ matrix.shard }}
+          path: output/nyxexp_intraday_15m_matriks.parquet
+          retention-days: 14
+          overwrite: true
