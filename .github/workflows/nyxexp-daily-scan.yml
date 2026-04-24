@@ -1,0 +1,121 @@
+name: nyxexpansion Daily Scan
+on:
+  schedule:
+    - cron: '20 14 * * 1-5'  # 17:20 TR — ön-tarama (seans içi, son bar şekillenmeden)
+    - cron: '5 15 * * 1-5'   # 18:05 TR — BIST kapanış sonrası final tarama
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Target date (YYYY-MM-DD), boş = dataset max'
+        required: false
+        default: ''
+
+concurrency:
+  group: nyxexp-daily-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run nyxexpansion daily scan + Markowitz + HTML
+        run: |
+          set -o pipefail
+          DATE_ARG=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE_ARG="--date ${{ github.event.inputs.date }}"
+          fi
+          python -m nyxexpansion.scan.run \
+            --dataset output/nyxexp_dataset_v4.parquet \
+            --top 30 \
+            --mk-universe-top 15 \
+            $DATE_ARG 2>&1 | tee nyxexp_scan_output.txt
+
+      - name: Push HTML to GitHub Pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          try:
+              from core.reports import push_html_to_github
+              html = pathlib.Path("output/nyxexp_scan_latest.html").read_text(encoding="utf-8")
+              url = push_html_to_github(html, "nyxexp_scan.html", "latest")
+              print(f"  ✓ published: {url}")
+          except Exception as e:
+              print(f"  ⚠ push failed: {e}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, re, requests
+
+          try:
+              with open("nyxexp_scan_output.txt") as f:
+                  raw = f.read()
+          except FileNotFoundError:
+              raw = ""
+
+          m_target = re.search(r"target\s*:\s*(\S+)", raw)
+          target = m_target.group(1) if m_target else "?"
+          m_n = re.search(r"scan output:\s*(\d+)\s*candidate", raw)
+          n_cand = m_n.group(1) if m_n else "?"
+
+          m_pf = re.search(r"sharpe=([\d.]+)\s+ret=([+\-][\d.]+)%\s+risk=([\d.]+)%", raw)
+          pf_line = ""
+          weights_block = ""
+          if m_pf:
+              pf_line = f"Sharpe {m_pf.group(1)} · {m_pf.group(2)}% @ {m_pf.group(3)}%"
+              weights = re.findall(r"^\s{4}(\S+)\s+([\d.]+)%", raw, re.MULTILINE)
+              if weights:
+                  weights_block = "<pre>" + "\n".join(f"{t:<8} {w}%" for t, w in weights[:4]) + "</pre>"
+
+          msg = f"🎯 <b>nyxexpansion Scan</b> · {target}\n\n"
+          msg += f"📊 {n_cand} aday (severe hariç top-15 → Markowitz evreni)\n"
+          if pf_line:
+              msg += f"💼 <b>4'lü Portföy:</b> {pf_line}\n{weights_block}\n"
+          msg += "\n⚠️ daily candidate ranker — auto-entry değil"
+
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": msg[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:")
+              print(msg)
+          PYEOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nyxexp-scan-${{ github.run_number }}
+          path: |
+            nyxexp_scan_output.txt
+            output/nyxexp_scan_*.html
+            output/nyxexp_scan_*.parquet
