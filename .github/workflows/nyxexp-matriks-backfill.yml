@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +33,7 @@ jobs:
           import pandas as pd
           from pathlib import Path
           shard = int(os.environ["SHARD"])
-          total = 2
+          total = 1
           src = Path(os.environ.get("SIGNALS") or "data/nyxexp_missing_4219.csv")
           df = pd.read_csv(src)
           sub = df.iloc[shard::total].reset_index(drop=True)
