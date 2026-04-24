@@ -1,8 +1,8 @@
 name: NYX Alpha Scan
 on:
   schedule:
-    - cron: '30 15 * * 1-5'  # 18:30 TR — kapanış sonrası
-  workflow_dispatch:  # Manuel tetikleme
+    - cron: '30 15 * * 1-5'  # 18:30 TR — BIST kapanış sonrası
+  workflow_dispatch:  # Manuel tetikleme (bu akşam için)
 
 concurrency:
   group: nyx-alpha
@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install -r requirements.txt "tvdatafeed @ git+https://github.com/rongardF/tvdatafeed.git"
+      - run: pip install -r requirements.txt
 
       - name: Restore YF price cache
         uses: actions/cache@v4
@@ -31,11 +31,11 @@ jobs:
           restore-keys: |
             alpha-cache-
 
-      - name: Run Alpha Pipeline Live Scan
+      - name: Run Alpha Scan (Fintables 607-universe)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
-        run: python run_alpha_pipeline.py --live 2>&1 | tee alpha_output.txt
+        run: python scan_alpha_fintables.py --mode live --push 2>&1 | tee alpha_output.txt
 
       - name: Send Telegram notification
         if: always()
@@ -44,94 +44,48 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           python - <<'PYEOF'
-          import os, requests
+          import os, re, requests
 
-          output_file = "alpha_output.txt"
-          with open(output_file, "r") as f:
+          with open("alpha_output.txt", "r") as f:
               raw = f.read()
 
-          # Çıktıyı parse et
-          lines = raw.strip().split("\n")
+          m_n = re.search(r"(\d+) aday", raw)
+          n_cand = m_n.group(1) if m_n else "?"
+          m_cut = re.search(r"cutoff=(\S+)", raw)
+          cutoff = m_cut.group(1) if m_cut else "?"
 
-          # Header
-          msg = "🎯 <b>NYX Alpha Pipeline — Günlük Tarama</b>\n\n"
+          # Markowitz
+          m_pf = re.search(
+              r"Markowitz 4'lü:\s*Sharpe\s+([\d.]+)\s*\|\s*([+\-][\d.]+)%\s*@\s*([\d.]+)%",
+              raw,
+          )
+          pf_line = ""
+          if m_pf:
+              pf_line = f"Sharpe {m_pf.group(1)} | {m_pf.group(2)}% @ {m_pf.group(3)}% risk"
 
-          # Aday tablosunu bul
-          in_table = False
-          table_lines = []
-          portfolio_lines = []
-          in_portfolio = False
-          aday_count = ""
+          # Top 4 weights
+          weights = re.findall(r"^\s{4}(\S+)\s+([\d.]+)%", raw, re.MULTILINE)
 
-          for line in lines:
-              if "aday bulundu" in line:
-                  aday_count = line.strip()
-              if "Hisse" in line and "ML1g" in line:
-                  in_table = True
-                  continue
-              if in_table and line.strip().startswith("---"):
-                  continue
-              if in_table and line.strip() and not line.strip().startswith("[") and not line.strip().startswith("="):
-                  table_lines.append(line.strip())
-              elif in_table and (line.strip().startswith("[") or line.strip().startswith("=")):
-                  in_table = False
-
-              if "Max Sharpe" in line:
-                  in_portfolio = True
-                  portfolio_lines.append(line.strip())
-                  continue
-              if in_portfolio and "Beklenen" in line:
-                  portfolio_lines.append(line.strip())
-                  continue
-              if in_portfolio and "%" in line and ("." in line) and len(line.strip()) < 30:
-                  portfolio_lines.append(line.strip())
-              if in_portfolio and ("oluşturulamadı" in line or "=" in line):
-                  in_portfolio = False
-
-          if aday_count:
-              msg += f"📊 {aday_count}\n\n"
-
-          # Aday tablosu
-          if table_lines:
-              msg += "<b>Top Adaylar:</b>\n<pre>"
-              msg += f"{'Hisse':<8} {'ML':>4} {'Skor':>5} {'Fiyat':>8} {'Stop':>8} {'S%':>5}\n"
-              msg += "-" * 42 + "\n"
-              for line in table_lines[:15]:
-                  parts = line.split()
-                  if len(parts) >= 10:
-                      ticker = parts[0]
-                      ml1g = parts[1]
-                      score = parts[3]
-                      price = parts[7]
-                      stop = parts[8]
-                      stop_pct = parts[9]
-                      msg += f"{ticker:<8} {ml1g:>4} {score:>5} {price:>8} {stop:>8} {stop_pct:>5}\n"
+          msg = f"🎯 <b>NYX Alpha Scan</b> · {cutoff}\n\n"
+          msg += f"📊 {n_cand} aday\n"
+          if pf_line:
+              msg += f"💼 <b>Markowitz 4:</b> {pf_line}\n<pre>"
+              for t, w in weights[:4]:
+                  msg += f"{t:<8} {w}%\n"
               msg += "</pre>\n"
+          msg += "\n🔗 https://aalpkk.github.io/nox-signals/alpha_scan.html"
 
-          # Portföy
-          if portfolio_lines:
-              msg += "\n<b>Önerilen Portföy:</b>\n<pre>"
-              for pl in portfolio_lines:
-                  msg += pl + "\n"
-              msg += "</pre>\n"
-
-          if not table_lines:
-              msg += "❌ Bugün sinyal bulunamadı.\n"
-
-          # Telegram gönder
           token = os.environ.get("TG_BOT_TOKEN", "")
           chat_id = os.environ.get("TG_CHAT_ID", "")
           if token and chat_id:
-              url = f"https://api.telegram.org/bot{token}/sendMessage"
-              resp = requests.post(url, json={
-                  "chat_id": chat_id,
-                  "text": msg[:4096],
-                  "parse_mode": "HTML",
-                  "disable_web_page_preview": True,
-              })
+              resp = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": msg[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
               print(f"Telegram: {resp.status_code}")
           else:
-              print("TG_BOT_TOKEN veya TG_CHAT_ID yok, mesaj gönderilmedi")
+              print("TG creds yok")
               print(msg)
           PYEOF
 
@@ -141,4 +95,5 @@ jobs:
           name: alpha-scan-${{ github.run_number }}
           path: |
             alpha_output.txt
-            output/alpha_scan_*.html
+            output/alpha_scan_fintables_*.html
+            output/alpha_scan_fintables_*.csv

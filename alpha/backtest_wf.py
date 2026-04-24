@@ -22,6 +22,9 @@ from alpha.config import (
     TRAILING_TRIGGER_PCT, TRAILING_STOP_PCT,
     TRAILING_TRIGGER_ATR, TRAILING_ATR_MULT,
     REGIME_EMA_LENGTH, REGIME_BULL_WEIGHT, REGIME_BEAR_WEIGHT,
+    REGIME_KAMA_ENABLED, KAMA_ER_PERIOD, KAMA_FAST, KAMA_SLOW,
+    REGIME_AST_ENABLED, AST_ATR_LEN, AST_FACTOR, AST_TRAINING,
+    AST_HI_INIT, AST_MID_INIT, AST_LO_INIT,
     BATCH_MODE, BATCH_REOPEN_THRESHOLD,
     RS_LOOKBACK, RS_MIN_OUTPERFORM, MOM_LOOKBACK,
     PORTFOLIO_METHOD, MAX_STOCKS, TARGET_PORTFOLIO_SIZE,
@@ -42,10 +45,12 @@ class Position:
     shares: float
     stop_price: float
     atr_at_entry: float
+    stop_mult: float = 2.0
     highest_since_entry: float = 0.0
     trailing_active: bool = False      # iz sürme modu aktif mi
     first_tp_done: bool = False        # ilk %50 kâr alım yapıldı mı
     prev_day_low: float = 0.0         # önceki günün Low'u
+    be_shifted: bool = False           # breakeven shift: +N·R sonra stop entry'ye çekildi
 
 
 @dataclass
@@ -71,6 +76,93 @@ class RebalanceEvent:
     final_stocks: int
     turnover: float
     sharpe: float
+
+
+def _adaptive_supertrend_bear_flag(high: pd.Series, low: pd.Series, close: pd.Series,
+                                    atr_len: int, factor: float, training: int,
+                                    hi_init: float, mid_init: float, lo_init: float,
+                                    max_iter: int = 30) -> pd.Series:
+    """AlgoAlpha Adaptive SuperTrend — K-means vol clustering + SuperTrend.
+
+    Returns bear_flag (1=bear, 0=bull) series aligned to `close.index`.
+    Pine direction convention: direction==1 means close broke below lower band = bear.
+    No look-ahead: K-means her bar için past training-bar ATR'leri ile çalışır.
+    """
+    # ── Wilder ATR (pine ta.atr) ──
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1.0 / atr_len, adjust=False).mean()
+
+    n = len(close)
+    atr_vals = atr.values
+    adaptive_atr = np.full(n, np.nan)
+
+    for i in range(training, n):
+        window = atr_vals[i - training:i]
+        window = window[~np.isnan(window)]
+        if len(window) < 10:
+            continue
+        lo_v = window.min(); hi_v = window.max()
+        rng = hi_v - lo_v
+        if rng <= 0:
+            adaptive_atr[i] = atr_vals[i]
+            continue
+        h = lo_v + rng * hi_init
+        m = lo_v + rng * mid_init
+        l = lo_v + rng * lo_init
+        for _ in range(max_iter):
+            d_h = np.abs(window - h)
+            d_m = np.abs(window - m)
+            d_l = np.abs(window - l)
+            stacked = np.stack([d_h, d_m, d_l], axis=0)
+            labels = np.argmin(stacked, axis=0)
+            mh = window[labels == 0]; mm = window[labels == 1]; ml = window[labels == 2]
+            new_h = mh.mean() if len(mh) else h
+            new_m = mm.mean() if len(mm) else m
+            new_l = ml.mean() if len(ml) else l
+            if np.isclose(new_h, h) and np.isclose(new_m, m) and np.isclose(new_l, l):
+                h, m, l = new_h, new_m, new_l
+                break
+            h, m, l = new_h, new_m, new_l
+        # Current bar ATR → nearest centroid
+        curr = atr_vals[i]
+        if np.isnan(curr):
+            continue
+        dists = [abs(curr - h), abs(curr - m), abs(curr - l)]
+        centroids = [h, m, l]
+        adaptive_atr[i] = centroids[int(np.argmin(dists))]
+
+    # ── SuperTrend with adaptive ATR ──
+    hl2 = (high.values + low.values) / 2.0
+    cl = close.values
+    ub = hl2 + factor * adaptive_atr
+    lb = hl2 - factor * adaptive_atr
+
+    direction = np.ones(n, dtype=np.int8)  # 1=bear, -1=bull (pine convention)
+    st = np.full(n, np.nan)
+
+    for i in range(n):
+        if np.isnan(ub[i]) or np.isnan(lb[i]):
+            continue
+        if i > 0 and not np.isnan(lb[i-1]):
+            if not (lb[i] > lb[i-1] or cl[i-1] < lb[i-1]):
+                lb[i] = lb[i-1]
+        if i > 0 and not np.isnan(ub[i-1]):
+            if not (ub[i] < ub[i-1] or cl[i-1] > ub[i-1]):
+                ub[i] = ub[i-1]
+        if i == 0 or np.isnan(st[i-1]):
+            direction[i] = 1  # bear default start
+        elif st[i-1] == ub[i-1]:
+            direction[i] = -1 if cl[i] > ub[i] else 1
+        else:
+            direction[i] = 1 if cl[i] < lb[i] else -1
+        st[i] = lb[i] if direction[i] == -1 else ub[i]
+
+    bear = (direction == 1).astype(int)
+    return pd.Series(bear, index=close.index)
 
 
 def _find_support(df: pd.DataFrame, lookback: int = 20) -> float:
@@ -121,6 +213,16 @@ class WalkForwardBacktester:
         # XU100 close serisi (benchmark)
         xu_close = xu_df['Close'] if 'Close' in xu_df.columns else xu_df['close']
         self.xu_close = xu_close
+
+        # Sektör haritası (cache'li). Başarısızsa boş dict → sektör cap pas geçilir.
+        self.sector_map = {}
+        try:
+            from alpha.config import SECTOR_CAP_ENABLED
+            if SECTOR_CAP_ENABLED:
+                from markets.bist.data import get_bist_sector_mapping
+                self.sector_map = get_bist_sector_mapping() or {}
+        except Exception as e:
+            print(f"  [!] Sektör haritası yüklenemedi: {e}")
 
     def _get_rebalance_dates(self) -> list:
         """Rebalance tarihlerini üret."""
@@ -213,6 +315,39 @@ class WalkForwardBacktester:
         from core.indicators import ema as _ema
         xu_ema = _ema(self.xu_close, REGIME_EMA_LENGTH)
 
+        # ── KAMA weekly regime flag (close < kama = bear) ──
+        xu_bear_flag = None
+        if REGIME_KAMA_ENABLED:
+            _w = self.xu_close.resample('W-FRI').last().dropna()
+            _chg = (_w - _w.shift(KAMA_ER_PERIOD)).abs()
+            _vol = _w.diff().abs().rolling(KAMA_ER_PERIOD).sum()
+            _er = (_chg / _vol).replace([np.inf, -np.inf], 0).fillna(0)
+            _fast_sc = 2.0 / (KAMA_FAST + 1)
+            _slow_sc = 2.0 / (KAMA_SLOW + 1)
+            _sc = (_er * (_fast_sc - _slow_sc) + _slow_sc) ** 2
+            _k = _w.copy().astype(float)
+            _k.iloc[:KAMA_ER_PERIOD] = np.nan
+            _k.iloc[KAMA_ER_PERIOD] = _w.iloc[KAMA_ER_PERIOD]
+            for _i in range(KAMA_ER_PERIOD + 1, len(_w)):
+                _prev = _k.iloc[_i - 1]
+                if pd.isna(_prev):
+                    _k.iloc[_i] = _w.iloc[_i]
+                else:
+                    _k.iloc[_i] = _prev + _sc.iloc[_i] * (_w.iloc[_i] - _prev)
+            _bear_w = (_w < _k).astype(int)
+            xu_bear_flag = _bear_w.reindex(self.xu_close.index, method='ffill').fillna(0).astype(int)
+
+        # ── Adaptive SuperTrend (K-means vol clustering) regime flag ──
+        if REGIME_AST_ENABLED and xu_bear_flag is None:
+            _h = self.xu_df['High'] if 'High' in self.xu_df.columns else self.xu_df['high']
+            _l = self.xu_df['Low'] if 'Low' in self.xu_df.columns else self.xu_df['low']
+            xu_bear_flag = _adaptive_supertrend_bear_flag(
+                _h, _l, self.xu_close,
+                atr_len=AST_ATR_LEN, factor=AST_FACTOR, training=AST_TRAINING,
+                hi_init=AST_HI_INIT, mid_init=AST_MID_INIT, lo_init=AST_LO_INIT,
+            )
+            print(f"  [AST] bear days: {int(xu_bear_flag.sum())}/{len(xu_bear_flag)} ({xu_bear_flag.mean()*100:.0f}%)")
+
         xu_start = None
         for _, date in rebalance_schedule:
             if date in self.xu_close.index:
@@ -223,9 +358,23 @@ class WalkForwardBacktester:
 
         first_rb_day_idx = rebalance_schedule[0][0]
         last_batch_date = None  # son batch açılış tarihi
+        bull_streak = 0
+        REGIME_REENTRY_CONFIRM_DAYS = 5  # bear→bull flip'i teyit gün sayısı
 
         for day_i in range(first_rb_day_idx, len(self.trading_days)):
             date = self.trading_days[day_i]
+
+            # ── Günlük rejim tespiti ──
+            curr_regime = 'bull'
+            if xu_bear_flag is not None and date in xu_bear_flag.index:
+                if int(xu_bear_flag.loc[date]) == 1:
+                    curr_regime = 'bear'
+            elif date in xu_ema.index and date in self.xu_close.index:
+                _xu_now = float(self.xu_close.loc[date])
+                _xu_ema_now = float(xu_ema.loc[date])
+                if not np.isnan(_xu_ema_now) and _xu_now < _xu_ema_now:
+                    curr_regime = 'bear'
+            bull_streak = bull_streak + 1 if curr_regime == 'bull' else 0
 
             # ── Yeni batch açılacak mı? ──
             open_new_batch = False
@@ -242,14 +391,24 @@ class WalkForwardBacktester:
                 # Klasik: rebalance takvimindeyse
                 open_new_batch = any(d == date for _, d in rebalance_schedule)
 
+            # ── Rejim flip re-entry: N gün sürekli bull + cash'teysek hemen aç ──
+            if (not open_new_batch and len(positions) == 0
+                    and bull_streak == REGIME_REENTRY_CONFIRM_DAYS):
+                open_new_batch = True
+
             if open_new_batch and day_i >= first_rb_day_idx:
                 # Rejim filtresi
                 regime_weight = REGIME_BULL_WEIGHT
-                if date in xu_ema.index and date in self.xu_close.index:
+                _is_bear = False
+                if xu_bear_flag is not None and date in xu_bear_flag.index:
+                    _is_bear = int(xu_bear_flag.loc[date]) == 1
+                elif date in xu_ema.index and date in self.xu_close.index:
                     xu_now = float(self.xu_close.loc[date])
                     xu_ema_now = float(xu_ema.loc[date])
                     if not np.isnan(xu_ema_now) and xu_now < xu_ema_now:
-                        regime_weight = REGIME_BEAR_WEIGHT
+                        _is_bear = True
+                if _is_bear:
+                    regime_weight = REGIME_BEAR_WEIGHT
 
                 # Bear rejimde pozisyon açma + mevcutları kapat
                 if regime_weight <= 0:
@@ -323,13 +482,30 @@ class WalkForwardBacktester:
                         if confirmation['score'] < CONFIRMATION_MIN_SCORE:
                             continue
                         # Uzama filtresi
-                        from alpha.config import MAX_RALLY_PCT, MAX_RALLY_DAYS
+                        from alpha.config import MAX_RALLY_PCT, MAX_RALLY_DAYS, EMA50_DIST_MAX
                         if MAX_RALLY_PCT > 0:
                             _df = truncated[ticker]
                             if len(_df) >= MAX_RALLY_DAYS:
                                 _rally = (_df['Close'].iloc[-1] / _df['Close'].iloc[-MAX_RALLY_DAYS] - 1) * 100
                                 if _rally >= MAX_RALLY_PCT:
                                     continue
+                        if EMA50_DIST_MAX > 0:
+                            _df = truncated[ticker]
+                            if len(_df) >= 50:
+                                _ema50 = _df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+                                if _ema50 > 0 and (_df['Close'].iloc[-1] / _ema50) > EMA50_DIST_MAX:
+                                    continue
+                        # Extension filter (stop-risk veto) — K=2/4 composite trigger
+                        from alpha.config import (EXT_FILTER_ENABLED, EXT_FILTER_MIN_TRIGGERS,
+                            EXT_20D_HIGH_PCT, EXT_EMA21_DIST_PCT, EXT_MFI_14, EXT_BB_PCTB)
+                        if EXT_FILTER_ENABLED:
+                            ext = 0
+                            if 'close_vs_20d_high_pct' in row and pd.notna(row['close_vs_20d_high_pct']) and row['close_vs_20d_high_pct'] > EXT_20D_HIGH_PCT: ext += 1
+                            if 'ema21_dist_pct' in row and pd.notna(row['ema21_dist_pct']) and row['ema21_dist_pct'] > EXT_EMA21_DIST_PCT: ext += 1
+                            if 'mfi_14' in row and pd.notna(row['mfi_14']) and row['mfi_14'] > EXT_MFI_14: ext += 1
+                            if 'bb_pctb' in row and pd.notna(row['bb_pctb']) and row['bb_pctb'] > EXT_BB_PCTB: ext += 1
+                            if ext >= EXT_FILTER_MIN_TRIGGERS:
+                                continue
                         ml_avg = ml_1g if ml_3g is None else (ml_1g + ml_3g) / 2
                         composite = ml_avg * 100 * ML_COMPOSITE_WEIGHT + confirmation['score'] * 10 * (1 - ML_COMPOSITE_WEIGHT)
                         ml_candidates.append({
@@ -352,6 +528,122 @@ class WalkForwardBacktester:
                         w = 1.0 / len(top_n)
                         target_weights = {c['ticker']: w for c in top_n}
                         sharpe = 0.0
+                    elif PORTFOLIO_METHOD == "score" and len(passed) >= 3:
+                        from alpha.config import (
+                            WEIGHT_MIN, WEIGHT_MAX, SCORE_POWER,
+                            VOL_ADJUSTED_SIZING, VOL_ADJUST_FLOOR_PCT,
+                            CORR_FILTER_ENABLED, CORR_MAX_PAIR, CORR_LOOKBACK_DAYS,
+                            SECTOR_CAP_ENABLED, SECTOR_MAX_WEIGHT, SECTOR_MAX_NAMES,
+                            STRESS_CORR_ENABLED, STRESS_CORR_MAX_PAIR,
+                            STRESS_CORR_XU_THRESHOLD, STRESS_CORR_MIN_DAYS,
+                        )
+                        _limit = min(TARGET_PORTFOLIO_SIZE, MAX_STOCKS)
+                        _sec_enabled = SECTOR_CAP_ENABLED and bool(self.sector_map)
+                        _sec_counts = {}
+                        # Stress-corr: XU100 red-day mask (bu rebalance'a özel, lookback penceresi)
+                        _xu_red_dates = None
+                        if STRESS_CORR_ENABLED:
+                            try:
+                                _xu_slice = self.xu_close.loc[:date].tail(CORR_LOOKBACK_DAYS + 1)
+                                _xu_ret = _xu_slice.pct_change().dropna()
+                                _red = _xu_ret[_xu_ret < STRESS_CORR_XU_THRESHOLD].index
+                                if len(_red) >= STRESS_CORR_MIN_DAYS:
+                                    _xu_red_dates = _red
+                            except Exception:
+                                _xu_red_dates = None
+                        _stress_active = _xu_red_dates is not None
+                        _red_ret_cache = {}
+                        if CORR_FILTER_ENABLED or _sec_enabled or _stress_active:
+                            top_n = []
+                            _ret_cache = {}
+                            for _c in passed:
+                                if len(top_n) >= _limit:
+                                    break
+                                _tck = _c['ticker']
+                                if _sec_enabled:
+                                    _sec = self.sector_map.get(_tck, 'Unknown')
+                                    if _sec_counts.get(_sec, 0) >= SECTOR_MAX_NAMES:
+                                        continue
+                                _df = truncated.get(_tck)
+                                _ok = True
+                                if (CORR_FILTER_ENABLED or _stress_active):
+                                    if _df is None or len(_df) < CORR_LOOKBACK_DAYS:
+                                        top_n.append(_c)
+                                        if _sec_enabled:
+                                            _sec_counts[_sec] = _sec_counts.get(_sec, 0) + 1
+                                        continue
+                                    if _tck not in _ret_cache:
+                                        _ret_cache[_tck] = _df['Close'].pct_change().tail(CORR_LOOKBACK_DAYS)
+                                    _r_t = _ret_cache[_tck]
+                                    if _stress_active and _tck not in _red_ret_cache:
+                                        _red_ret_cache[_tck] = _r_t.reindex(_xu_red_dates)
+                                    for _p in top_n:
+                                        _pt = _p['ticker']
+                                        if _pt not in _ret_cache:
+                                            _dfp = truncated.get(_pt)
+                                            if _dfp is None:
+                                                continue
+                                            _ret_cache[_pt] = _dfp['Close'].pct_change().tail(CORR_LOOKBACK_DAYS)
+                                        if CORR_FILTER_ENABLED:
+                                            _corr = _r_t.corr(_ret_cache[_pt])
+                                            if not pd.isna(_corr) and abs(_corr) > CORR_MAX_PAIR:
+                                                _ok = False
+                                                break
+                                        if _stress_active:
+                                            if _pt not in _red_ret_cache:
+                                                _red_ret_cache[_pt] = _ret_cache[_pt].reindex(_xu_red_dates)
+                                            _sc = _red_ret_cache[_tck].corr(_red_ret_cache[_pt])
+                                            if not pd.isna(_sc) and abs(_sc) > STRESS_CORR_MAX_PAIR:
+                                                _ok = False
+                                                break
+                                    if not _ok:
+                                        continue
+                                top_n.append(_c)
+                                if _sec_enabled:
+                                    _sec_counts[_sec] = _sec_counts.get(_sec, 0) + 1
+                        else:
+                            top_n = passed[:_limit]
+                        scores = np.array([c['composite_score'] for c in top_n], dtype=float)
+                        scores = np.clip(scores, 1.0, None)
+                        raw = scores ** SCORE_POWER
+                        if VOL_ADJUSTED_SIZING:
+                            atr_pcts = []
+                            for c in top_n:
+                                _df = truncated[c['ticker']]
+                                _atr_s = calc_atr(_df)
+                                _close = float(_df['Close'].iloc[-1]) if len(_df) else 0.0
+                                if len(_atr_s) and not pd.isna(_atr_s.iloc[-1]) and _close > 0:
+                                    atr_pcts.append(float(_atr_s.iloc[-1]) / _close * 100)
+                                else:
+                                    atr_pcts.append(3.0)
+                            atr_pcts = np.clip(np.array(atr_pcts, dtype=float), VOL_ADJUST_FLOOR_PCT, None)
+                            raw = raw / atr_pcts
+                        raw = raw / raw.sum()
+                        # Cap'le, sonra re-normalize (iteratif clamp)
+                        for _ in range(5):
+                            raw = np.clip(raw, WEIGHT_MIN, WEIGHT_MAX)
+                            s = raw.sum()
+                            if abs(s - 1.0) < 1e-6:
+                                break
+                            raw = raw / s
+                        # Sektör ağırlık cap: cap'i aşan sektörleri oransal küçült.
+                        if _sec_enabled and SECTOR_MAX_WEIGHT < 1.0:
+                            _sec_ids = [self.sector_map.get(c['ticker'], 'Unknown') for c in top_n]
+                            for _ in range(8):
+                                _tot = {}
+                                for s_, w_ in zip(_sec_ids, raw):
+                                    _tot[s_] = _tot.get(s_, 0.0) + float(w_)
+                                _over = {s_: t_ for s_, t_ in _tot.items() if t_ > SECTOR_MAX_WEIGHT + 1e-9}
+                                if not _over:
+                                    break
+                                for i, s_ in enumerate(_sec_ids):
+                                    if s_ in _over:
+                                        raw[i] *= SECTOR_MAX_WEIGHT / _over[s_]
+                                # WEIGHT_MIN floor'ı koru, sonra re-normalize
+                                raw = np.clip(raw, WEIGHT_MIN, WEIGHT_MAX)
+                                raw = raw / raw.sum()
+                        target_weights = {c['ticker']: float(w) for c, w in zip(top_n, raw)}
+                        sharpe = 0.0
                     else:
                         portfolio = build_portfolio(truncated, passed, as_of_idx=-1)
                         target_weights = portfolio.get('weights', {})
@@ -369,10 +661,43 @@ class WalkForwardBacktester:
 
                     # Yeni pozisyonlar aç (mevcut pozisyonlara dokunma)
                     old_tickers = list(positions.keys())
+                    from alpha.config import EXECUTION_MODE, GAP_SKIP_PCT, LIMIT_ENTRY_PCT
                     for t, w in target_weights.items():
                         if t in positions:
                             continue
-                        entry_price = self._get_price(t, date) * (1 + SLIPPAGE_PCT)
+                        signal_close = self._get_price(t, date)
+                        if np.isnan(signal_close) or signal_close <= 0:
+                            continue
+                        actual_entry_date = date
+                        if EXECUTION_MODE == "close":
+                            entry_price = signal_close * (1 + SLIPPAGE_PCT)
+                        else:
+                            df_t_exec = self.all_data.get(t)
+                            if df_t_exec is None:
+                                continue
+                            nxt_idx = df_t_exec.index.searchsorted(date, side='right')
+                            if nxt_idx >= len(df_t_exec):
+                                continue
+                            nxt_date = df_t_exec.index[nxt_idx]
+                            nxt_open = float(df_t_exec.loc[nxt_date, 'Open'])
+                            nxt_low = float(df_t_exec.loc[nxt_date, 'Low'])
+                            if np.isnan(nxt_open) or nxt_open <= 0:
+                                continue
+                            if EXECUTION_MODE == "next_open":
+                                gap = (nxt_open / signal_close) - 1
+                                if gap >= GAP_SKIP_PCT:
+                                    continue
+                                entry_price = nxt_open * (1 + SLIPPAGE_PCT)
+                            elif EXECUTION_MODE == "limit":
+                                limit_px = signal_close * (1 + LIMIT_ENTRY_PCT)
+                                if nxt_open >= limit_px:
+                                    continue
+                                if nxt_low > limit_px:
+                                    continue
+                                entry_price = limit_px * (1 + SLIPPAGE_PCT)
+                            else:
+                                entry_price = signal_close * (1 + SLIPPAGE_PCT)
+                            actual_entry_date = nxt_date
                         if np.isnan(entry_price) or entry_price <= 0:
                             continue
                         # ATR stop
@@ -383,7 +708,16 @@ class WalkForwardBacktester:
                             if len(sub_t) >= 20:
                                 _atr = calc_atr(sub_t)
                                 atr_val = float(_atr.iloc[-1]) if not pd.isna(_atr.iloc[-1]) else entry_price * 0.05
-                            stop = entry_price - POSITION_STOP_ATR_MULT * atr_val
+                            # Dinamik stop: yüksek ATR% → daha sıkı çarpan
+                            from alpha.config import (
+                                DYNAMIC_STOP_ENABLED, DYNAMIC_STOP_ATR_PCT_HI, DYNAMIC_STOP_MULT_HI,
+                            )
+                            mult = POSITION_STOP_ATR_MULT
+                            if DYNAMIC_STOP_ENABLED and entry_price > 0:
+                                atr_pct = atr_val / entry_price * 100
+                                if atr_pct > DYNAMIC_STOP_ATR_PCT_HI:
+                                    mult = DYNAMIC_STOP_MULT_HI
+                            stop = entry_price - mult * atr_val
                         elif POSITION_STOP_PCT > 0:
                             stop = entry_price * (1 - POSITION_STOP_PCT)
                             atr_val = entry_price * POSITION_STOP_PCT
@@ -395,9 +729,10 @@ class WalkForwardBacktester:
                         if total_cost > cash:
                             continue
                         positions[t] = Position(
-                            ticker=t, entry_date=date, entry_price=entry_price,
+                            ticker=t, entry_date=actual_entry_date, entry_price=entry_price,
                             weight=w, shares=target_value / entry_price,
                             stop_price=stop, atr_at_entry=atr_val,
+                            stop_mult=mult if POSITION_STOP_ATR_MULT > 0 else POSITION_STOP_ATR_MULT,
                             highest_since_entry=entry_price,
                         )
                         cash -= total_cost
@@ -413,7 +748,8 @@ class WalkForwardBacktester:
                     last_batch_date = date
 
             # ── Günlük mark-to-market + çok aşamalı çıkış ──
-            equity = cash
+            # NOT: equity sonradan hesaplanıyor (cash exit'lerle güncelleniyor).
+            positions_value = 0.0
             stopped_out = []
 
             for t, pos in positions.items():
@@ -422,7 +758,7 @@ class WalkForwardBacktester:
                 close_px = self._get_price(t, date)
 
                 if np.isnan(close_px):
-                    equity += pos.shares * pos.entry_price
+                    positions_value += pos.shares * pos.entry_price
                     continue
 
                 # Güncel ATR hesapla (dinamik trailing için)
@@ -441,8 +777,17 @@ class WalkForwardBacktester:
 
                 hold_days = (date - pos.entry_date).days
 
-                # ── 1) Emergency stop: Entry - 2×ATR → tüm pozisyon sat ──
-                emergency_stop = pos.entry_price - POSITION_STOP_ATR_MULT * pos.atr_at_entry
+                # ── 1) Emergency stop: Entry - mult×ATR → tüm pozisyon sat ──
+                # Breakeven shift: +N·R kâra ulaşıldıysa stop entry'ye çekilir
+                from alpha.config import BE_SHIFT_ENABLED, BE_SHIFT_R
+                if BE_SHIFT_ENABLED and not pos.be_shifted and pos.atr_at_entry > 0:
+                    R_dist = pos.stop_mult * pos.atr_at_entry
+                    be_trigger = pos.entry_price + BE_SHIFT_R * R_dist
+                    if not np.isnan(high) and high >= be_trigger:
+                        pos.be_shifted = True
+                emergency_stop = pos.entry_price - pos.stop_mult * pos.atr_at_entry
+                if pos.be_shifted:
+                    emergency_stop = max(emergency_stop, pos.entry_price)
                 if not np.isnan(low) and low <= emergency_stop:
                     exit_price = emergency_stop * (1 - SLIPPAGE_PCT)
                     pnl = (exit_price / pos.entry_price - 1) * 100 - COMMISSION_PCT * 200
@@ -516,10 +861,13 @@ class WalkForwardBacktester:
                 if not np.isnan(low):
                     pos.prev_day_low = low
 
-                equity += pos.shares * close_px
+                positions_value += pos.shares * close_px
 
             for t in stopped_out:
                 del positions[t]
+
+            # Equity = güncellenmiş cash + kalan pozisyonların değeri
+            equity = cash + positions_value
 
             # Equity tracking
             if equity > peak_equity:
@@ -543,6 +891,29 @@ class WalkForwardBacktester:
                     cash += pos.shares * exit_px * (1 - COMMISSION_PCT)
                 positions.clear()
                 equity = cash
+
+            # Daily loss limit — tek gün kaybı bu eşikten büyükse tüm pozisyonları kapat
+            from alpha.config import DAILY_LOSS_LIMIT
+            if DAILY_LOSS_LIMIT > -99.0 and positions and len(equity_curve) > 0:
+                _prev_eq = equity_curve[-1]['equity']
+                if _prev_eq > 0:
+                    _daily_chg = (equity / _prev_eq - 1) * 100
+                    if _daily_chg <= DAILY_LOSS_LIMIT:
+                        for t, pos in list(positions.items()):
+                            exit_px = self._get_price(t, date) * (1 - SLIPPAGE_PCT)
+                            if np.isnan(exit_px):
+                                exit_px = pos.entry_price
+                            pnl = (exit_px / pos.entry_price - 1) * 100 - COMMISSION_PCT * 200
+                            hold_days = (date - pos.entry_date).days
+                            trades.append(TradeRecord(
+                                ticker=t, entry_date=pos.entry_date, exit_date=date,
+                                entry_price=pos.entry_price, exit_price=exit_px,
+                                weight=pos.weight, pnl_pct=round(pnl, 2),
+                                exit_reason='DAILY_LOSS', hold_days=hold_days,
+                            ))
+                            cash += pos.shares * exit_px * (1 - COMMISSION_PCT)
+                        positions.clear()
+                        equity = cash
 
             xu_val = float(self.xu_close.loc[date]) if date in self.xu_close.index else np.nan
             xu_norm = (xu_val / xu_start * INITIAL_CAPITAL) if (xu_start and not np.isnan(xu_val)) else np.nan
