@@ -1,14 +1,18 @@
-"""Layered daily-bar fetcher: fintables -> matriks -> yfinance.
+"""Layered daily-bar fetcher: fintables -> extfeed -> matriks -> yfinance.
 
 Daily counterpart of ``nyxexpansion.intraday.fetch_layered``. Used by every
 GitHub Actions BIST scan that needs daily OHLCV. Tier order (per ticker):
 
-1. ``fintables_d``  — batch SQL via Fintables MCP HTTP (auto-paged under the
-                      300-row cap). No per-ticker rate limit.
-2. ``matriks_d``    — per-ticker historicalData (rawBars=True). Live, but
-                      rate-limited.
-3. ``yfinance_d``   — last resort batch download. Free, but flaky for the
-                      newer BIST listings.
+1. ``fintables_d`` — batch SQL via Fintables MCP HTTP (auto-paged under the
+                     300-row cap). No per-ticker rate limit; serves full
+                     history. Slow on 6-year × full-universe bootstraps but
+                     covers anything the cheaper tiers miss.
+2. ``extfeed_d``   — TradingView WS daily bars (cookie-auth). One call per
+                     ticker covers ~5000 bars. Fast and complete.
+3. ``matriks_d``   — per-ticker historicalData. Live but server caps allBars
+                     at 60 daily rows; only useful for short patches.
+4. ``yfinance_d``  — last resort batch download. Free, but flaky for the
+                     newer BIST listings.
 
 Each row carries a ``bars_source`` tag so downstream code can surface which
 tier served each ticker. Callers who want a flat pandas frame can use the
@@ -38,6 +42,7 @@ from nyxexpansion.daily.fetchers import (  # noqa: E402
     FetchResult,
 )
 from nyxexpansion.daily.fetchers import fintables as fin  # noqa: E402
+from nyxexpansion.daily.fetchers import extfeed_d as ext  # noqa: E402
 from nyxexpansion.daily.fetchers import matriks as mat  # noqa: E402
 from nyxexpansion.daily.fetchers import yfinance_d as yfd  # noqa: E402
 
@@ -48,11 +53,12 @@ def fetch_daily_layered(
     end_date: date | datetime | pd.Timestamp,
     *,
     skip_fintables: bool = False,
+    skip_extfeed: bool = False,
     skip_matriks: bool = False,
     skip_yfinance: bool = False,
     quiet: bool = False,
 ) -> dict[str, FetchResult]:
-    """Run the three tiers in sequence; return per-ticker outcome map."""
+    """Run the four tiers in sequence; return per-ticker outcome map."""
     s = pd.Timestamp(start_date).date()
     e = pd.Timestamp(end_date).date()
     pending = list(dict.fromkeys(tickers))  # dedupe, preserve order
@@ -85,14 +91,36 @@ def fetch_daily_layered(
                 if tk in pending:
                     pending.remove(tk)
             _log(f"  [layered-d] fintables served {len(served)}/{len(fin_results)}; "
+                 f"{len(pending)} → extfeed")
+
+    # Tier 2 — Extfeed (TradingView WS daily)
+    if pending and not skip_extfeed:
+        if not (os.environ.get("INTRADAY_SID") and os.environ.get("INTRADAY_SIGN")):
+            _log("  [layered-d] INTRADAY_SID/SIGN unset — skipping extfeed tier")
+        else:
+            _log(f"  [layered-d] tier 2 extfeed ({len(pending)} ticker, {s}..{e})")
+            try:
+                ext_results = ext.fetch_per_ticker(pending, s, e)
+            except Exception as exc:
+                _log(f"  [layered-d] extfeed tier failed: {type(exc).__name__}: {exc}")
+                ext_results = {}
+            served = []
+            for tk, res in ext_results.items():
+                if res.note == "ok":
+                    results[tk] = res
+                    served.append(tk)
+            for tk in served:
+                if tk in pending:
+                    pending.remove(tk)
+            _log(f"  [layered-d] extfeed served {len(served)}/{len(ext_results)}; "
                  f"{len(pending)} → matriks")
 
-    # Tier 2 — Matriks
+    # Tier 3 — Matriks
     if pending and not skip_matriks:
         if not os.environ.get("MATRIKS_API_KEY"):
             _log("  [layered-d] MATRIKS_API_KEY unset — skipping matriks tier")
         else:
-            _log(f"  [layered-d] tier 2 matriks ({len(pending)} ticker)")
+            _log(f"  [layered-d] tier 3 matriks ({len(pending)} ticker)")
             try:
                 mat_results = mat.fetch_per_ticker(pending, s, e)
             except Exception as exc:
@@ -109,9 +137,9 @@ def fetch_daily_layered(
             _log(f"  [layered-d] matriks served {len(served)}/{len(mat_results)}; "
                  f"{len(pending)} → yfinance")
 
-    # Tier 3 — yfinance
+    # Tier 4 — yfinance
     if pending and not skip_yfinance:
-        _log(f"  [layered-d] tier 3 yfinance ({len(pending)} ticker)")
+        _log(f"  [layered-d] tier 4 yfinance ({len(pending)} ticker)")
         try:
             yf_results = yfd.fetch_per_ticker(pending, s, e)
         except Exception as exc:
@@ -157,6 +185,7 @@ def pull_panel(
     end_date: date | datetime | pd.Timestamp,
     *,
     skip_fintables: bool = False,
+    skip_extfeed: bool = False,
     skip_matriks: bool = False,
     skip_yfinance: bool = False,
     quiet: bool = False,
@@ -170,13 +199,14 @@ def pull_panel(
     results = fetch_daily_layered(
         tickers, start_date, end_date,
         skip_fintables=skip_fintables,
+        skip_extfeed=skip_extfeed,
         skip_matriks=skip_matriks,
         skip_yfinance=skip_yfinance,
         quiet=quiet,
     )
     raw = results_to_frame(results)
 
-    counts = {"fintables_d": 0, "matriks_d": 0, "yfinance_d": 0, "missing": 0}
+    counts = {"fintables_d": 0, "extfeed_d": 0, "matriks_d": 0, "yfinance_d": 0, "missing": 0}
     notes: dict[str, int] = {}
     for tk, res in results.items():
         if res.bars_source:
@@ -203,7 +233,7 @@ def pull_panel(
 
 
 def _summarize(results: dict[str, FetchResult]) -> dict:
-    counts = {"fintables_d": 0, "matriks_d": 0, "yfinance_d": 0, "missing": 0}
+    counts = {"fintables_d": 0, "extfeed_d": 0, "matriks_d": 0, "yfinance_d": 0, "missing": 0}
     notes: dict[str, int] = {}
     rows = 0
     for tk, res in results.items():
@@ -222,6 +252,7 @@ def main() -> int:
     ap.add_argument("--start", required=True, help="start date YYYY-MM-DD (inclusive, Istanbul)")
     ap.add_argument("--end", required=True, help="end date YYYY-MM-DD (inclusive, Istanbul)")
     ap.add_argument("--skip-fintables", action="store_true")
+    ap.add_argument("--skip-extfeed", action="store_true")
     ap.add_argument("--skip-matriks", action="store_true")
     ap.add_argument("--skip-yfinance", action="store_true")
     args = ap.parse_args()
@@ -240,6 +271,7 @@ def main() -> int:
     results = fetch_daily_layered(
         tickers, args.start, args.end,
         skip_fintables=args.skip_fintables,
+        skip_extfeed=args.skip_extfeed,
         skip_matriks=args.skip_matriks,
         skip_yfinance=args.skip_yfinance,
     )

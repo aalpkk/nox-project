@@ -40,7 +40,10 @@ from nyxexpansion.intraday.fetchers.fintables import (
 DAILY_TABLE = "mumlar_gunluk_gh"
 ROW_CAP = 300                # MCP veri_sorgula hard cap
 SAFE_BATCH_ROWS = 280        # leave headroom for boundary noise
-MAX_CALLS_PER_PULL = 80      # circuit-break: skip fintables tier if we'd need more
+# Bootstrap of full BIST × 6y needs ~3000 calls. The circuit breaker only
+# protects against accidental misuse (e.g. typo'd date range); a full panel
+# rebuild is legitimate. Set high enough not to cap real workloads.
+MAX_CALLS_PER_PULL = int(os.environ.get("FINTABLES_D_MAX_CALLS", "5000"))
 
 
 def _zaman_utc_to_istanbul_date(zaman_utc_str: str) -> date:

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal
 
-DailyBarsSource = Literal["fintables_d", "matriks_d", "yfinance_d"]
+DailyBarsSource = Literal["fintables_d", "extfeed_d", "matriks_d", "yfinance_d"]
 
 DAILY_BAR_COLUMNS: tuple[str, ...] = (
     "ticker",
