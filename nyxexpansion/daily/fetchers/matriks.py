@@ -1,8 +1,10 @@
-"""Matriks daily fetcher — historicalData with rawBars=True (no interval).
+"""Matriks daily fetcher — historicalData with rawBars=True, interval=daily.
 
-Reuses ``agent.matriks_client.MatriksClient``. Default Matriks granularity
-on ``historicalData`` (no ``interval`` arg) is daily bars. One call per
-ticker covers the full date range; rate limit handled by the client.
+Reuses ``agent.matriks_client.MatriksClient``. Without an explicit
+``interval``, Matriks silently returns a small (~3 month) recent
+window; the documented enum is ``1min|5min|15min|1hour|daily|
+weekly|monthly`` so we always pin ``daily``. One call per ticker
+covers the full date range; rate limit handled by the client.
 """
 from __future__ import annotations
 
@@ -65,6 +67,7 @@ def _fetch_one(client, ticker: str, start_date: date, end_date: date) -> list[di
         "symbol": ticker,
         "startDate": s,
         "endDate": e,
+        "interval": "daily",
         "rawBars": True,
     })
     if not isinstance(resp, dict):
