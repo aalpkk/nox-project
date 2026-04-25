@@ -14,3 +14,4 @@ scipy>=1.11
 pyarrow>=14.0
 PyPDF2>=3.0
 reportlab>=4.0
+websockets>=12

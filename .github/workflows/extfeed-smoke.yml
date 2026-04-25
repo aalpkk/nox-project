@@ -1,0 +1,38 @@
+name: extfeed smoke
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Symbol (e.g. BIST:THYAO)'
+        required: false
+        default: 'BIST:THYAO'
+      timeframe:
+        description: 'Timeframe (1, 5, 15, 60, 240, D)'
+        required: false
+        default: '15'
+      n_bars:
+        description: 'Number of bars'
+        required: false
+        default: '50'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Run smoke test
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          python tools/extfeed_smoke.py \
+            "${{ github.event.inputs.symbol }}" \
+            "${{ github.event.inputs.timeframe }}" \
+            "${{ github.event.inputs.n_bars }}"
