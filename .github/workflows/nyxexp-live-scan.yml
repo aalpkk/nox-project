@@ -1,20 +1,20 @@
-name: nyxexpansion Daily Scan (close — EOD)
+name: nyxexpansion Live Scan (17:00 — intraday truncated)
 on:
   schedule:
-    - cron: '5 15 * * 1-5'   # 18:05 TR — post-close canonical scan (yfinance EOD)
+    - cron: '0 14 * * 1-5'   # 17:00 TR — pre-close live scan, intraday-truncated trigger panel
   workflow_dispatch:
     inputs:
       date:
-        description: 'Target date (YYYY-MM-DD), boş = dataset max'
+        description: 'Target date (YYYY-MM-DD), boş = bugün TR'
         required: false
         default: ''
 
 concurrency:
-  group: nyxexp-daily-scan-close
+  group: nyxexp-daily-scan-live
   cancel-in-progress: false
 
 jobs:
-  scan:
+  scan_live:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -60,12 +60,13 @@ jobs:
               tg_token = os.environ.get("TG_BOT_TOKEN", "")
               chat_id = os.environ.get("TG_CHAT_ID", "")
               msg = (
-                  "⚠️ <b>Fintables MCP token EXPIRED / UNAUTHORIZED</b>\n\n"
+                  "⚠️ <b>Fintables MCP token EXPIRED / UNAUTHORIZED (live)</b>\n\n"
                   f"Status: {r.status_code}\n\n"
+                  "17:00 live scan tier 1 (Fintables) atlandı. "
                   "Mac'te Claude Code → Fintables MCP'yi yeniden auth'la, "
                   "yeni accessToken'ı keychain'den al, "
                   "<code>gh secret set FINTABLES_MCP_TOKEN</code> ile güncelle. "
-                  "Bu turda Fintables tier atlandı, Matriks fallback devrede."
+                  "Bu turda Matriks fallback devrede."
               )
               if tg_token and chat_id:
                   requests.post(
@@ -77,15 +78,22 @@ jobs:
                   print(msg)
           PYEOF
 
-      - name: Phase 0 — rebuild dataset delta (yfinance EOD → master → v4 append)
+      - name: Phase 0' — intraday-truncated dataset delta (4-tier fetch + 17:00 bar + trigger)
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
         run: |
           set -o pipefail
           DATE_ARG=""
           if [ -n "${{ github.event.inputs.date }}" ]; then
             DATE_ARG="--date ${{ github.event.inputs.date }}"
           fi
-          python -m nyxexpansion.tools.rebuild_dataset_delta \
-            $DATE_ARG 2>&1 | tee rebuild_delta_output.txt
+          python -m nyxexpansion.tools.rebuild_dataset_delta_intraday \
+            $DATE_ARG 2>&1 | tee rebuild_intraday_output.txt
 
       - name: Phase 1 — scan_latest (produces candidate parquet)
         run: |
@@ -98,31 +106,7 @@ jobs:
             --dataset output/nyxexp_dataset_v4.parquet \
             --top 30 $DATE_ARG 2>&1 | tee scan_latest_output.txt
 
-      - name: Phase 2 — fetch layered intraday (Fintables → extfeed → Matriks → yfinance)
-        env:
-          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
-          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
-          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
-          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
-          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
-          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
-        run: |
-          set -o pipefail
-          if [ -n "${{ github.event.inputs.date }}" ]; then
-            TARGET="${{ github.event.inputs.date }}"
-          else
-            TARGET=$(TZ=Europe/Istanbul date +%Y-%m-%d)
-          fi
-          SCAN_PARQUET="output/nyxexp_scan_$(echo $TARGET | tr -d '-').parquet"
-          if [ ! -f "$SCAN_PARQUET" ]; then
-            echo "  ⚠ scan parquet $SCAN_PARQUET not found — fetch_layered skipped"
-            exit 0
-          fi
-          python -m nyxexpansion.intraday.fetch_layered \
-            --date "$TARGET" --tickers-from "$SCAN_PARQUET" \
-            2>&1 | tee fetch_layered_output.txt
-
-      - name: Phase 3 — retention stage + Markowitz + HTML
+      - name: Phase 3 — retention stage + Markowitz + HTML (live suffix)
         run: |
           set -o pipefail
           DATE_ARG=""
@@ -134,9 +118,10 @@ jobs:
             --top 30 \
             --mk-universe-top 15 \
             --skip-scan \
-            $DATE_ARG 2>&1 | tee nyxexp_scan_output.txt
+            --out-suffix live \
+            $DATE_ARG 2>&1 | tee nyxexp_scan_live_output.txt
 
-      - name: Push HTML to GitHub Pages
+      - name: Push live HTML to GitHub Pages
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -151,14 +136,14 @@ jobs:
           sys.path.insert(0, os.getcwd())
           try:
               from core.reports import push_html_to_github
-              html = pathlib.Path("output/nyxexp_scan_latest.html").read_text(encoding="utf-8")
-              url = push_html_to_github(html, "nyxexp_scan.html", "latest")
+              html = pathlib.Path("output/nyxexp_scan_live_latest.html").read_text(encoding="utf-8")
+              url = push_html_to_github(html, "nyxexp_scan_live.html", "live-latest")
               print(f"  ✓ published: {url}")
           except Exception as e:
               print(f"  ⚠ push failed: {e}")
           PYEOF
 
-      - name: Telegram notification
+      - name: Telegram notification (live)
         if: always()
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -168,7 +153,7 @@ jobs:
           import os, re, requests
 
           try:
-              with open("nyxexp_scan_output.txt") as f:
+              with open("nyxexp_scan_live_output.txt") as f:
                   raw = f.read()
           except FileNotFoundError:
               raw = ""
@@ -195,13 +180,13 @@ jobs:
           if m_ret:
               ret_line = f"🛡 PASS={m_ret.group(1)} · DROP={m_ret.group(2)} · unscored={m_ret.group(3)}\n"
 
-          msg = f"🌙 <b>nyxexp Close (18:05 EOD)</b> · {target}\n\n"
-          msg += f"📊 {n_cand} aday (canonical)\n"
+          msg = f"⏱ <b>nyxexp Live (17:00)</b> · {target}\n\n"
+          msg += f"📊 {n_cand} aday (truncated trigger)\n"
           msg += ret_line
           msg += src_line
           if pf_line:
               msg += f"💼 <b>4'lü Portföy:</b> {pf_line}\n{weights_block}\n"
-          msg += "\n⚠️ post-close ground truth — yarın için referans liste"
+          msg += "\n⚠️ 17:30 close-entry hedefli — 18:00 kapanışta EOD görünüm yenilenecek"
 
           token = os.environ.get("TG_BOT_TOKEN", "")
           chat_id = os.environ.get("TG_CHAT_ID", "")
@@ -220,13 +205,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: nyxexp-scan-${{ github.run_number }}
+          name: nyxexp-live-scan-${{ github.run_number }}
           path: |
-            rebuild_delta_output.txt
+            rebuild_intraday_output.txt
             scan_latest_output.txt
-            fetch_layered_output.txt
-            nyxexp_scan_output.txt
-            output/nyxexp_scan_*.html
+            nyxexp_scan_live_output.txt
+            output/nyxexp_scan_live_*.html
             output/nyxexp_scan_*.parquet
+            output/nyxexp_scan_retention_live_*.parquet
             output/nyxexp_intraday_master.parquet
             output/nyxexp_retention_log.csv

@@ -101,7 +101,13 @@ def main() -> int:
                     help="Skip the timing-clean retention stage; HTML will flag this explicitly")
     ap.add_argument("--skip-scan", action="store_true",
                     help="Skip scan_latest subprocess; assume nyxexp_scan_<date>.parquet already exists")
+    ap.add_argument("--out-suffix", default="",
+                    help="Suffix for output names (e.g. 'live' → nyxexp_scan_live_<date>.html, "
+                         "Pages target nyxexp_scan_live.html). Default empty = canonical EOD outputs.")
     args = ap.parse_args()
+
+    suffix = args.out_suffix.strip().strip("_")
+    suffix_part = f"_{suffix}" if suffix else ""
 
     dataset = Path(args.dataset)
     if not dataset.exists():
@@ -201,7 +207,7 @@ def main() -> int:
     }
     html_str = render_html(scan_df, portfolio, target, meta)
 
-    enriched_path = OUT_DIR / f"nyxexp_scan_retention_{target.strftime('%Y%m%d')}.parquet"
+    enriched_path = OUT_DIR / f"nyxexp_scan_retention{suffix_part}_{target.strftime('%Y%m%d')}.parquet"
     scan_df.to_parquet(enriched_path, index=False)
     print(f"\n✅ enriched parquet: {enriched_path}")
 
@@ -215,12 +221,14 @@ def main() -> int:
         except Exception as exc:
             print(f"⚠ retention log write failed: {exc}")
 
-    out_path = Path(args.out_html) if args.out_html else OUT_DIR / f"nyxexp_scan_{target.strftime('%Y%m%d')}.html"
+    out_path = Path(args.out_html) if args.out_html else \
+        OUT_DIR / f"nyxexp_scan{suffix_part}_{target.strftime('%Y%m%d')}.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html_str, encoding="utf-8")
     print(f"✅ HTML: {out_path}")
 
-    latest = OUT_DIR / "nyxexp_scan_latest.html"
+    latest_name = f"nyxexp_scan{suffix_part}_latest.html"
+    latest = OUT_DIR / latest_name
     latest.write_text(html_str, encoding="utf-8")
     print(f"✅ HTML (latest alias): {latest}")
 
@@ -228,8 +236,9 @@ def main() -> int:
     if args.push:
         try:
             from core.reports import push_html_to_github
+            pages_target = f"nyxexp_scan{suffix_part}.html"
             url = push_html_to_github(
-                html_str, "nyxexp_scan.html", target.strftime("%Y-%m-%d")
+                html_str, pages_target, target.strftime("%Y-%m-%d")
             )
             print(f"✅ published: {url}")
         except Exception as e:
