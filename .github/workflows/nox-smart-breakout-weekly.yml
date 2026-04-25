@@ -1,0 +1,213 @@
+name: Smart Breakout Weekly (W-FRI)
+on:
+  schedule:
+    # Cuma 15:50 UTC = 18:50 TR — Smart Breakout daily 18:40 sonrası
+    - cron: '50 15 * * 5'
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: 'Cuma kapanış tarihi (YYYY-MM-DD), boş = en yakın geçmiş Cuma'
+        required: false
+        default: ''
+      max_bo_age:
+        description: 'Kaç hafta öncesine kadar BREAKOUT göster (default 5)'
+        required: false
+        default: '5'
+
+concurrency:
+  group: nox-smart-breakout-weekly
+  cancel-in-progress: false
+
+jobs:
+  weekly-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore panel parquet cache
+        uses: actions/cache@v4
+        with:
+          path: output/ohlcv_6y_fintables.parquet
+          key: smart-breakout-weekly-panel-${{ github.run_number }}
+          restore-keys: |
+            smart-breakout-weekly-panel-
+
+      - name: Resolve --as-of (default = previous Friday TR)
+        id: resolve_date
+        run: |
+          if [ -n "${{ github.event.inputs.as_of }}" ]; then
+            AS_OF="${{ github.event.inputs.as_of }}"
+          else
+            # Cuma scheduled run → bugünün TR tarihi (Cuma)
+            AS_OF=$(TZ=Europe/Istanbul date +%Y-%m-%d)
+            DOW=$(TZ=Europe/Istanbul date +%u)
+            if [ "$DOW" != "5" ]; then
+              # Manuel tetikleme + as_of boş → son Cuma'ya geri sar
+              while [ "$(TZ=Europe/Istanbul date -d "$AS_OF" +%u)" != "5" ]; do
+                AS_OF=$(TZ=Europe/Istanbul date -d "$AS_OF -1 day" +%Y-%m-%d)
+              done
+            fi
+          fi
+          echo "as_of=$AS_OF" >> "$GITHUB_OUTPUT"
+          echo "  → AS_OF resolved: $AS_OF"
+
+      - name: Fintables token health probe
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, requests
+          token = os.environ.get("FINTABLES_MCP_TOKEN", "")
+          if not token:
+              print("  ℹ FINTABLES_MCP_TOKEN unset — Matriks/yfinance fallback only")
+              raise SystemExit(0)
+          payload = {
+              "jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "nox-token-probe", "version": "1.0"}},
+          }
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json",
+              "Accept": "application/json, text/event-stream",
+          }
+          try:
+              r = requests.post("https://evo.fintables.com/mcp",
+                                json=payload, headers=headers, timeout=15)
+          except Exception as exc:
+              print(f"  ⚠ probe network error: {exc}")
+              raise SystemExit(0)
+          print(f"  Fintables MCP probe status: {r.status_code}")
+          if r.status_code in (401, 403):
+              tg_token = os.environ.get("TG_BOT_TOKEN", "")
+              chat_id = os.environ.get("TG_CHAT_ID", "")
+              msg = (
+                  "⚠️ <b>Fintables MCP token EXPIRED</b> (smart-breakout-weekly)\n\n"
+                  f"Status: {r.status_code} — Matriks/yfinance fallback devrede."
+              )
+              if tg_token and chat_id:
+                  requests.post(
+                      f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                      json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                  )
+          PYEOF
+
+      - name: 'Run weekly scan (3-tier layered: fintables → matriks → yfinance)'
+        id: scan
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          MATRIKS_TIMEOUT: '900'
+        run: |
+          set -o pipefail
+          AS_OF="${{ steps.resolve_date.outputs.as_of }}"
+          MAX_AGE="${{ github.event.inputs.max_bo_age }}"
+          if [ -z "$MAX_AGE" ]; then MAX_AGE="5"; fi
+          python -u run_smart_breakout_weekly.py \
+            --as-of "$AS_OF" \
+            --max-bo-age "$MAX_AGE" \
+            2>&1 | tee weekly_scan_output.txt
+
+      - name: Push HTML to GitHub Pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          try:
+              from core.reports import push_html_to_github
+              html = pathlib.Path("output/smart_breakout_weekly.html").read_text(encoding="utf-8")
+              url = push_html_to_github(html, "smart_breakout_weekly.html", "latest")
+              print(f"  ✓ published: {url}")
+          except Exception as e:
+              print(f"  ⚠ push failed: {e}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, re, requests
+          try:
+              with open("weekly_scan_output.txt") as f:
+                  raw = f.read()
+          except FileNotFoundError:
+              raw = ""
+          tg_token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if not tg_token or not chat_id:
+              print("  ℹ TG creds unset — skipping notification")
+              raise SystemExit(0)
+
+          m_as_of = re.search(r"as-of\s*:\s*(\S+)", raw)
+          as_of = m_as_of.group(1) if m_as_of else "?"
+          m_bo = re.search(r"BREAKOUT\s*:\s*(\d+)", raw)
+          m_bx = re.search(r"BOX\s*:\s*(\d+)", raw)
+          m_sq = re.search(r"SQUEEZE\s*:\s*(\d+)", raw)
+          n_bo = m_bo.group(1) if m_bo else "?"
+          n_bx = m_bx.group(1) if m_bx else "?"
+          n_sq = m_sq.group(1) if m_sq else "?"
+
+          # Tier breakdown
+          tier_lines = []
+          for label in ("patch", "backfill"):
+              m = re.search(rf"\[{label}\][^\n]*·\s*([^\n]+)", raw)
+              if m:
+                  tier_lines.append(f"  {label}: {m.group(1).strip()}")
+          tier_block = "\n".join(tier_lines) if tier_lines else "  (no tier breakdown)"
+
+          # Top 5 BREAKOUT
+          tops = []
+          in_top = False
+          for line in raw.splitlines():
+              if line.strip().startswith("Top 10 BREAKOUT"):
+                  in_top = True
+                  continue
+              if in_top and line.strip():
+                  tops.append(line.strip())
+                  if len(tops) >= 5:
+                      break
+          top_block = "\n".join(tops) if tops else "—"
+
+          msg = (
+              "<b>📊 Smart Breakout — Haftalık (W-FRI)</b>\n"
+              f"As-of: <b>{as_of}</b>\n\n"
+              f"BREAKOUT: <b>{n_bo}</b>  ·  BOX: {n_bx}  ·  SQUEEZE: {n_sq}\n\n"
+              f"<b>Tier dağılımı (3-tier layered):</b>\n<pre>{tier_block}</pre>\n"
+              f"<b>Top 5 BREAKOUT:</b>\n<pre>{top_block}</pre>"
+          )
+          requests.post(
+              f"https://api.telegram.org/bot{tg_token}/sendMessage",
+              json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML",
+                    "disable_web_page_preview": True},
+          )
+          print("  ✓ Telegram sent")
+          PYEOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smart-breakout-weekly-${{ github.run_number }}
+          path: |
+            output/smart_breakout_weekly.html
+            weekly_scan_output.txt
