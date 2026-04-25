@@ -21,17 +21,18 @@ jobs:
           python - <<'PYEOF'
           from agent.matriks_client import MatriksClient
           cli = MatriksClient()
+          # Daily endpoint hard-caps allBars at 60 — try period/sampling/raw flags
           variants = [
-              ("no_interval_6y",  {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True}),
-              ("interval_daily_6y",  {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"daily"}),
-              ("interval_daily_1y",  {"symbol":"GARAN","startDate":"2025-04-25","endDate":"2026-04-24","rawBars":True,"interval":"daily"}),
-              ("interval_daily_3m",  {"symbol":"GARAN","startDate":"2026-01-25","endDate":"2026-04-24","rawBars":True,"interval":"daily"}),
-              ("interval_1day_6y",   {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"1day"}),
-              ("interval_D_6y",      {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"D"}),
-              ("interval_daily_barCount2000",  {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"daily","barCount":2000}),
-              ("interval_daily_limit2000",     {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"daily","limit":2000}),
-              ("interval_daily_count2000",     {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"daily","count":2000}),
-              ("interval_weekly_6y",  {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","rawBars":True,"interval":"weekly"}),
+              ("period_5Y",   {"symbol":"GARAN","interval":"daily","rawBars":True,"period":"5Y"}),
+              ("period_1Y",   {"symbol":"GARAN","interval":"daily","rawBars":True,"period":"1Y"}),
+              ("period_MAX",  {"symbol":"GARAN","interval":"daily","rawBars":True,"period":"MAX"}),
+              ("period_max",  {"symbol":"GARAN","interval":"daily","rawBars":True,"period":"max"}),
+              ("period_ALL",  {"symbol":"GARAN","interval":"daily","rawBars":True,"period":"ALL"}),
+              ("period_5y_lc", {"symbol":"GARAN","interval":"daily","rawBars":True,"period":"5y"}),
+              ("sampling_off",{"symbol":"GARAN","interval":"daily","rawBars":True,"period":"5Y","sampling":False}),
+              ("sampling_none",{"symbol":"GARAN","interval":"daily","rawBars":True,"period":"5Y","sampling":"none"}),
+              ("downsample_false",{"symbol":"GARAN","interval":"daily","rawBars":True,"period":"5Y","downsample":False}),
+              ("startDate_period_5Y", {"symbol":"GARAN","startDate":"2020-04-25","endDate":"2026-04-24","interval":"daily","rawBars":True,"period":"5Y"}),
           ]
           for label, args in variants:
               try:
