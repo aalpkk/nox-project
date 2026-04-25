@@ -1,0 +1,104 @@
+name: SBT-1700 — Build Dataset
+
+# Manual trigger only. PR-1 deliverable: produce the dataset and validation
+# report. PR-2 will train the ranker; PR-3 will enable the live cron.
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Earliest signal date (YYYY-MM-DD). Defaults to 2023-11-15.'
+        required: false
+        default: '2023-11-15'
+      end_date:
+        description: 'Latest signal date (YYYY-MM-DD). Defaults to today.'
+        required: false
+        default: ''
+      max_fetch:
+        description: 'Cap Matriks gap fetch to first N pairs (0 = no cap).'
+        required: false
+        default: '0'
+      skip_fetch:
+        description: 'Skip Matriks gap fetch (reuse current caches only).'
+        required: false
+        default: 'false'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Show locked config
+        run: |
+          python -c "from sbt1700.config import (BAR_CUTOFF_HH, BAR_CUTOFF_MM, EXPECTED_BARS_PER_PAIR, COVERAGE_DROP_THRESHOLD, SCHEMA_VERSION, E3); import json; print(json.dumps({'schema_version': SCHEMA_VERSION, 'cutoff': f'{BAR_CUTOFF_HH:02d}:{BAR_CUTOFF_MM:02d} TR', 'expected_bars': EXPECTED_BARS_PER_PAIR, 'coverage_drop': COVERAGE_DROP_THRESHOLD, 'e3': E3.__dict__}, indent=2, default=str))"
+
+      - name: Build daily-only seed
+        run: |
+          ARGS="--master output/ohlcv_10y_fintables_master.parquet --start ${{ github.event.inputs.start_date }} --out output/sbt1700_signal_seed.csv"
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then ARGS="$ARGS --end ${{ github.event.inputs.end_date }}"; fi
+          python -m sbt1700.signal_seed $ARGS
+
+      - name: Gap-only Matriks 15m fetch
+        if: ${{ github.event.inputs.skip_fetch != 'true' }}
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.max_fetch }}" != "0" ]; then ARGS="--canary ${{ github.event.inputs.max_fetch }}"; fi
+          python tools/sbt1700_fetch_intraday.py $ARGS || echo "fetch returned non-zero (recoverable on rerun)"
+
+      - name: Build dataset + validation
+        run: |
+          ARGS="--master output/ohlcv_10y_fintables_master.parquet --intraday output/nyxexp_intraday_15m_matriks.parquet output/sbt1700_intraday_15m.parquet --start ${{ github.event.inputs.start_date }} --out output/sbt_1700_dataset.parquet --validate"
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then ARGS="$ARGS --end ${{ github.event.inputs.end_date }}"; fi
+          python -m sbt1700.build_dataset $ARGS
+
+      - name: Show validation report
+        if: always()
+        run: |
+          if [ -f output/sbt_1700_dataset_validation.md ]; then
+            echo "::group::Validation report"
+            cat output/sbt_1700_dataset_validation.md
+            echo "::endgroup::"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbt1700-dataset-${{ github.run_number }}
+          path: |
+            output/sbt_1700_dataset.parquet
+            output/sbt_1700_dataset.meta.json
+            output/sbt_1700_dataset_validation.md
+            output/sbt1700_signal_seed.csv
+            output/sbt1700_intraday_15m.parquet
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Commit validation report back to branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f output/sbt_1700_dataset_validation.md ]; then
+            echo "no validation file — skipping commit"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p reports/sbt1700
+          cp output/sbt_1700_dataset_validation.md reports/sbt1700/validation_run_${{ github.run_number }}.md
+          if [ -f output/sbt_1700_dataset.meta.json ]; then
+            cp output/sbt_1700_dataset.meta.json reports/sbt1700/meta_run_${{ github.run_number }}.json
+          fi
+          git add reports/sbt1700/
+          git diff --cached --quiet && { echo "no report diff"; exit 0; }
+          git commit -m "chore(sbt1700): validation report from run ${{ github.run_number }}"
+          git push
