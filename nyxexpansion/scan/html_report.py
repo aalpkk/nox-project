@@ -43,6 +43,68 @@ def _tag_class(tag: str) -> str:
     }.get(str(tag), "")
 
 
+def _retention_cell(d: dict) -> tuple[str, str, str]:
+    """Return (rank_str, score_str, note_str) for a candidate row."""
+    rank = d.get("rank_1700_surrogate")
+    score = d.get("score_1700_surrogate")
+    note = d.get("timing_clean_note") or "—"
+    if rank is None or pd.isna(rank):
+        rank_str = "—"
+    else:
+        rank_str = str(int(rank))
+    if score is None or pd.isna(score):
+        score_str = "—"
+    else:
+        score_str = f"{float(score):.2f}"
+    return rank_str, score_str, str(note)
+
+
+def _render_candidates_table(rows_data, table_id: str) -> str:
+    body = "\n".join(rows_data)
+    return f"""
+  <table class="data" id="{table_id}">
+    <thead><tr>
+      <th>#</th><th>Ticker</th><th>winR</th><th>pct</th>
+      <th>winR_1700</th><th>rank_1700</th>
+      <th>exec_tag</th><th>risk_bucket</th><th>rscr</th>
+      <th>retention</th><th>Not</th>
+    </tr></thead>
+    <tbody>
+{body}
+    </tbody>
+  </table>
+"""
+
+
+def _row_html(i: int, d: dict) -> str:
+    note = _note_for_row(d)
+    bucket = str(d.get("risk_bucket", "—"))
+    tag = str(d.get("exec_tag", "—"))
+    winR = d.get("winner_R_pred")
+    pct = d.get("score_pct")
+    rscr = d.get("execution_risk_score")
+    rank_str, score_str, ret_note = _retention_cell(d)
+    ret_pass = bool(d.get("retention_pass", False))
+    ret_class = "ret-pass" if ret_pass else "ret-drop"
+    ret_label = "PASS" if ret_pass else "DROP"
+    return (
+        f"<tr>"
+        f"<td class='num'>{i}</td>"
+        f"<td class='tk'>{html.escape(str(d.get('ticker', '')))}</td>"
+        f"<td class='num'>{winR:.2f}</td>"
+        f"<td class='num'>{pct:.2f}</td>"
+        f"<td class='num'>{score_str}</td>"
+        f"<td class='num'>{rank_str}</td>"
+        f"<td><span class='tag {_tag_class(tag)}'>{html.escape(tag)}</span></td>"
+        f"<td><span class='bucket {_bucket_class(bucket)}'>{html.escape(bucket)}</span></td>"
+        f"<td class='num'>{rscr:.1f}</td>"
+        f"<td><span class='ret {ret_class}' title='{html.escape(ret_note)}'>"
+        f"{ret_label}</span></td>"
+        f"<td class='note'>{html.escape(note)}</td>"
+        f"</tr>"
+    )
+
+
 def render_html(
     scan_df: pd.DataFrame,
     portfolio: dict,
@@ -57,34 +119,31 @@ def render_html(
         portfolio: combinatorial_max_sharpe output.
         target_date: the scan's target date.
         meta: dict with keys `dataset_path`, `n_total`, `regime_dist` (optional),
-              `severe_excluded` (int), `universe_size`.
+              `severe_excluded` (int), `universe_size`, `retention` (dict).
     """
     n_total = len(scan_df)
     n_severe = int((scan_df.get("risk_bucket") == "severe").sum())
 
-    # ── Candidates table ─────────────────────────────────────────────────
-    rows = []
-    for i, r in enumerate(scan_df.itertuples(index=False), 1):
-        d = r._asdict() if hasattr(r, "_asdict") else dict(r._asdict())
-        note = _note_for_row(d)
-        bucket = str(d.get("risk_bucket", "—"))
-        tag = str(d.get("exec_tag", "—"))
-        winR = d.get("winner_R_pred")
-        pct = d.get("score_pct")
-        rscr = d.get("execution_risk_score")
-        rows.append(
-            f"<tr>"
-            f"<td class='num'>{i}</td>"
-            f"<td class='tk'>{html.escape(str(d.get('ticker', '')))}</td>"
-            f"<td class='num'>{winR:.2f}</td>"
-            f"<td class='num'>{pct:.2f}</td>"
-            f"<td><span class='tag {_tag_class(tag)}'>{html.escape(tag)}</span></td>"
-            f"<td><span class='bucket {_bucket_class(bucket)}'>{html.escape(bucket)}</span></td>"
-            f"<td class='num'>{rscr:.1f}</td>"
-            f"<td class='note'>{html.escape(note)}</td>"
-            f"</tr>"
-        )
-    cand_rows = "\n".join(rows)
+    retention = meta.get("retention") or {}
+    retention_enabled = bool(retention.get("enabled", False))
+
+    if retention_enabled:
+        tradeable_df = scan_df[scan_df.get("retention_pass") == True].copy()
+        watchlist_df = scan_df[scan_df.get("retention_pass") != True].copy()
+    else:
+        tradeable_df = scan_df.iloc[0:0].copy()
+        watchlist_df = scan_df.copy()
+
+    tradeable_rows = [
+        _row_html(i, dict(zip(scan_df.columns, r)))
+        for i, r in enumerate(tradeable_df.itertuples(index=False, name=None), 1)
+    ]
+    watchlist_rows = [
+        _row_html(i, dict(zip(scan_df.columns, r)))
+        for i, r in enumerate(watchlist_df.itertuples(index=False, name=None), 1)
+    ]
+    tradeable_table = _render_candidates_table(tradeable_rows, "tradeable")
+    watchlist_table = _render_candidates_table(watchlist_rows, "watchlist")
 
     # ── Portfolio block ──────────────────────────────────────────────────
     pf_rows = ""
@@ -161,6 +220,39 @@ def render_html(
     </div>
     """
 
+    if retention_enabled:
+        rank_t = retention.get("rank_threshold", 10)
+        n_pass = retention.get("n_pass", 0)
+        n_drop = retention.get("n_drop", 0)
+        n_unscored = retention.get("n_unscored", 0)
+        notes = retention.get("notes", {}) or {}
+        notes_str = ", ".join(f"{k}={v}" for k, v in notes.items()) or "—"
+        sources = retention.get("source_breakdown", {}) or {}
+        if sources:
+            src_str = " · ".join(f"{k}={v}" for k, v in sorted(sources.items()))
+            src_line = (
+                f'<br><span style="color:#555">Bugün veri kaynakları: '
+                f'<code>{html.escape(src_str)}</code></span>'
+            )
+        else:
+            src_line = ""
+        retention_banner = f"""
+        <div class="banner ret-banner">
+          🛡 <b>Timing-clean retention filter (17:00 TR top-{rank_t})</b> —
+          PASS=<b>{n_pass}</b> · DROP=<b>{n_drop}</b> · unscored=<b>{n_unscored}</b>.
+          Tradeable list = retention_pass=True. Watchlist'te kalanlar gözlem amaçlı,
+          17:30 proxy'de tradeable kabul edilmez. Notes: <code>{html.escape(notes_str)}</code>.{src_line}
+        </div>
+        """
+    else:
+        retention_banner = """
+        <div class="banner ret-banner-off">
+          ⚠️ <b>Timing-clean retention stage SKIPPED.</b> Hiçbir aday için 17:00
+          truncated re-rank yapılmadı; aşağıdaki tüm satırlar Watchlist olarak
+          işaretlendi. Tradeable list bu raporda BOŞ.
+        </div>
+        """
+
     return f"""<!DOCTYPE html>
 <html lang="tr"><head>
 <meta charset="utf-8">
@@ -192,6 +284,11 @@ td.note {{ color: #666; font-size: 0.88em; }}
 .b-mild {{ background: #f0f4c3; color: #33691e; }}
 .b-elev {{ background: #ffe0b2; color: #e65100; }}
 .b-sev {{ background: #ffcdd2; color: #b71c1c; }}
+.ret {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.78em; font-weight: 600; }}
+.ret-pass {{ background: #c8e6c9; color: #1b5e20; }}
+.ret-drop {{ background: #ffe0b2; color: #bf360c; }}
+.ret-banner {{ background: #e8f5e9; border-left: 3px solid #2e7d32; color: #1b5e20; }}
+.ret-banner-off {{ background: #fce4ec; border-left: 3px solid #ad1457; color: #880e4f; }}
 .footer-note {{ color: #777; font-size: 0.85em; margin-top: 10px; }}
 .footer {{ color: #888; font-size: 0.82em; margin-top: 16px; }}
 </style></head><body>
@@ -205,18 +302,17 @@ td.note {{ color: #666; font-size: 0.88em; }}
   Dataset: <code>{html.escape(str(dataset_path))}</code>
 </div>
 {warn_banner}
+{retention_banner}
 {pf_section}
 <div class="box">
-  <h2>📋 Tüm Çıkan Hisseler ({n_total})</h2>
-  <table class="data">
-    <thead><tr>
-      <th>#</th><th>Ticker</th><th>winR</th><th>pct</th>
-      <th>exec_tag</th><th>risk_bucket</th><th>rscr</th><th>Not</th>
-    </tr></thead>
-    <tbody>
-{cand_rows}
-    </tbody>
-  </table>
+  <h2>✅ Tradeable Candidates ({len(tradeable_df)})</h2>
+  <div class="footer-note">retention_pass=True · 17:30 proxy için kabul edilen liste</div>
+  {tradeable_table}
+</div>
+<div class="box">
+  <h2>👁 Watchlist Only ({len(watchlist_df)})</h2>
+  <div class="footer-note">ranker'da çıktı ama timing-clean retention'da elendi · gözlem amaçlı, tradeable DEĞİL</div>
+  {watchlist_table}
 </div>
 <div class="footer">nyxexpansion daily scan · {now_str} · v4C · dataset={html.escape(str(dataset_path))}</div>
 </body></html>"""

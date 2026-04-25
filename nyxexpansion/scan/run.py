@@ -22,10 +22,19 @@ sys.path.insert(0, str(_ROOT))
 
 from nyxexpansion.scan.markowitz import combinatorial_max_sharpe
 from nyxexpansion.scan.html_report import render_html
+from nyxexpansion.retention.stage import (
+    run_retention_stage,
+    mark_stage_disabled,
+)
+from nyxexpansion.retention.log import append_row as append_retention_log
+from nyxexpansion import retention as ret_pkg
 
 
 DEFAULT_DATASET = Path("output/nyxexp_dataset_v4.parquet")
 OUT_DIR = Path("output")
+DEFAULT_INTRADAY_15M = Path("output/nyxexp_intraday_master.parquet")
+DEFAULT_MASTER_OHLCV = Path("output/ohlcv_10y_fintables_master.parquet")
+DEFAULT_SURROGATE = Path("output/nyxexp_retention_surrogate_v1.pkl")
 
 
 def _run_scan_subprocess(dataset: Path, date: str | None, top: int) -> int:
@@ -80,6 +89,18 @@ def main() -> int:
                     help="HTML output path (default: output/nyxexp_scan_<date>.html)")
     ap.add_argument("--push", action="store_true",
                     help="GitHub Pages push via core.reports.push_html_to_github")
+    ap.add_argument("--retention-intraday", default=str(DEFAULT_INTRADAY_15M),
+                    help="15m bars cache path used by the timing-clean retention stage")
+    ap.add_argument("--retention-master-ohlcv", default=str(DEFAULT_MASTER_OHLCV),
+                    help="Daily master OHLCV parquet for truncated feature rebuild")
+    ap.add_argument("--retention-artifact", default=str(DEFAULT_SURROGATE),
+                    help="Persisted surrogate artifact (.pkl) — fail-fast if missing")
+    ap.add_argument("--retention-rank", type=int, default=10,
+                    help="Pessimistic rank threshold for retention_pass (default 10)")
+    ap.add_argument("--skip-retention", action="store_true",
+                    help="Skip the timing-clean retention stage; HTML will flag this explicitly")
+    ap.add_argument("--skip-scan", action="store_true",
+                    help="Skip scan_latest subprocess; assume nyxexp_scan_<date>.parquet already exists")
     args = ap.parse_args()
 
     dataset = Path(args.dataset)
@@ -93,11 +114,14 @@ def main() -> int:
     print(f"  target : {target.date()}")
 
     # 1) Run scan
-    print("\n[1/3] scan_latest …")
-    rc = _run_scan_subprocess(dataset, args.date or target.strftime("%Y-%m-%d"), args.top)
-    if rc != 0:
-        print(f"❌ scan_latest failed with rc={rc}")
-        return rc
+    if args.skip_scan:
+        print("\n[1/3] scan_latest SKIPPED (--skip-scan); using existing parquet")
+    else:
+        print("\n[1/3] scan_latest …")
+        rc = _run_scan_subprocess(dataset, args.date or target.strftime("%Y-%m-%d"), args.top)
+        if rc != 0:
+            print(f"❌ scan_latest failed with rc={rc}")
+            return rc
 
     # 2) Load scan output, filter to target
     scan_df = _load_scan_output(target)
@@ -106,9 +130,55 @@ def main() -> int:
         print(f"⚠ scan returned 0 signals for {target.date()}")
     print(f"\n[2/3] scan output: {n_total} candidate(s) at {target.date()}")
 
-    # 3) Build 4-stock Markowitz from top-15 non-severe
+    # 2b) Timing-clean retention filter (locked 2026-04-25)
+    retention_meta = {"enabled": not args.skip_retention}
+    if args.skip_retention:
+        print("\n[2b/3] timing-clean retention stage SKIPPED (--skip-retention)")
+        scan_df = mark_stage_disabled(scan_df)
+        retention_meta.update({
+            "n_pass": 0, "n_drop": 0, "n_unscored": len(scan_df),
+            "notes": {"stage_disabled": len(scan_df)},
+            "rank_threshold": args.retention_rank,
+            "artifact": str(args.retention_artifact),
+        })
+    else:
+        print("\n[2b/3] timing-clean retention stage …")
+        from nyxexpansion.tools.presmoke import load_xu100
+        xu = load_xu100(refresh=False, period="6y")
+        xu_close = xu["Close"] if xu is not None and not xu.empty else None
+        outcome = run_retention_stage(
+            scan_df, target,
+            intraday_15m_path=Path(args.retention_intraday),
+            master_ohlcv_path=Path(args.retention_master_ohlcv),
+            surrogate_artifact_path=Path(args.retention_artifact),
+            rank_threshold=args.retention_rank,
+            xu100_close=xu_close,
+        )
+        scan_df = outcome.enriched
+        retention_meta.update({
+            "n_pass": outcome.n_pass,
+            "n_drop": outcome.n_drop,
+            "n_unscored": outcome.n_unscored,
+            "notes": outcome.notes,
+            "source_breakdown": outcome.source_breakdown,
+            "rank_threshold": args.retention_rank,
+            "artifact": str(args.retention_artifact),
+        })
+        print(f"  PASS (rank ≤ {args.retention_rank}): {outcome.n_pass}  "
+              f"DROP: {outcome.n_drop}  unscored: {outcome.n_unscored}")
+        for note, count in outcome.notes.items():
+            print(f"    note={note}: {count}")
+        if outcome.source_breakdown:
+            srcs = ", ".join(f"{k}={v}" for k, v in sorted(outcome.source_breakdown.items()))
+            print(f"  bars source breakdown: {srcs}")
+
+    # 3) Build 4-stock Markowitz from top-15 non-severe AND retention_pass
     print(f"\n[3/3] Markowitz 4-stock combinatorial …")
     non_severe = scan_df[scan_df["risk_bucket"] != "severe"].copy()
+    if not args.skip_retention:
+        before = len(non_severe)
+        non_severe = non_severe[non_severe["retention_pass"]].copy()
+        print(f"  retention filter: {before} → {len(non_severe)} (pass-only)")
     universe = non_severe.head(args.mk_universe_top)["ticker"].tolist()
     print(f"  Markowitz universe (top {args.mk_universe_top} non-severe by winR): {universe}")
     portfolio = combinatorial_max_sharpe(universe, target)
@@ -127,13 +197,28 @@ def main() -> int:
         "dataset_path": str(dataset),
         "universe_size": _universe_size(dataset),
         "regime_dist": regime_dist,
+        "retention": retention_meta,
     }
     html_str = render_html(scan_df, portfolio, target, meta)
+
+    enriched_path = OUT_DIR / f"nyxexp_scan_retention_{target.strftime('%Y%m%d')}.parquet"
+    scan_df.to_parquet(enriched_path, index=False)
+    print(f"\n✅ enriched parquet: {enriched_path}")
+
+    if not args.skip_retention:
+        try:
+            log_path = append_retention_log(
+                target, retention_meta=retention_meta,
+                surrogate_schema=ret_pkg.TRUNCATED_FEATURE_SCHEMA_VERSION,
+            )
+            print(f"✅ retention log: {log_path}")
+        except Exception as exc:
+            print(f"⚠ retention log write failed: {exc}")
 
     out_path = Path(args.out_html) if args.out_html else OUT_DIR / f"nyxexp_scan_{target.strftime('%Y%m%d')}.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html_str, encoding="utf-8")
-    print(f"\n✅ HTML: {out_path}")
+    print(f"✅ HTML: {out_path}")
 
     latest = OUT_DIR / "nyxexp_scan_latest.html"
     latest.write_text(html_str, encoding="utf-8")

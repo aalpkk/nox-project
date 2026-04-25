@@ -1,8 +1,8 @@
 name: nyxexpansion Daily Scan
 on:
   schedule:
-    - cron: '20 14 * * 1-5'  # 17:20 TR — ön-tarama (seans içi, son bar şekillenmeden)
-    - cron: '5 15 * * 1-5'   # 18:05 TR — BIST kapanış sonrası final tarama
+    - cron: '25 14 * * 1-5'  # 17:25 TR — live retention run (right after 17:00 cutoff)
+    - cron: '5 15 * * 1-5'   # 18:05 TR — post-close final scan
   workflow_dispatch:
     inputs:
       date:
@@ -27,7 +27,89 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Run nyxexpansion daily scan + Markowitz + HTML
+      - name: Fintables token health probe
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, requests
+
+          token = os.environ.get("FINTABLES_MCP_TOKEN", "")
+          if not token:
+              print("  ℹ FINTABLES_MCP_TOKEN unset — Matriks/yfinance fallback only")
+              raise SystemExit(0)
+          payload = {
+              "jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "nox-token-probe", "version": "1.0"}},
+          }
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json",
+              "Accept": "application/json, text/event-stream",
+          }
+          try:
+              r = requests.post("https://evo.fintables.com/mcp",
+                                json=payload, headers=headers, timeout=15)
+          except Exception as exc:
+              print(f"  ⚠ probe network error: {exc}")
+              raise SystemExit(0)
+          print(f"  Fintables MCP probe status: {r.status_code}")
+          if r.status_code in (401, 403):
+              tg_token = os.environ.get("TG_BOT_TOKEN", "")
+              chat_id = os.environ.get("TG_CHAT_ID", "")
+              msg = (
+                  "⚠️ <b>Fintables MCP token EXPIRED / UNAUTHORIZED</b>\n\n"
+                  f"Status: {r.status_code}\n\n"
+                  "Mac'te Claude Code → Fintables MCP'yi yeniden auth'la, "
+                  "yeni accessToken'ı keychain'den al, "
+                  "<code>gh secret set FINTABLES_MCP_TOKEN</code> ile güncelle. "
+                  "Bu turda Fintables tier atlandı, Matriks fallback devrede."
+              )
+              if tg_token and chat_id:
+                  requests.post(
+                      f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                      json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                  )
+                  print("  ✓ Telegram alerted")
+              else:
+                  print(msg)
+          PYEOF
+
+      - name: Phase 1 — scan_latest (produces candidate parquet)
+        run: |
+          set -o pipefail
+          DATE_ARG=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE_ARG="--date ${{ github.event.inputs.date }}"
+          fi
+          python -m nyxexpansion.tools.scan_latest \
+            --dataset output/nyxexp_dataset_v4.parquet \
+            --top 30 $DATE_ARG 2>&1 | tee scan_latest_output.txt
+
+      - name: Phase 2 — fetch layered intraday (Fintables → Matriks → yfinance)
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+        run: |
+          set -o pipefail
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            TARGET="${{ github.event.inputs.date }}"
+          else
+            TARGET=$(TZ=Europe/Istanbul date +%Y-%m-%d)
+          fi
+          SCAN_PARQUET="output/nyxexp_scan_$(echo $TARGET | tr -d '-').parquet"
+          if [ ! -f "$SCAN_PARQUET" ]; then
+            echo "  ⚠ scan parquet $SCAN_PARQUET not found — fetch_layered skipped"
+            exit 0
+          fi
+          python -m nyxexpansion.intraday.fetch_layered \
+            --date "$TARGET" --tickers-from "$SCAN_PARQUET" \
+            2>&1 | tee fetch_layered_output.txt
+
+      - name: Phase 3 — retention stage + Markowitz + HTML
         run: |
           set -o pipefail
           DATE_ARG=""
@@ -38,6 +120,7 @@ jobs:
             --dataset output/nyxexp_dataset_v4.parquet \
             --top 30 \
             --mk-universe-top 15 \
+            --skip-scan \
             $DATE_ARG 2>&1 | tee nyxexp_scan_output.txt
 
       - name: Push HTML to GitHub Pages
@@ -91,8 +174,18 @@ jobs:
               if weights:
                   weights_block = "<pre>" + "\n".join(f"{t:<8} {w}%" for t, w in weights[:4]) + "</pre>"
 
+          m_src = re.search(r"bars source breakdown:\s*([^\n]+)", raw)
+          src_line = f"📡 {m_src.group(1).strip()}\n" if m_src else ""
+
+          m_ret = re.search(r"PASS \(rank ≤ \d+\):\s*(\d+)\s+DROP:\s*(\d+)\s+unscored:\s*(\d+)", raw)
+          ret_line = ""
+          if m_ret:
+              ret_line = f"🛡 PASS={m_ret.group(1)} · DROP={m_ret.group(2)} · unscored={m_ret.group(3)}\n"
+
           msg = f"🎯 <b>nyxexpansion Scan</b> · {target}\n\n"
-          msg += f"📊 {n_cand} aday (severe hariç top-15 → Markowitz evreni)\n"
+          msg += f"📊 {n_cand} aday\n"
+          msg += ret_line
+          msg += src_line
           if pf_line:
               msg += f"💼 <b>4'lü Portföy:</b> {pf_line}\n{weights_block}\n"
           msg += "\n⚠️ daily candidate ranker — auto-entry değil"
@@ -116,6 +209,10 @@ jobs:
         with:
           name: nyxexp-scan-${{ github.run_number }}
           path: |
+            scan_latest_output.txt
+            fetch_layered_output.txt
             nyxexp_scan_output.txt
             output/nyxexp_scan_*.html
             output/nyxexp_scan_*.parquet
+            output/nyxexp_intraday_master.parquet
+            output/nyxexp_retention_log.csv
