@@ -78,6 +78,16 @@ jobs:
                   print(msg)
           PYEOF
 
+      - name: Phase 0 — rebuild dataset delta (yfinance EOD → master → v4 append)
+        run: |
+          set -o pipefail
+          DATE_ARG=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE_ARG="--date ${{ github.event.inputs.date }}"
+          fi
+          python -m nyxexpansion.tools.rebuild_dataset_delta \
+            $DATE_ARG 2>&1 | tee rebuild_delta_output.txt
+
       - name: Phase 1 — scan_latest (produces candidate parquet)
         run: |
           set -o pipefail
@@ -213,6 +223,7 @@ jobs:
         with:
           name: nyxexp-scan-${{ github.run_number }}
           path: |
+            rebuild_delta_output.txt
             scan_latest_output.txt
             fetch_layered_output.txt
             nyxexp_scan_output.txt
