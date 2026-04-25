@@ -1,4 +1,4 @@
-"""Layered live intraday fetcher: Fintables → Matriks → yfinance 1h.
+"""Layered live intraday fetcher: Fintables → extfeed → Matriks → yfinance 1h.
 
 CLI entry point used by the daily scan workflow before the retention stage:
 
@@ -10,9 +10,12 @@ CLI entry point used by the daily scan workflow before the retention stage:
 Tier order (per ticker):
 1. ``fintables_15m``  — batch SQL via Fintables MCP HTTP (single call for all
                         tickers); 15-min delayed but no per-ticker rate limit.
-2. ``matriks_15m``    — per-ticker historicalData call; live, but rate-limited
+2. ``extfeed_15m``    — cookie-authed external WS feed; live 15m bars, shared
+                        JWT, no per-ticker rate limit. Skips silently if
+                        INTRADAY_SID / INTRADAY_SIGN env unset or expired.
+3. ``matriks_15m``    — per-ticker historicalData call; live, but rate-limited
                         and prone to 503/429.
-3. ``yfinance_1h``    — last resort, 1h granularity. Reduced sub-hourly
+4. ``yfinance_1h``    — last resort, 1h granularity. Reduced sub-hourly
                         resolution; truncated daily aggregate still well-defined.
 
 Each row in the output parquet carries a ``bars_source`` tag so downstream
@@ -36,6 +39,7 @@ from nyxexpansion.intraday.fetchers import (  # noqa: E402
     FetchResult,
 )
 from nyxexpansion.intraday.fetchers import fintables as fin  # noqa: E402
+from nyxexpansion.intraday.fetchers import extfeed as ext  # noqa: E402
 from nyxexpansion.intraday.fetchers import matriks as mat  # noqa: E402
 from nyxexpansion.intraday.fetchers import yfinance_h as yfh  # noqa: E402
 
@@ -86,10 +90,11 @@ def fetch_intraday_layered(
     target_date,
     *,
     skip_fintables: bool = False,
+    skip_extfeed: bool = False,
     skip_matriks: bool = False,
     skip_yfinance: bool = False,
 ) -> dict[str, FetchResult]:
-    """Run the three tiers in sequence; return per-ticker outcome map."""
+    """Run the four tiers in sequence; return per-ticker outcome map."""
     target = pd.Timestamp(target_date).normalize()
     pending = list(tickers)
     results: dict[str, FetchResult] = {}
@@ -117,14 +122,36 @@ def fetch_intraday_layered(
                 if tk in pending:
                     pending.remove(tk)
             print(f"  [layered] fintables served {len(served)}/{len(fin_results)}; "
+                  f"{len(pending)} → extfeed")
+
+    # Tier 2 — extfeed per-ticker (cookie-authed external WS)
+    if pending and not skip_extfeed:
+        if not (os.environ.get("INTRADAY_SID") and os.environ.get("INTRADAY_SIGN")):
+            print("  [layered] INTRADAY_SID/SIGN unset — skipping extfeed tier")
+        else:
+            print(f"  [layered] tier 2 extfeed ({len(pending)} ticker)")
+            try:
+                ext_results = ext.fetch_per_ticker(pending, target)
+            except Exception as exc:
+                print(f"  [layered] extfeed tier failed: {type(exc).__name__}: {exc}")
+                ext_results = {}
+            served = []
+            for tk, res in ext_results.items():
+                if res.note == "ok":
+                    results[tk] = res
+                    served.append(tk)
+            for tk in served:
+                if tk in pending:
+                    pending.remove(tk)
+            print(f"  [layered] extfeed served {len(served)}/{len(ext_results)}; "
                   f"{len(pending)} → matriks")
 
-    # Tier 2 — Matriks per-ticker
+    # Tier 3 — Matriks per-ticker
     if pending and not skip_matriks:
         if not os.environ.get("MATRIKS_API_KEY"):
             print("  [layered] MATRIKS_API_KEY unset — skipping matriks tier")
         else:
-            print(f"  [layered] tier 2 matriks ({len(pending)} ticker)")
+            print(f"  [layered] tier 3 matriks ({len(pending)} ticker)")
             try:
                 mat_results = mat.fetch_per_ticker(pending, target)
             except Exception as exc:
@@ -141,9 +168,9 @@ def fetch_intraday_layered(
             print(f"  [layered] matriks served {len(served)}/{len(mat_results)}; "
                   f"{len(pending)} → yfinance")
 
-    # Tier 3 — yfinance 1h
+    # Tier 4 — yfinance 1h
     if pending and not skip_yfinance:
-        print(f"  [layered] tier 3 yfinance 1h ({len(pending)} ticker)")
+        print(f"  [layered] tier 4 yfinance 1h ({len(pending)} ticker)")
         try:
             yf_results = yfh.fetch_per_ticker(pending, target)
         except Exception as exc:
@@ -166,14 +193,14 @@ def fetch_intraday_layered(
         results.setdefault(tk, FetchResult(
             ticker=tk, signal_date=target_date_obj,
             bars_source=None, rows=[], note="all_failed",
-            detail="all three tiers failed",
+            detail="all tiers failed",
         ))
     return results
 
 
 def _summarize(results: dict[str, FetchResult]) -> dict:
-    counts = {"fintables_15m": 0, "matriks_15m": 0, "yfinance_1h": 0,
-              "missing": 0}
+    counts = {"fintables_15m": 0, "extfeed_15m": 0, "matriks_15m": 0,
+              "yfinance_1h": 0, "missing": 0}
     notes: dict[str, int] = {}
     for tk, res in results.items():
         if res.bars_source:
@@ -201,6 +228,7 @@ def main() -> int:
                     help="comma-separated ticker list (alternative to --tickers-from)")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--skip-fintables", action="store_true")
+    ap.add_argument("--skip-extfeed", action="store_true")
     ap.add_argument("--skip-matriks", action="store_true")
     ap.add_argument("--skip-yfinance", action="store_true")
     args = ap.parse_args()
@@ -232,6 +260,7 @@ def main() -> int:
     results = fetch_intraday_layered(
         tickers, target,
         skip_fintables=args.skip_fintables,
+        skip_extfeed=args.skip_extfeed,
         skip_matriks=args.skip_matriks,
         skip_yfinance=args.skip_yfinance,
     )

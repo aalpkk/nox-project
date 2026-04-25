@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-BarsSource = Literal["fintables_15m", "matriks_15m", "yfinance_1h"]
+BarsSource = Literal["fintables_15m", "extfeed_15m", "matriks_15m", "yfinance_1h"]
 
 BAR_COLUMNS: tuple[str, ...] = (
     "ticker",
