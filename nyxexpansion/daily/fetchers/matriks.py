@@ -1,10 +1,12 @@
 """Matriks daily fetcher — historicalData with rawBars=True, interval=daily.
 
-Reuses ``agent.matriks_client.MatriksClient``. Without an explicit
-``interval``, Matriks silently returns a small (~3 month) recent
-window; the documented enum is ``1min|5min|15min|1hour|daily|
-weekly|monthly`` so we always pin ``daily``. One call per ticker
-covers the full date range; rate limit handled by the client.
+Reuses ``agent.matriks_client.MatriksClient``. The ``allBars`` response
+is hard-capped server-side at 60 daily rows; ``startDate``/``endDate``/
+``period``/``barCount`` overrides have no effect (verified 2026-04-25
+via ``debug_matriks_daily`` workflow). So matriks_d only serves the
+last ~3 months reliably — long bootstraps must fall through to a
+batch tier (yfinance). We surface partial coverage as
+``note='partial'`` so the layered orchestrator skips the ticker.
 """
 from __future__ import annotations
 
@@ -81,6 +83,15 @@ def _fetch_one(client, ticker: str, start_date: date, end_date: date) -> list[di
     return out
 
 
+MIN_COVERAGE = 0.5  # matriks_d ok only if rows ≥ 50% of expected business days
+
+
+def _expected_bdays(s: date, e: date) -> int:
+    if e < s:
+        return 0
+    return max(1, len(pd.bdate_range(s, e)))
+
+
 def fetch_per_ticker(
     tickers: Iterable[str],
     start_date: date | datetime | pd.Timestamp,
@@ -90,6 +101,7 @@ def fetch_per_ticker(
 ) -> dict[str, FetchResult]:
     s = pd.Timestamp(start_date).date()
     e = pd.Timestamp(end_date).date()
+    expected = _expected_bdays(s, e)
     try:
         cli = client or _make_client()
     except AuthError as exc:
@@ -118,6 +130,15 @@ def fetch_per_ticker(
                 ticker=tk, start_date=s, end_date=e,
                 bars_source=None, rows=[], note="empty",
                 detail="no daily bars",
+            )
+            continue
+        coverage = len(rows) / expected if expected else 1.0
+        if coverage < MIN_COVERAGE:
+            out[tk] = FetchResult(
+                ticker=tk, start_date=s, end_date=e,
+                bars_source=None, rows=[], note="partial",
+                detail=f"got {len(rows)}/{expected} bdays "
+                       f"({coverage:.0%}); matriks daily caps at ~60",
             )
             continue
         out[tk] = FetchResult(
