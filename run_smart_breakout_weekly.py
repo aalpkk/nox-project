@@ -39,7 +39,10 @@ from run_smart_breakout import (  # noqa: E402
 )
 from nyxexpansion.daily.fetch_layered import pull_panel  # noqa: E402
 
-PANEL_PARQUET = ROOT / "output" / "ohlcv_6y_fintables.parquet"
+# Master 10y panel is committed to the repo (~33 MB) so GitHub Actions checkout
+# restores it for free; the layered fetcher only fills the delta from
+# master.last_date+1 to as_of. No bootstrap is ever needed.
+PANEL_PARQUET = ROOT / "output" / "ohlcv_10y_fintables_master.parquet"
 SYMBOLS_FILE = ROOT / "tools" / "bist_symbols.txt"
 OUT_HTML = ROOT / "output" / "smart_breakout_weekly.html"
 
@@ -53,28 +56,16 @@ def _load_symbols() -> list[str]:
 
 
 def _load_panel() -> pd.DataFrame:
-    """Load the cached fintables-verified panel; empty frame if missing.
-
-    Empty frame triggers a full backfill (every universe symbol pulled via the
-    layered fetcher). On GitHub Actions the parquet is restored from
-    actions/cache so subsequent runs only patch the delta.
-    """
+    """Load the committed master panel; treat missing file as a hard error."""
     if not PANEL_PARQUET.exists():
-        print(f"  [load] panel parquet not found at {PANEL_PARQUET} — full bootstrap")
-        empty = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume", "ticker"])
-        empty.index = pd.DatetimeIndex([], name="Date")
-        return empty
+        raise FileNotFoundError(
+            f"master panel parquet missing at {PANEL_PARQUET}; "
+            "checkout should restore it from git"
+        )
     df = pd.read_parquet(PANEL_PARQUET)
     df.index = pd.to_datetime(df.index)
-    return df
-
-
-def _save_panel(panel: pd.DataFrame) -> None:
-    if panel is None or panel.empty:
-        return
-    PANEL_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    panel.sort_index().to_parquet(PANEL_PARQUET)
-    print(f"  [save] panel parquet → {PANEL_PARQUET} ({len(panel):,} bars)")
+    keep = [c for c in ("Open", "High", "Low", "Close", "Volume", "ticker") if c in df.columns]
+    return df[keep]
 
 
 def _layered_pull(tickers: list[str], start_date: pd.Timestamp, end_date: pd.Timestamp,
@@ -381,7 +372,6 @@ def main() -> int:
     panel, patch_info = _patch_panel(panel, as_of)
     symbols = _load_symbols()
     panel, backfill_info = _backfill_missing(panel, symbols, as_of)
-    _save_panel(panel)
 
     print(f"  [resample] daily → W-FRI per ticker")
     weekly = _build_weekly_panel(panel, as_of)
