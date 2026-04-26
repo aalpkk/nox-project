@@ -50,14 +50,29 @@ E3 execution rule.
 - Production rank score (PR-2) = regression score.
 - **No ensemble with legacy SBT ML.** **No bucket inputs.**
 
-### Acceptance gate (PR-2)
-- mean Spearman rho ≥ 0.10
-- fold_rho_min ≥ 0
-- top-decile PF_net ≥ 1.5
-- top-decile avg_R_net > 0
-- permutation p(avg_R) ≤ 0.05
-- top-5 trades' total R ≤ 50% of cohort total R (small-N concentration check)
-- Gate fail ⇒ no live cron.
+### PR-2 — Edge diagnosis (NOT a deployment gate)
+PR-2 was reframed as **edge diagnosis**: measure under which exit rule the
+17:00 SBT entry signal extracts realized R, then check whether a small
+LightGBM ranker can lift the top decile within each rule. No live cron is
+enabled by this PR.
+
+Exits evaluated against the same entry cohort:
+- E3_baseline    (TP=1R, SL=0.30 ATR, timeout=5)
+- E4_wider_stop  (TP=1R, SL=0.60 ATR, timeout=5)
+- E5_symmetric   (TP=1R, SL=1.00 ATR, timeout=5)
+- E6_time_exit   (no TP, SL=0.60 ATR, timeout=5 close exit)
+- E7_partial     (50% off at +1R, runner exits at SL=0.60 ATR or timeout)
+
+Per-variant diagnosis: raw cohort WR/PF/avg_R/median_R + TP/SL/timeout/partial
+distribution + by-year + ATR-vol terciles + ticker concentration. Then a
+LightGBM regressor (seed=17, conservative defaults, no sweep) is trained
+per variant, evaluated 3-fold walk-forward by signal date with a 2026
+holdout reported separately.
+
+Verdict wording (used in `sbt_1700_edge_diagnosis.md`):
+- raw cohort profitable                 → "unconditional edge under <variant>"
+- raw bad / ranker top-decile good      → "conditional / rankable edge"
+- all bad                               → "not tradable as coded"
 
 ## Module layout
 
@@ -72,9 +87,14 @@ E3 execution rule.
 | `labels.py` | Run E3 per row, emit label columns |
 | `build_dataset.py` | End-to-end orchestration → `output/sbt_1700_dataset.parquet` |
 | `validate_dataset.py` | Coverage / label / concentration markdown report |
-| `train_ranker.py` | (PR-2 stub) LightGBM train |
-| `eval_ranker.py` | (PR-2 stub) acceptance gate |
-| `run_scan_1700.py` | (PR-3 stub) live cron |
+| `exits.py` | Multi-exit simulator (E3/E4/E5/E6/E7) — PR-2 |
+| `exit_matrix.py` | Run all exits on the dataset → cohort summary CSV/MD — PR-2 |
+| `ranker_diagnosis.py` | Per-exit LightGBM walk-forward + 2026 holdout — PR-2 |
+| `edge_diagnosis.py` | Synthesize verdict per variant → `sbt_1700_edge_diagnosis.md` — PR-2 |
+| `run_diagnosis.py` | One-shot orchestrator for PR-2 — PR-2 |
+| `train_ranker.py` | (deprecated stub — superseded by ranker_diagnosis.py) |
+| `eval_ranker.py` | (deprecated stub — superseded by edge_diagnosis.py) |
+| `run_scan_1700.py` | (PR-3 stub) live cron — only after explicit go-decision based on diagnosis |
 
 External tools:
 - `tools/sbt1700_fetch_intraday.py` — gap-only Matriks 15m fetcher;

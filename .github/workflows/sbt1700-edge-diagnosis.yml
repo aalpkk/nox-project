@@ -1,0 +1,80 @@
+name: SBT-1700 — Edge Diagnosis (PR-2)
+
+# Manual trigger only. Runs the multi-exit cohort backtest + per-exit
+# LightGBM ranker walk-forward + edge-diagnosis writeup. NO live cron is
+# enabled by this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_run_number:
+        description: 'sbt1700-build-dataset run number to source the dataset from (artifact name = sbt1700-dataset-<N>). Leave empty to use the local committed dataset, if present.'
+        required: false
+        default: ''
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Pull dataset from prior build (if requested)
+        if: ${{ github.event.inputs.dataset_run_number != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p output
+          gh run download "${{ github.event.inputs.dataset_run_number }}" \
+            -n "sbt1700-dataset-${{ github.event.inputs.dataset_run_number }}" \
+            -D output \
+            -R "${{ github.repository }}"
+          ls -la output/sbt_1700_dataset.parquet
+
+      - name: Verify dataset present
+        run: |
+          if [ ! -f output/sbt_1700_dataset.parquet ]; then
+            echo "::error::output/sbt_1700_dataset.parquet not found. Either commit it or pass dataset_run_number."
+            exit 1
+          fi
+          python -c "import pandas as pd; df=pd.read_parquet('output/sbt_1700_dataset.parquet'); print('rows', len(df), 'cols', len(df.columns), 'date range', df['date'].min(), '→', df['date'].max())"
+
+      - name: Run edge diagnosis
+        run: |
+          python -m sbt1700.run_diagnosis \
+              --dataset output/sbt_1700_dataset.parquet \
+              --master output/ohlcv_10y_fintables_master.parquet \
+              --out-dir output
+
+      - name: Show diagnosis report
+        if: always()
+        run: |
+          if [ -f output/sbt_1700_edge_diagnosis.md ]; then
+            echo "::group::Edge diagnosis"
+            cat output/sbt_1700_edge_diagnosis.md
+            echo "::endgroup::"
+          fi
+          if [ -f output/sbt_1700_exit_matrix.md ]; then
+            echo "::group::Exit matrix"
+            cat output/sbt_1700_exit_matrix.md
+            echo "::endgroup::"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbt1700-diagnosis-${{ github.run_number }}
+          path: |
+            output/sbt_1700_exit_matrix.csv
+            output/sbt_1700_exit_matrix.md
+            output/sbt_1700_exit_matrix_trades.parquet
+            output/sbt_1700_ranker_by_exit.csv
+            output/sbt_1700_edge_diagnosis.md
+          if-no-files-found: warn
+          retention-days: 30
