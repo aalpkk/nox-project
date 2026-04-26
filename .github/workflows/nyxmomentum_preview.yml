@@ -1,0 +1,112 @@
+name: nyxmomentum — Preview Scan (ad-hoc)
+
+on:
+  workflow_dispatch:
+    inputs:
+      top:
+        description: "V5 scope for ICE/SMS overlay (top N picks). Crowded-out + sticky always included. Default 20 = all picks."
+        type: string
+        default: "20"
+      include_m0:
+        description: "Also fetch ICE/SMS for M0 benchmark picks not already in V5 scope."
+        type: boolean
+        default: false
+      no_ice_sms:
+        description: "Skip Matriks fetch entirely (pure selection preview, no overlay)."
+        type: boolean
+        default: false
+
+concurrency:
+  group: nyxmomentum-tracker
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
+
+      - name: Refresh OHLCV panel + XU100 cache (yfinance delta)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -u tools/fetch_ohlcv_fintables_universe.py
+          python - <<'PYEOF'
+          import yfinance as yf, pandas as pd
+          out = "output/xu100_cache.parquet"
+          xu = yf.download("XU100.IS", period="6y", progress=False, auto_adjust=True)
+          if isinstance(xu.columns, pd.MultiIndex):
+              xu.columns = xu.columns.get_level_values(0)
+          xu = xu[["Open","High","Low","Close","Volume"]].dropna(how="all")
+          xu.index.name = "Date"
+          xu.to_parquet(out)
+          print(f"  XU100 cache: {len(xu)} bars, last={xu.index.max().date()}")
+          PYEOF
+
+      - name: Rebuild features (step0 → step2)
+        shell: bash
+        env:
+          PANEL: output/ohlcv_6y_fintables.parquet
+        run: |
+          set -euo pipefail
+          python -u run_nyxmomentum_step0.py --ohlcv "$PANEL"
+          python -u run_nyxmomentum_step1.py --ohlcv "$PANEL"
+          python -u run_nyxmomentum_step2.py --ohlcv "$PANEL"
+
+      - name: Run preview scan (ICE/SMS overlay)
+        shell: bash
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          TOP_N:           ${{ inputs.top }}
+          INCLUDE_M0:      ${{ inputs.include_m0 }}
+          NO_ICE_SMS:      ${{ inputs.no_ice_sms }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${TOP_N:-}" ]; then
+            args+=(--top "$TOP_N")
+          fi
+          if [ "${INCLUDE_M0}" = "true" ]; then
+            args+=(--include-m0)
+          fi
+          if [ "${NO_ICE_SMS}" = "true" ]; then
+            args+=(--no-ice-sms)
+          fi
+          python -u nyxmomentum_preview_today.py "${args[@]}"
+
+      - name: Commit preview outputs
+        shell: bash
+        env:
+          BRANCH:  ${{ github.ref_name }}
+          RUN_SHA: ${{ github.sha }}
+          RUN_ID:  ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/nyxmomentum/live/
+          if git diff --cached --quiet; then
+            echo "no preview changes — skipping commit"
+            exit 0
+          fi
+          DATE_UTC="$(date -u +%Y-%m-%d)"
+          SHORT_SHA="${RUN_SHA:0:7}"
+          git commit -m "chore(nyxmomentum): preview scan ${DATE_UTC} (ref=${BRANCH}, src=${SHORT_SHA}, run=${RUN_ID}) [skip ci]"
+          git pull --rebase origin "$BRANCH"
+          git push origin "HEAD:$BRANCH"

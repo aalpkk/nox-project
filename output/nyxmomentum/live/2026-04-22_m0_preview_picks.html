@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="tr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nyxmomentum — M0 picks · 2026-04-22</title>
+<style>
+
+@import url('https://fonts.googleapis.com/css2?family=Rubik+Glitch&family=Homemade+Apple&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+:root {
+  --bg-primary: #060709;
+  --bg-card: #0d0d10;
+  --bg-elevated: #141417;
+  --bg-hover: #1b1b1f;
+  --border-subtle: #1e1e23;
+  --border-dim: #2c2b30;
+  --text-primary: #e8e4dc;
+  --text-secondary: #8a8580;
+  --text-muted: #555250;
+  --nox-gold: #c9a96e;
+  --nox-gold-dim: rgba(201,169,110,0.10);
+  --nox-cyan: #c9a96e;
+  --nox-cyan-dim: rgba(201,169,110,0.10);
+  --nox-copper: #b8956e;
+  --nox-orange: #a8876a;
+  --nox-orange-dim: rgba(168,135,106,0.10);
+  --nox-green: #7a9e7a;
+  --nox-red: #9e5a5a;
+  --nox-purple: #8a7a9e;
+  --nox-yellow: #c9a96e;
+  --nox-blue: #7a8fa5;
+  --font-display: 'DM Sans', sans-serif;
+  --font-brand: 'Rubik Glitch', cursive;
+  --font-handwrite: 'Homemade Apple', cursive;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 14px;
+  --radius-sm: 8px;
+}
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: var(--font-display);
+  background: #060709;
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Aurora mesh gradient ── */
+.aurora-bg {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.aurora-layer {
+  position: absolute;
+  width: 200%; height: 200%;
+  top: -50%; left: -50%;
+  opacity: 1;
+}
+.aurora-layer-1 {
+  background:
+    radial-gradient(ellipse 35% 25% at 8% 12%, rgba(207,199,196,0.35) 0%, transparent 50%),
+    radial-gradient(ellipse 25% 20% at 88% 78%, rgba(32,30,33,0.6) 0%, transparent 50%);
+  animation: aurora-drift 28s ease-in-out infinite;
+}
+.aurora-layer-2 {
+  background:
+    radial-gradient(ellipse 30% 22% at 78% 8%, rgba(207,199,196,0.2) 0%, transparent 50%),
+    radial-gradient(ellipse 22% 22% at 12% 88%, rgba(32,30,33,0.5) 0%, transparent 50%);
+  animation: aurora-drift 35s ease-in-out infinite reverse;
+}
+.aurora-layer-3 {
+  background:
+    radial-gradient(ellipse 25% 15% at 45% 45%, rgba(184,149,110,0.12) 0%, transparent 40%);
+  animation: aurora-pulse 22s ease-in-out infinite;
+}
+.mesh-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle 400px at 12% 18%, rgba(207,199,196,0.08) 0%, transparent 50%),
+    radial-gradient(circle 350px at 88% 72%, rgba(32,30,33,0.2) 0%, transparent 50%);
+  filter: blur(40px);
+}
+@keyframes aurora-drift {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(4%, -4%) rotate(3deg); }
+  50% { transform: translate(-4%, 4%) rotate(-3deg); }
+  75% { transform: translate(2%, 2%) rotate(2deg); }
+}
+@keyframes aurora-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.1); }
+}
+.nox-container { position: relative; z-index: 1; max-width: 1440px; margin: 0 auto; padding: 20px 16px; }
+
+/* HEADER */
+.nox-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 0; margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.nox-logo {
+  font-family: var(--font-display);
+  font-size: 1.6rem; font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #c9a96e, #e8dcc8, #a8876a);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.nox-logo .proj { font-weight: 400; -webkit-text-fill-color: var(--text-secondary); font-size: 0.75em; margin-left: 2px; letter-spacing: 0.02em; }
+.nox-logo .mode { display: block; font-size: 0.45em; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; -webkit-text-fill-color: var(--text-muted); margin-top: 2px; }
+.nox-meta { text-align: right; font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono); }
+.nox-meta b { color: var(--nox-cyan); }
+
+/* STAT STRIP */
+.nox-stats {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.nox-stat {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: 20px; padding: 6px 14px;
+  font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; transition: all 0.2s;
+  user-select: none;
+}
+.nox-stat:hover { border-color: var(--border-dim); background: var(--bg-elevated); }
+.nox-stat.active { border-color: var(--nox-cyan); background: var(--nox-cyan-dim); color: var(--nox-cyan); }
+.nox-stat .cnt { font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem; }
+.nox-stat .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* FILTER BAR */
+.nox-filters {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.nox-filters label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 2px; }
+.nox-filters select, .nox-filters input {
+  background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  padding: 5px 10px; font-size: 0.78rem; font-family: var(--font-mono);
+  outline: none; transition: border-color 0.2s;
+}
+.nox-filters select:focus, .nox-filters input:focus { border-color: var(--nox-cyan); }
+.nox-filters input[type=number] { width: 60px; }
+.nox-filters input[type=text] { width: 100px; }
+.nox-btn { background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm); padding: 5px 12px; cursor: pointer; font-size: 0.72rem;
+  font-family: var(--font-display); font-weight: 500; transition: all 0.15s; }
+.nox-btn:hover { color: var(--text-primary); border-color: var(--border-dim); }
+
+/* TABLE */
+.nox-table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border-subtle); background: var(--bg-card); }
+table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+thead { position: sticky; top: 0; z-index: 10; }
+th {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-weight: 600; font-size: 0.68rem;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 10px 8px; text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer; user-select: none;
+  white-space: nowrap; transition: color 0.15s;
+}
+th:hover { color: var(--nox-cyan); }
+th.sorted { color: var(--nox-cyan); }
+td { padding: 8px; border-bottom: 1px solid rgba(39,39,42,0.5); white-space: nowrap; font-family: var(--font-mono); font-size: 0.74rem; }
+tr { transition: background 0.1s; }
+tr:hover { background: var(--bg-hover); }
+tr.hl { background: rgba(34,211,238,0.04); }
+tr.hidden { display: none; }
+
+/* BADGES */
+.sig-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 12px;
+  font-weight: 700; font-size: 0.68rem; font-family: var(--font-display);
+  letter-spacing: 0.02em; color: #fff;
+}
+.reg-badge {
+  display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm);
+  font-size: 0.65rem; font-weight: 600; font-family: var(--font-display);
+}
+.oe-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 8px;
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+  background: rgba(248,113,113,0.15); color: var(--nox-red);
+}
+.kc-badge {
+  display: inline-block; padding: 2px 6px; border-radius: var(--radius-sm);
+  font-size: 0.68rem; font-weight: 600; font-family: var(--font-mono);
+}
+.kc-hi { background: rgba(74,222,128,0.12); color: var(--nox-green); }
+.kc-mid { background: rgba(96,165,250,0.12); color: var(--nox-blue); }
+.kc-lo { background: rgba(113,113,122,0.12); color: var(--text-muted); }
+
+.tv-link {
+  color: var(--text-primary); text-decoration: none; font-weight: 600;
+  font-family: var(--font-display); font-size: 0.8rem;
+  transition: color 0.15s;
+}
+.tv-link:hover { color: var(--nox-cyan); }
+.rr-val { font-weight: 700; }
+.rs-pos { color: var(--nox-green); }
+.rs-neg { color: var(--nox-red); }
+.detail-cell { font-family: var(--font-mono); font-size: 0.65rem; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.detail-cell .kctag { color: var(--nox-blue); }
+
+/* STATUS BAR */
+.nox-status {
+  text-align: center; padding: 16px 0; margin-top: 16px;
+  font-size: 0.72rem; color: var(--text-muted);
+  font-family: var(--font-mono);
+  border-top: 1px solid var(--border-subtle);
+}
+.nox-status b { color: var(--nox-cyan); }
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+  .nox-header { flex-direction: column; gap: 8px; text-align: center; }
+  .nox-meta { text-align: center; }
+  table { font-size: 0.7rem; }
+  td, th { padding: 5px 4px; }
+  .nox-logo { font-size: 1.2rem; }
+}
+
+
+/* ── briefing-style container ── */
+.briefing-container {
+  position: relative; z-index: 1;
+  max-width: 960px; margin: 0 auto;
+  padding: 0 1.5rem 2rem;
+}
+
+/* ── sticky status bar ── */
+.nox-status-bar {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(6,6,8,0.55);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  border-bottom: 1px solid rgba(201,169,110,0.08);
+  padding: 0.6rem 1.5rem;
+  margin: 0 -1.5rem 1.5rem;
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+}
+.nox-status-bar .logo {
+  display: inline-flex; align-items: baseline;
+  gap: 0.15rem; white-space: nowrap;
+}
+.nox-status-bar .logo .nox-text {
+  font-family: var(--font-brand); font-size: 4.2rem;
+  color: #fff; letter-spacing: 0.06em; line-height: 0.85;
+}
+.nox-status-bar .logo .brief-text {
+  font-family: var(--font-handwrite); font-size: 1.1rem;
+  color: var(--nox-blue); margin-left: 0.2rem;
+  position: relative; top: -0.15rem;
+}
+.nox-status-bar .profile-pill {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.2rem 0.7rem; border-radius: 1rem;
+  font-weight: 600; font-size: 0.72rem;
+  border: 1px solid var(--nox-blue); color: var(--nox-blue);
+  font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.nox-status-bar .mpill {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  padding: 0.15rem 0.5rem; border-radius: 0.75rem;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  color: var(--text-secondary); white-space: nowrap;
+}
+.nox-status-bar .mpill b { font-weight: 600; color: #fff; }
+.nox-status-bar .meta-right {
+  font-size: 0.7rem; color: var(--text-muted);
+  font-family: var(--font-mono); white-space: nowrap; margin-left: auto;
+}
+.nox-status-bar .back-link {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  color: var(--text-secondary); text-decoration: none;
+  padding: 0.15rem 0.5rem; border-radius: 0.75rem;
+  border: 1px solid var(--border-subtle);
+}
+.nox-status-bar .back-link:hover {
+  color: var(--nox-blue); border-color: var(--nox-blue);
+}
+
+/* ── action cards (briefing-style) ── */
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.75rem; margin-bottom: 1.5rem;
+}
+.action-card {
+  background: rgba(199,189,190,0.08);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: none; border-radius: 18px;
+  padding: 0.85rem 1.05rem;
+  border-left: 3px solid transparent;
+  transition: all 0.25s ease;
+  animation: cardFadeIn 0.3s ease-out both;
+  position: relative; overflow: hidden;
+}
+.action-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(184,149,110,0.15), transparent);
+  opacity: 0; transition: opacity 0.3s;
+}
+.action-card:hover {
+  background: rgba(199,189,190,0.12);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(184,149,110,0.03);
+  transform: translateY(-1px);
+}
+.action-card:hover::before { opacity: 1; }
+.action-card.tier1  { border-left: 3px solid rgba(201,169,110,0.45); }
+.action-card.tier2a { border-left: 3px solid rgba(184,149,110,0.25); }
+.action-card.tier2b { border-left: 3px solid rgba(138,122,158,0.30); }
+@keyframes cardFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.action-card .card-head {
+  display: flex; align-items: center; gap: 0.45rem;
+  margin-bottom: 0.4rem;
+}
+.action-card .card-head .rank-tag {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.action-card .card-head .ticker {
+  font-family: 'Inter', sans-serif; font-weight: 900;
+  font-size: 1.05rem; color: #fff;
+}
+.action-card .card-head .tier-tag {
+  font-size: 0.58rem; font-family: var(--font-mono);
+  padding: 0.1rem 0.35rem; border-radius: 0.25rem;
+  font-weight: 600; text-transform: uppercase;
+}
+.action-card .card-head .tier-tag.t1  { background: rgba(201,169,110,0.12); color: #c9a96e; }
+.action-card .card-head .tier-tag.t2a { background: rgba(168,135,106,0.12); color: #a8876a; }
+.action-card .card-head .tier-tag.t2b { background: rgba(138,122,158,0.12); color: #8a7a9e; }
+.action-card .card-head .score-pill {
+  font-family: var(--font-mono); font-size: 0.68rem;
+  padding: 0.1rem 0.4rem; border-radius: 4px;
+  background: var(--nox-gold-dim); color: var(--nox-gold);
+  margin-left: auto;
+}
+.action-card .card-badges {
+  display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.4rem;
+}
+.action-card .card-entry {
+  display: inline-flex; gap: 0.4rem; flex-wrap: wrap;
+  padding-top: 0.4rem; border-top: 1px solid var(--border-subtle);
+  font-family: var(--font-mono); font-size: 0.7rem;
+  width: 100%;
+}
+.action-card .card-entry .e-label { color: var(--text-muted); }
+.action-card .card-entry .e-limit { color: var(--nox-gold); font-weight: 600; }
+
+/* badge styles for status / ICE / SMS */
+.badge {
+  font-family: var(--font-mono); font-size: 0.62rem;
+  padding: 0.12rem 0.42rem; border-radius: 0.4rem;
+  font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.badge.bdg-pos    { background: rgba(122,158,122,0.14); color: var(--nox-green); border-color: rgba(122,158,122,0.25); }
+.badge.bdg-neg    { background: rgba(158,90,90,0.14);   color: var(--nox-red);   border-color: rgba(158,90,90,0.25); }
+.badge.bdg-neu    { background: rgba(122,143,165,0.12); color: var(--nox-blue);  border-color: rgba(122,143,165,0.22); }
+.badge.bdg-dim    { background: rgba(138,133,128,0.10); color: var(--text-muted); }
+.badge.st-keep    { background: rgba(201,169,110,0.12); color: #c9a96e; border-color: rgba(201,169,110,0.25); }
+.badge.st-sticky  { background: rgba(138,122,158,0.14); color: #b8a4d4; border-color: rgba(138,122,158,0.25); }
+.badge.st-new     { background: rgba(122,158,122,0.16); color: var(--nox-green); border-color: rgba(122,158,122,0.30); }
+.badge.st-crowd   { background: rgba(168,135,106,0.14); color: #c8a484; border-color: rgba(168,135,106,0.25); }
+.badge.st-drop    { background: rgba(158,90,90,0.14);   color: var(--nox-red);   border-color: rgba(158,90,90,0.25); }
+
+/* tier-group-label: section heading */
+.tier-group-label {
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 0.92rem; color: var(--text-secondary);
+  margin: 1.3rem 0 0.5rem;
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.tier-group-label:first-of-type { margin-top: 0.2rem; }
+.tier-group-label .cnt {
+  font-family: var(--font-mono); font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.aux-note {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  color: var(--text-muted); margin: -0.2rem 0 0.6rem;
+  max-width: 720px; line-height: 1.45;
+}
+.footer-meta {
+  font-family: var(--font-mono); font-size: 0.68rem;
+  color: var(--text-muted); margin-top: 1.5rem;
+  padding-top: 0.8rem; border-top: 1px solid var(--border-subtle);
+  text-align: center;
+}
+</style></head><body>
+<div class="aurora-bg">
+  <div class="aurora-layer aurora-layer-1"></div>
+  <div class="aurora-layer aurora-layer-2"></div>
+  <div class="aurora-layer aurora-layer-3"></div>
+</div>
+<div class="mesh-overlay"></div>
+<div class="briefing-container">
+  <div class="nox-status-bar">
+    <span class="logo">
+      <span class="nox-text">NYX</span><span class="brief-text">momentum</span>
+    </span>
+    <span class="profile-pill">M0 · 2026-04-22</span>
+    <span class="mpill">frozen <b>v1.1.0-frozen+preview</b></span>
+    <span class="meta-right">rendered 2026-04-25 21:52 UTC</span>
+    <a class="back-link" href="tracker.html">← tracker</a>
+  </div>
+  
+  <div class="tier-group-label">M0 picks <span class="cnt">· 20 names</span></div><div class="action-grid"><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#1</span><span class="ticker">HEDEF</span><span class="tier-tag t2b">M0</span><span class="score-pill">12.9985</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#2</span><span class="ticker">IEYHO</span><span class="tier-tag t2b">M0</span><span class="score-pill">9.9318</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#3</span><span class="ticker">CRDFA</span><span class="tier-tag t2b">M0</span><span class="score-pill">9.8738</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#4</span><span class="ticker">ODINE</span><span class="tier-tag t2b">M0</span><span class="score-pill">9.3372</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#5</span><span class="ticker">ALKLC</span><span class="tier-tag t2b">M0</span><span class="score-pill">8.1463</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#6</span><span class="ticker">MAGEN</span><span class="tier-tag t2b">M0</span><span class="score-pill">6.0834</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#7</span><span class="ticker">OZRDN</span><span class="tier-tag t2b">M0</span><span class="score-pill">5.4602</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#8</span><span class="ticker">ENSRI</span><span class="tier-tag t2b">M0</span><span class="score-pill">5.2446</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#9</span><span class="ticker">GMTAS</span><span class="tier-tag t2b">M0</span><span class="score-pill">4.9569</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#10</span><span class="ticker">EDATA</span><span class="tier-tag t2b">M0</span><span class="score-pill">4.6012</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#11</span><span class="ticker">ISKPL</span><span class="tier-tag t2b">M0</span><span class="score-pill">4.0932</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#12</span><span class="ticker">BASGZ</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.8019</span></div><div class="card-badges"><span class="badge st-new">NEW</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#13</span><span class="ticker">MEGMT</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.6257</span></div><div class="card-badges"><span class="badge st-new">NEW</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#14</span><span class="ticker">BARMA</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.6178</span></div><div class="card-badges"><span class="badge st-new">NEW</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#15</span><span class="ticker">ARMGD</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.6074</span></div><div class="card-badges"><span class="badge st-new">NEW</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#16</span><span class="ticker">ASELS</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.5232</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#17</span><span class="ticker">ARASE</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.4722</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#18</span><span class="ticker">CEMZY</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.3044</span></div><div class="card-badges"><span class="badge st-keep">KEEP</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#19</span><span class="ticker">LIDER</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.2385</span></div><div class="card-badges"><span class="badge st-new">NEW</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div><div class="action-card tier2b"><div class="card-head"><span class="rank-tag">#20</span><span class="ticker">LIDFA</span><span class="tier-tag t2b">M0</span><span class="score-pill">3.2134</span></div><div class="card-badges"><span class="badge st-new">NEW</span></div><span class="card-entry"><span class="e-label">w</span><span class="e-limit">5.00%</span></span></div></div>
+  
+  <div class="footer-meta">
+    nyxmomentum v1.1 · M0 · 20 names · frozen v1.1.0-frozen+preview
+  </div>
+</div>
+</body></html>
