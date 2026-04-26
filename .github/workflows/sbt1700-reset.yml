@@ -4,22 +4,27 @@ name: SBT-1700 RESET — phased pipeline
 # never gets unlocked accidentally during discovery / validation.
 #
 # Phase semantics:
-#   manifest    : write split manifest JSON for the dataset.
-#   discovery   : exit matrix + per-exit ranker WF on TRAIN only.
-#   validation  : ≤2 carried exits on VAL only (TRAIN-fit, VAL-applied).
-#   final_test  : ONE-SHOT readout on TEST. Requires unlock_test=true.
-#   report      : synthesize sbt_1700_reset_report.md from prior outputs.
+#   manifest        : write split manifest JSON for the dataset.
+#   discovery       : legacy exit matrix + per-exit ranker WF on TRAIN only.
+#   discovery_grid  : F0..F8 controlled-grammar exit grid (~142 variants) on
+#                     TRAIN only. Cohort metrics + ≤4 carried candidates
+#                     (slot 4 is the conditional F8 profit-lock carry).
+#                     No ranker work in this phase.
+#   validation      : ≤4 carried exits on VAL only (TRAIN-fit, VAL-applied).
+#   final_test      : ONE-SHOT readout on TEST. Requires unlock_test=true.
+#   report          : synthesize sbt_1700_reset_report.md from prior outputs.
 on:
   workflow_dispatch:
     inputs:
       phase:
-        description: 'manifest | discovery | validation | final_test | report'
+        description: 'manifest | discovery | discovery_grid | validation | final_test | report'
         required: true
-        default: 'discovery'
+        default: 'discovery_grid'
         type: choice
         options:
           - manifest
           - discovery
+          - discovery_grid
           - validation
           - final_test
           - report
@@ -36,7 +41,7 @@ on:
         required: false
         default: 'output/ohlcv_10y_fintables_master.parquet'
       carry_exits:
-        description: '(validation only) comma-separated exits to carry, e.g. E5_symmetric,E7_partial'
+        description: '(validation only) 1 to 4 comma-separated exits, e.g. F2_sl1.5_p33at1R_be1.5R_atr2.0_h40,F8a_lock_1R_sl1.5_p0_lockL1_h40'
         required: false
         default: ''
       final_exit:
@@ -106,7 +111,7 @@ jobs:
       - name: Refuse validation without --carry_exits
         if: ${{ github.event.inputs.phase == 'validation' && github.event.inputs.carry_exits == '' }}
         run: |
-          echo "::error::phase=validation requires carry_exits input (1 or 2 exit names)."
+          echo "::error::phase=validation requires carry_exits input (1 to 4 exit names)."
           exit 1
 
       - name: Run phase — manifest
@@ -126,6 +131,15 @@ jobs:
             --master  "${{ github.event.inputs.master_path }}" \
             --out-dir output \
             discovery
+
+      - name: Run phase — discovery_grid
+        if: ${{ github.event.inputs.phase == 'discovery_grid' }}
+        run: |
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            discovery_grid
 
       - name: Run phase — validation
         if: ${{ github.event.inputs.phase == 'validation' }}
@@ -178,6 +192,12 @@ jobs:
             output/sbt_1700_reset_split_manifest.json
             output/sbt_1700_exit_discovery_train.csv
             output/sbt_1700_ranker_discovery_train.csv
+            output/sbt_1700_exit_discovery_grid.csv
+            output/sbt_1700_exit_discovery_family_summary.csv
+            output/sbt_1700_exit_discovery_recommended_validation_exits.md
+            output/sbt_1700_exit_discovery_yearly.csv
+            output/sbt_1700_exit_discovery_carried.csv
+            output/sbt_1700_exit_discovery_rejected_top.csv
             output/sbt_1700_exit_validation.csv
             output/sbt_1700_ranker_validation.csv
             output/sbt_1700_final_test_LOCKED.csv
