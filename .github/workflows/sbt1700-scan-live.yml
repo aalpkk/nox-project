@@ -1,0 +1,133 @@
+name: SBT-1700 — E04_C01 Live Scan (paper)
+
+# Daily live-style scan of SBT-1700 candidates with the frozen 5D ranker
+# and frozen E04_C01 execution geometry. Renders an HTML watchlist using
+# the briefing aesthetic and (optionally) publishes to GitHub Pages.
+#
+# Cron: 17:30 TR (= 14:30 UTC) on weekdays — after the 17:00–18:00 BIST bar
+# closes and `close_1700` is observable. The scan is paper / NOT live.
+
+on:
+  schedule:
+    - cron: '30 14 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Scan date (YYYY-MM-DD). Boş = bugün TR.'
+        required: false
+        default: ''
+
+concurrency:
+  group: sbt1700-scan-live
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve scan date
+        id: resolve_date
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE="${{ github.event.inputs.date }}"
+          else
+            DATE=$(TZ='Europe/Istanbul' date +%Y-%m-%d)
+          fi
+          echo "scan_date=$DATE" >> $GITHUB_OUTPUT
+          echo "Using scan date: $DATE"
+
+      - name: Run scan
+        run: |
+          set -o pipefail
+          python -m sbt1700.scan_live --date "${{ steps.resolve_date.outputs.scan_date }}" \
+            2>&1 | tee sbt1700_scan_output.txt
+
+      - name: Push HTML to GitHub Pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          from core.reports import push_html_to_github
+          html = pathlib.Path("output/sbt_1700_E04_scan_latest.html").read_text(encoding="utf-8")
+          url = push_html_to_github(html, "sbt_1700_E04_scan.html", "sbt1700-latest")
+          print(f"  ✓ published: {url}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, re, requests
+
+          try:
+              with open("sbt1700_scan_output.txt") as f:
+                  raw = f.read()
+          except FileNotFoundError:
+              raw = ""
+
+          m_n = re.search(r"candidates on (\S+):\s*(\d+)", raw)
+          date = m_n.group(1) if m_n else "?"
+          n_cand = int(m_n.group(2)) if m_n else 0
+
+          tickers = re.findall(r"^\[scan_live\]\s+(\S+)\s+score=([\d.]+)\s+\((\S+)\)", raw, re.M)
+          q80_match = re.search(r"q80=([\d.]+)\s+q90=([\d.]+)", raw)
+          cutoffs = ""
+          if q80_match:
+              cutoffs = f"q80={q80_match.group(1)} · q90={q80_match.group(2)}"
+
+          if n_cand == 0:
+              body = f"📊 <b>SBT-1700 / E04_C01 paper</b> · {date}\n\nNO TRIGGER — bugün aday yok.\n{cutoffs}"
+          else:
+              lines = [f"📊 <b>SBT-1700 / E04_C01 paper</b> · {date}", ""]
+              lines.append(f"{n_cand} aday tetikledi:")
+              for t, s, tag in tickers:
+                  emoji = "🟡" if tag == "TOP-DECILE" else "🟢" if tag == "TOP-QUINTILE" else "⚪"
+                  lines.append(f"  {emoji} <b>{t}</b> · {s} ({tag})")
+              lines.append("")
+              lines.append(f"<i>{cutoffs}</i>")
+              lines.append("")
+              lines.append("⚠️ Paper/watchlist · canlı para yok")
+              body = "\n".join(lines)
+
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": body[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:")
+              print(body)
+          PYEOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sbt1700-scan-${{ steps.resolve_date.outputs.scan_date }}-${{ github.run_number }}
+          path: |
+            sbt1700_scan_output.txt
+            output/sbt_1700_E04_scan_*.html
