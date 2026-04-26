@@ -54,6 +54,13 @@ FEATURE_BLACKLIST: frozenset[str] = frozenset({
     "entry_px", "stop_px", "tp_px", "partial_px",
     "initial_R_price", "exit_px", "cost_R",
     "exit_variant",
+    # v2 (F0..F8) outcome fields. Booleans are numeric, so they would
+    # otherwise be picked up by `select_feature_columns`.
+    "exit_family",
+    "initial_stop_hit", "breakeven_stop_hit", "profit_lock_stop_hit",
+    "partial2_hit", "partial2_px",
+    "trend_exit_hit", "max_hold_hit",
+    "MFE_R", "giveback_R", "captured_MFE_ratio",
     # ATR used for stop sizing — feature only if discovery decides;
     # excluded by default to keep the ranker from learning entry_px ratios.
     "atr_1700",

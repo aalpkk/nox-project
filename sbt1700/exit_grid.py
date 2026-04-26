@@ -564,6 +564,45 @@ def grid_summary() -> dict[str, int]:
     return counts
 
 
+# ---------- public name resolver ---------------------------------------------
+
+# Cached name -> ExitConfigV2 lookup. Built lazily so `import`-ing this module
+# stays cheap; rebuilt only when `_LOOKUP_V2` is None (e.g. test reset).
+_LOOKUP_V2: dict[str, ExitConfigV2] | None = None
+
+
+def _v2_lookup() -> dict[str, ExitConfigV2]:
+    global _LOOKUP_V2
+    if _LOOKUP_V2 is None:
+        _LOOKUP_V2 = {cfg.name: cfg for cfg in build_grid_v2()}
+    return _LOOKUP_V2
+
+
+def resolve_exit_spec(name: str) -> ExitConfigV2:
+    """Resolve a v2 (F-prefixed) exit name to its `ExitConfigV2`.
+
+    Legacy E3..E7 names are NOT v2 specs — they live in `sbt1700.exits`
+    and use a different simulator entry point. Callers that need to
+    accept either form should branch on the prefix and dispatch to the
+    appropriate simulator.
+    """
+    lookup = _v2_lookup()
+    cfg = lookup.get(name)
+    if cfg is not None:
+        return cfg
+    families = sorted({n.split("_", 1)[0] for n in lookup.keys()})
+    raise ValueError(
+        f"unknown v2 exit name: {name!r}. "
+        f"Available v2 family prefixes: {families}. "
+        f"For legacy E3..E7 names use sbt1700.exits.simulate_exit instead."
+    )
+
+
+def is_v2_name(name: str) -> bool:
+    """True iff `name` is a known v2 grid variant."""
+    return name in _v2_lookup()
+
+
 if __name__ == "__main__":
     s = grid_summary()
     for k, v in s.items():

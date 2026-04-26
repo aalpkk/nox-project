@@ -34,8 +34,11 @@ from pathlib import Path
 
 import pandas as pd
 
+import numpy as np
+
 from sbt1700.exits import EXIT_VARIANTS, simulate_exit, variant_names
-from sbt1700.exit_grid import build_grid_v2, grid_summary
+from sbt1700.exits_v2 import simulate_exit_v2
+from sbt1700.exit_grid import build_grid_v2, grid_summary, is_v2_name, resolve_exit_spec
 from sbt1700.exit_discovery import run_discovery_grid
 from sbt1700.capture_decomp import run_capture_decomp
 from sbt1700.splits import (
@@ -71,28 +74,54 @@ def resimulate_for_variant(
 ) -> pd.DataFrame:
     """Return features_df augmented with `variant`-specific label columns.
 
-    The original E3 label columns produced by build_dataset are dropped
-    so they cannot leak into ranker features. The new label set replaces
-    them in place. Rows with no forward bars or invalid ATR are kept but
-    the label cells are NaN — downstream `dropna(subset=[label])` removes
-    them at fit/eval time.
+    Dispatches by name prefix:
+      * legacy E3..E7  → `sbt1700.exits.simulate_exit` (5-field outcome)
+      * v2 F0..F8      → `sbt1700.exits_v2.simulate_exit_v2`
+        (uses prior-close history for EMA bootstrap and optional
+        box_top/box_bottom for structure-based trend exits)
+
+    Both legacy and v2 label columns are stripped from `features_df`
+    before re-simulation so they cannot leak into ranker features and
+    so v2-only fields don't survive a v1→v2 (or vice-versa) re-pass.
+    Rows with no forward bars / invalid ATR are kept but with NaN
+    labels — downstream `dropna(subset=[label])` removes them at
+    fit/eval time.
     """
-    if variant not in EXIT_VARIANTS:
-        raise KeyError(f"unknown exit variant {variant!r}")
+    is_v2 = is_v2_name(variant)
+    if not is_v2 and variant not in EXIT_VARIANTS:
+        raise KeyError(
+            f"unknown exit variant {variant!r}; "
+            f"legacy: {sorted(EXIT_VARIANTS)}; "
+            f"v2: use sbt1700.exit_grid.resolve_exit_spec for diagnostics"
+        )
+    cfg = resolve_exit_spec(variant) if is_v2 else None
     by_ticker = _by_ticker_ohlc(daily_master)
+    # Drop both legacy E3..E7 outcome columns AND v2-specific outcome
+    # columns. Re-simulation produces a fresh outcome set; carrying the
+    # old set forward would risk shape mismatch and leak.
     label_cols = [
-        "exit_variant",
-        "realized_R_gross", "realized_R_net", "win_label",
-        "tp_hit", "sl_hit", "timeout_hit", "partial_hit",
+        # shared
+        "exit_variant", "realized_R_gross", "realized_R_net", "win_label",
         "exit_reason", "bars_held",
-        "entry_px", "stop_px", "tp_px", "partial_px",
-        "atr_1700", "initial_R_price", "exit_px", "exit_date", "cost_R",
+        "entry_px", "stop_px", "atr_1700", "initial_R_price",
+        "exit_px", "exit_date", "cost_R",
+        "partial_px", "partial_hit",
+        # legacy E3..E7 only
+        "tp_hit", "sl_hit", "timeout_hit", "tp_px",
+        # v2 only
+        "exit_family",
+        "initial_stop_hit", "breakeven_stop_hit", "profit_lock_stop_hit",
+        "partial2_hit", "partial2_px",
+        "trend_exit_hit", "max_hold_hit",
+        "MFE_R", "giveback_R", "captured_MFE_ratio",
     ]
     base = features_df.drop(
         columns=[c for c in label_cols if c in features_df.columns],
         errors="ignore",
     ).copy()
     base["date"] = pd.to_datetime(base["date"])
+
+    use_box = ("box_top" in base.columns) and ("box_bottom" in base.columns)
 
     out_rows: list[dict] = []
     for r in base.itertuples(index=False):
@@ -104,7 +133,23 @@ def resimulate_for_variant(
             continue
         atr = float(r.atr14_prior)
         entry_px = float(r.close_1700)
-        sim = simulate_exit(variant, pd.Timestamp(r.date), entry_px, atr, sub)
+        entry_date = pd.Timestamp(r.date)
+        if is_v2:
+            prior_closes = sub.loc[sub.index < entry_date, "Close"].values.astype(float)
+            bt = float(getattr(r, "box_top", float("nan"))) if use_box else float("nan")
+            bb = float(getattr(r, "box_bottom", float("nan"))) if use_box else float("nan")
+            sim = simulate_exit_v2(
+                cfg,
+                entry_date=entry_date,
+                entry_px=entry_px,
+                atr_1700=atr,
+                forward_ohlc=sub,
+                prior_closes=prior_closes,
+                box_top=bt if np.isfinite(bt) else None,
+                box_bottom=bb if np.isfinite(bb) else None,
+            )
+        else:
+            sim = simulate_exit(variant, entry_date, entry_px, atr, sub)
         merged = {col: getattr(r, col) for col in base.columns}
         merged.update(sim)
         out_rows.append(merged)
@@ -281,8 +326,13 @@ def phase_validation(args: argparse.Namespace) -> int:
             "(slot 4 is the conditional F8 profit-lock carry)."
         )
     for v in carried:
-        if v not in EXIT_VARIANTS:
-            raise SystemExit(f"unknown exit {v!r}; valid: {variant_names()}")
+        if not (v in EXIT_VARIANTS or is_v2_name(v)):
+            raise SystemExit(
+                f"unknown exit {v!r}; "
+                f"legacy E3..E7: {variant_names()}; "
+                f"v2 names come from sbt1700.exit_grid.build_grid_v2() "
+                f"(F0..F8 grammar)"
+            )
 
     train = load_split(args.dataset, "train")
     val = load_split(args.dataset, "validation")
@@ -328,8 +378,13 @@ def phase_final_test(args: argparse.Namespace) -> int:
         )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    if args.exit not in EXIT_VARIANTS:
-        raise SystemExit(f"--exit must be one of {variant_names()}")
+    if not (args.exit in EXIT_VARIANTS or is_v2_name(args.exit)):
+        raise SystemExit(
+            f"--exit unknown {args.exit!r}; "
+            f"legacy E3..E7: {variant_names()}; "
+            f"v2 names come from sbt1700.exit_grid.build_grid_v2() "
+            f"(F0..F8 grammar)"
+        )
 
     train = load_split(args.dataset, "train")
     val = load_split(args.dataset, "validation")
