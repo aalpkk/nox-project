@@ -90,6 +90,11 @@ def _prepare_lists_json(lists_dict, max_per_list=15):
                     entry['gate_penalty'] = sig['gate_penalty']
                 if sig.get('_rule_score') is not None:
                     entry['rule_score'] = sig['_rule_score']
+                # SBT-1700 paper-pick (E04_C01)
+                if sig.get('sbt1700_tier'):
+                    entry['sbt1700_tier'] = sig['sbt1700_tier']
+                    if sig.get('sbt1700_score') is not None:
+                        entry['sbt1700_score'] = sig['sbt1700_score']
                 # Vol tier (RT hacim-donus)
                 if sig.get('vol_tier'):
                     entry['vol_tier'] = sig['vol_tier']
@@ -169,6 +174,10 @@ def _prepare_overlap_json(lists_dict, max_per_group=15):
                 entry['sbt_bucket'] = meta['sbt_bucket']
             if meta.get('gate_penalty'):
                 entry['gate_penalty'] = meta['gate_penalty']
+            if meta.get('sbt1700_tier'):
+                entry['sbt1700_tier'] = meta['sbt1700_tier']
+                if meta.get('sbt1700_score') is not None:
+                    entry['sbt1700_score'] = meta['sbt1700_score']
             # Vol tier (RT hacim-donus)
             if meta.get('vol_tier'):
                 entry['vol_tier'] = meta['vol_tier']
@@ -250,6 +259,10 @@ def _prepare_shortlist_json(lists_dict, max_items=15):
                     entry['ml_effect'] = meta['ml_effect']
                 if meta.get('sbt_bucket'):
                     entry['sbt_bucket'] = meta['sbt_bucket']
+                if meta.get('sbt1700_tier'):
+                    entry['sbt1700_tier'] = meta['sbt1700_tier']
+                    if meta.get('sbt1700_score') is not None:
+                        entry['sbt1700_score'] = meta['sbt1700_score']
                 if meta.get('sector_index'):
                     entry['sector_index'] = meta['sector_index']
                     entry['sector_regime'] = meta.get('sector_regime', '')
@@ -991,6 +1004,28 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 .sbt-badge.sbt-b {{ background: rgba(138,133,128,0.12); color: var(--text-secondary); }}
 .sbt-badge.sbt-x {{ background: rgba(158,90,90,0.15); color: var(--nox-red); }}
 
+/* SBT-1700 / E04_C01 paper-pick badge */
+.sbt1700-badge {{
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.32rem;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}}
+.sbt1700-badge.d10 {{
+    background: rgba(201,169,110,0.20);
+    color: var(--nox-gold);
+    border-color: rgba(201,169,110,0.45);
+}}
+.sbt1700-badge.q5 {{
+    background: rgba(168,135,106,0.14);
+    color: #c9a96e;
+    border-color: rgba(168,135,106,0.40);
+}}
+
 /* VOL TIER BADGE (Hacim-donus) */
 .vol-tier {{
     font-family: var(--font-mono);
@@ -1624,6 +1659,14 @@ function sbtBadge(item) {{
     const c={{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket]||'';
     return `<span class="sbt-badge ${{c}}">SBT:${{item.sbt_bucket}}</span>`;
 }}
+function sbt1700Badge(item) {{
+    if(!item.sbt1700_tier) return '';
+    const tier = item.sbt1700_tier;
+    const cls = tier === 'D10' ? 'd10' : 'q5';
+    const sc = item.sbt1700_score != null ? `·${{Number(item.sbt1700_score).toFixed(2)}}` : '';
+    const tt = `SBT-1700 / E04_C01 paper-pick · ${{tier}}${{sc}}`;
+    return `<span class="sbt1700-badge ${{cls}}" title="${{tt}}">🎯 SBT-1700·${{tier}}</span>`;
+}}
 function sectorBadge(item) {{
     if(!item.sector_index) return '';
     return item.sector_regime==='AL'
@@ -1746,7 +1789,7 @@ function filterReasons(reasons) {{
                     <span class="score-pill">${{item.score}}p</span>
                 </div>
                 <div class="card-badges">
-                    ${{mlBadge(item)}}${{sbtBadge(item)}}${{sectorBadge(item)}}${{brkBadge(item)}}${{iceBadge(item)}}${{volBadge(item)}}
+                    ${{sbt1700Badge(item)}}${{mlBadge(item)}}${{sbtBadge(item)}}${{sectorBadge(item)}}${{brkBadge(item)}}${{iceBadge(item)}}${{volBadge(item)}}
                 </div>
                 <div class="card-reasons">${{reasons}}</div>
                 ${{entryHtml}}
@@ -1836,7 +1879,7 @@ function filterReasons(reasons) {{
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{volBadge(item)}}${{sectorBadge(item)}}${{sbtBadge(item)}}${{mlBadge(item)}}${{brkBadge(item)}}${{gateTag}}${{iceBadge(item)}}
+                ${{sbt1700Badge(item)}}${{volBadge(item)}}${{sectorBadge(item)}}${{sbtBadge(item)}}${{mlBadge(item)}}${{brkBadge(item)}}${{gateTag}}${{iceBadge(item)}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});

@@ -233,6 +233,27 @@ _LOCAL_CSS = """
 .sbt-cand .pill.in-decile { background: rgba(201,169,110,0.18); color: var(--nox-gold); border: 1px solid rgba(201,169,110,0.45); }
 .sbt-cand .pill.in-quintile { background: rgba(122,158,122,0.15); color: var(--nox-green); border: 1px solid rgba(122,158,122,0.4); }
 .sbt-cand .pill.below { background: rgba(168,135,106,0.12); color: var(--nox-orange); border: 1px solid rgba(168,135,106,0.35); }
+
+.sbt1700-badge {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  border: 1px solid transparent;
+}
+.sbt1700-badge.d10 {
+  background: rgba(201,169,110,0.20);
+  color: var(--nox-gold);
+  border-color: rgba(201,169,110,0.50);
+  box-shadow: 0 0 0 1px rgba(201,169,110,0.10) inset;
+}
+.sbt1700-badge.q5 {
+  background: rgba(168,135,106,0.14);
+  color: var(--nox-copper, #a8876a);
+  border-color: rgba(168,135,106,0.40);
+}
 .sbt-cand .score-chip {
   font-family: var(--font-mono); font-size: 0.78rem;
   padding: 0.2rem 0.55rem; border-radius: 6px;
@@ -370,6 +391,13 @@ def _candidate_card(cand: dict, score_dist: dict) -> str:
     else:
         pill_class, pill_text = "below", "BELOW TOP-Q"
 
+    if in_decile:
+        sbt_badge_html = '<span class="sbt1700-badge d10" title="SBT-1700 / E04_C01 paper-pick · top-decile">🎯 SBT-1700 · D10</span>'
+    elif in_quintile:
+        sbt_badge_html = '<span class="sbt1700-badge q5" title="SBT-1700 / E04_C01 paper-pick · top-quintile">🎯 SBT-1700 · Q5</span>'
+    else:
+        sbt_badge_html = ""
+
     rank_in_test = (
         f"#{int(cand['rank_in_test'])} / {score_dist['n_test']}"
         if cand.get("rank_in_test") is not None else "—"
@@ -383,6 +411,7 @@ def _candidate_card(cand: dict, score_dist: dict) -> str:
       <div class="sbt-cand">
         <span class="ticker">{tkr}</span>
         <span class="pill {pill_class}">{pill_text}</span>
+        {sbt_badge_html}
         <span class="score-chip">score {score:.4f}</span>
         <span class="rank-chip">cohort rank {rank_in_test}</span>
       </div>
@@ -467,6 +496,35 @@ def _build_html(scan_date: pd.Timestamp, cands: pd.DataFrame, score_dist: dict,
             }, score_dist))
         candidates_html = "\n".join(cand_blocks)
 
+    # Embedded JSON marker for downstream consumers (briefing parser).
+    # tier: "D10" (top-decile) > "Q5" (top-quintile) > null (below cutoff).
+    picks_json = {
+        "schema_version": 1,
+        "system": "SBT-1700/E04_C01",
+        "scan_date": str(scan_date.date()),
+        "cutoffs": {"q80": float(score_dist["q80"]), "q90": float(score_dist["q90"])},
+        "picks": [],
+    }
+    if n_cands:
+        for _, r in cands.sort_values("score_primary", ascending=False).iterrows():
+            score = float(r["score_primary"])
+            if score >= score_dist["q90"]:
+                tier = "D10"
+            elif score >= score_dist["q80"]:
+                tier = "Q5"
+            else:
+                continue  # only emit picks (top-quintile and above)
+            picks_json["picks"].append({
+                "ticker": str(r["ticker"]),
+                "score": round(score, 4),
+                "tier": tier,
+            })
+    picks_marker_html = (
+        '<script id="sbt1700-data" type="application/json">'
+        + json.dumps(picks_json, ensure_ascii=False)
+        + '</script>'
+    )
+
     # Distribution card
     dist_rows = "\n".join([
         _kv_row("TEST n", score_dist["n_test"]),
@@ -539,6 +597,7 @@ def _build_html(scan_date: pd.Timestamp, cands: pd.DataFrame, score_dist: dict,
 </style>
 </head>
 <body>
+{picks_marker_html}
 
 <div class="aurora-bg">
   <div class="aurora-layer aurora-layer-1"></div>
