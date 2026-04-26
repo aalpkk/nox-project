@@ -81,7 +81,8 @@ def build_today_row(daily: pd.DataFrame, weekly: pd.DataFrame, bench: pd.Series,
         nw_df = nox_rich(daily, weekly)
         as_df = alsat_rich(daily, weekly, bench)
         feats = compute_feature_panel(daily, weekly, bench)
-    except Exception:
+    except Exception as e:
+        print(f"  [signal-error] {type(e).__name__}: {str(e)[:140]}", file=sys.stderr)
         return None
 
     if today not in rt_df.index:
