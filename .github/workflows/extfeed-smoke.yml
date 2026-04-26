@@ -13,6 +13,7 @@ on:
           - paginate
           - phase0
           - phase1
+          - daily_recon
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -69,6 +70,8 @@ jobs:
               "3"
           elif [ "${{ github.event.inputs.mode }}" = "phase1" ]; then
             python tools/extfeed_phase1_bulk.py
+          elif [ "${{ github.event.inputs.mode }}" = "daily_recon" ]; then
+            python tools/extfeed_daily_recon.py
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
@@ -97,3 +100,13 @@ jobs:
             output/_extfeed_phase1.log
           if-no-files-found: warn
           retention-days: 30
+      - name: Upload daily_recon artifacts
+        if: ${{ github.event.inputs.mode == 'daily_recon' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-daily-recon
+          path: |
+            output/extfeed_daily_recon.csv
+            output/extfeed_daily_recon_summary.csv
+          if-no-files-found: warn
+          retention-days: 14
