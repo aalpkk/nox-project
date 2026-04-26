@@ -2,7 +2,17 @@ name: NYX Alpha Scan
 on:
   schedule:
     - cron: '30 15 * * 1-5'  # 18:30 TR — BIST kapanış sonrası
-  workflow_dispatch:  # Manuel tetikleme (bu akşam için)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Data source (cache=Fintables parquet, live=yfinance)'
+        type: choice
+        options: [cache, live]
+        default: cache
+      cutoff:
+        description: 'Cutoff date YYYY-MM-DD (boş = bugün veya parquet son bar)'
+        type: string
+        default: ''
 
 concurrency:
   group: nyx-alpha
@@ -35,7 +45,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
-        run: python scan_alpha_fintables.py --mode live --push 2>&1 | tee alpha_output.txt
+          SCAN_MODE: ${{ github.event.inputs.mode || 'live' }}
+          SCAN_CUTOFF: ${{ github.event.inputs.cutoff || '' }}
+        run: |
+          ARGS="--mode $SCAN_MODE --push"
+          if [ -n "$SCAN_CUTOFF" ]; then
+            ARGS="$ARGS --cutoff $SCAN_CUTOFF"
+          fi
+          echo "Running: python scan_alpha_fintables.py $ARGS"
+          python scan_alpha_fintables.py $ARGS 2>&1 | tee alpha_output.txt
 
       - name: Send Telegram notification
         if: always()
