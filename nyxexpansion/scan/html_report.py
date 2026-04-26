@@ -92,6 +92,47 @@ def _retention_cell(d: dict) -> tuple[str, str, str]:
     return rank_str, score_str, str(note)
 
 
+def _trade_plan_cell(d: dict) -> str:
+    entry = d.get("close_0")
+    atr = d.get("atr_14")
+    if (entry is None or pd.isna(entry) or
+            atr is None or pd.isna(atr) or float(atr) <= 0):
+        return "<td class='trade-plan'>—</td>"
+    e = float(entry); a = float(atr)
+    stop = e - 1.5 * a
+    sl_pct = (stop / e - 1.0) * 100
+    bucket = str(d.get("risk_bucket", "")).lower()
+
+    if bucket == "clean":
+        partials = [
+            ("TP1-25", e + 0.7 * a),
+            ("TP2-15", e + 1.5 * a),
+            ("TP3-15", e + 3.0 * a),
+        ]
+        trail_pct = 45
+    else:
+        partials = [
+            ("TP1-15", e + 1.5 * a),
+            ("TP2-15", e + 3.0 * a),
+        ]
+        trail_pct = 70
+
+    rows = [
+        f"<div class='tp-row tp-head'>E {e:.2f} · ATR {a:.2f}</div>",
+        f"<div class='tp-row tp-sl'>SL {stop:.2f} <span>({sl_pct:+.1f}%)</span></div>",
+    ]
+    for label, price in partials:
+        pct = (price / e - 1.0) * 100
+        rows.append(
+            f"<div class='tp-row'>{label} → {price:.2f} "
+            f"<span>({pct:+.1f}%)</span></div>"
+        )
+    rows.append(
+        f"<div class='tp-row tp-trail'>TR-{trail_pct} <span>trail</span></div>"
+    )
+    return f"<td class='trade-plan'>{''.join(rows)}</td>"
+
+
 def _row_html(i: int, d: dict) -> str:
     note = _note_for_row(d)
     bucket = d.get("risk_bucket", "—")
@@ -110,6 +151,7 @@ def _row_html(i: int, d: dict) -> str:
         f"<td>{_bucket_chip(bucket)}</td>"
         f"<td class='num'>{_fnum(d.get('execution_risk_score'), '.1f')}</td>"
         f"<td>{_retention_chip(ret_pass, ret_note)}</td>"
+        f"{_trade_plan_cell(d)}"
         f"<td class='detail-cell'>{html.escape(note)}</td>"
         f"</tr>"
     )
@@ -117,17 +159,25 @@ def _row_html(i: int, d: dict) -> str:
 
 def _candidates_table(rows_html: list[str], table_id: str) -> str:
     body = "\n".join(rows_html) if rows_html else (
-        "<tr><td colspan='11' style='text-align:center;color:var(--text-muted);"
+        "<tr><td colspan='12' style='text-align:center;color:var(--text-muted);"
         "padding:24px'>—</td></tr>"
     )
     return f"""
   <div class="nox-table-wrap">
     <table id="{table_id}">
       <thead><tr>
-        <th>#</th><th>Ticker</th><th>winR</th><th>pct</th>
-        <th>winR_1700</th><th>rank_1700</th>
-        <th>exec_tag</th><th>risk_bucket</th><th>rscr</th>
-        <th>retention</th><th>Not</th>
+        <th>#</th>
+        <th>Ticker</th>
+        <th class="th-tip" title="Model'in tahmini kazanan büyüklüğü (regresyon R skoru). Yüksek = ranker daha güçlü kazanan adayı görüyor.">winR</th>
+        <th class="th-tip" title="v4C skorunun günün tarama evrenindeki yüzdelik dilimi (0–1). 1.0 = günün en iyisi.">pct</th>
+        <th class="th-tip" title="Surrogate model'in 17:00 truncated panelde verdiği skor (timing-clean view, look-ahead'sız).">winR_1700</th>
+        <th class="th-tip" title="17:00 panelinde sıralama. Live retention filtresi rank ≤ 10 olanı geçirir.">rank_1700</th>
+        <th class="th-tip" title="Bileşik execution etiketi (clean / extended_watch / special_handling / ample_only). Girişin niteliksel özeti.">exec_tag</th>
+        <th class="th-tip" title="Risk skoru 4 kova: clean / mild / elevated / severe. severe = pratik olarak işleme alınmaz.">risk_bucket</th>
+        <th class="th-tip" title="execution_risk_score — sayısal risk skoru (0–7+). Yüksek = giriş kötü (gap, parabolic uzanma vs.).">rscr</th>
+        <th class="th-tip" title="Timing-clean retention filtresi sonucu (PASS / SKIP / DROP) — 17:00 surrogate rank ≤ 10 gate'inden geçti mi?">retention</th>
+        <th class="th-tip" title="P8 omurga işlem planı: SL = entry − 1.5 ATR; TP'ler ATR çarpanlarında, etiketin yanında satılan % yüzdesi; TR = trail kalan miktar.">Trade Plan</th>
+        <th>Not</th>
       </tr></thead>
       <tbody>
 {body}
@@ -193,8 +243,13 @@ def _portfolio_section(portfolio: dict, scan_df: pd.DataFrame) -> str:
       <div class="nox-table-wrap">
         <table>
           <thead><tr>
-            <th>Hisse</th><th>Ağırlık</th><th>winR</th><th>Bucket</th>
-            <th>μ (60g ann.)</th><th>σ (60g ann.)</th><th>Son Gün</th>
+            <th>Hisse</th>
+            <th class="th-tip" title="Markowitz optimizasyonundan çıkan portföy ağırlığı (long-only, sum=1, w∈[0.10, 0.50]).">Ağırlık</th>
+            <th class="th-tip" title="Model'in tahmini kazanan büyüklüğü (regresyon R skoru).">winR</th>
+            <th class="th-tip" title="Risk skoru 4 kova: clean / mild / elevated / severe. severe = portföye alınmaz.">Bucket</th>
+            <th class="th-tip" title="Beklenen yıllık getiri (son 60 günlük log-return ortalamasının yıllıklandırılmış hâli, %).">μ (60g ann.)</th>
+            <th class="th-tip" title="Yıllık volatilite (60 günlük penceredeki standart sapmanın yıllıklandırılmış hâli, %).">σ (60g ann.)</th>
+            <th class="th-tip" title="Hissenin en son günkü realize getirisi (%).">Son Gün</th>
           </tr></thead>
           <tbody>{''.join(pf_rows)}</tbody>
         </table>
@@ -536,10 +591,51 @@ def render_html(
   color: var(--nox-cyan); font-weight: 500;
 }}
 
-/* Make number cells slightly tighter */
-td.num {{ text-align: right; font-variant-numeric: tabular-nums;
+/* Center every header and cell across scan tables */
+.nox-table-wrap th,
+.nox-table-wrap td {{ text-align: center; vertical-align: middle; }}
+
+/* Header tooltip cue: dotted underline + help cursor */
+.nox-table-wrap th.th-tip {{
+  text-decoration: underline dotted var(--text-muted);
+  text-underline-offset: 3px;
+  cursor: help;
+}}
+
+/* Make number cells tabular but centered */
+td.num {{ font-variant-numeric: tabular-nums;
   font-family: var(--font-mono); }}
 .detail-cell {{ white-space: normal; max-width: 320px; }}
+
+td.trade-plan {{
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+}}
+td.trade-plan .tp-row {{ display: block; }}
+td.trade-plan .tp-head {{
+  color: var(--text-primary);
+  font-weight: 600;
+  margin-bottom: 2px;
+  padding-bottom: 2px;
+  border-bottom: 1px dashed var(--border-subtle);
+}}
+td.trade-plan .tp-sl {{ color: var(--nox-red); }}
+td.trade-plan .tp-trail {{
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px dashed var(--border-subtle);
+}}
+td.trade-plan span {{
+  color: var(--text-muted);
+  font-size: 0.70rem;
+  margin-left: 2px;
+}}
 
 /* How-to dropdown */
 details.howto-card {{
