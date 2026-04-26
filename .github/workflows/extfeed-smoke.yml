@@ -12,6 +12,7 @@ on:
           - stress
           - paginate
           - phase0
+          - phase1
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -36,7 +37,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,6 +67,8 @@ jobs:
               "${{ github.event.inputs.n_tickers }}" \
               "${{ github.event.inputs.timeframe }}" \
               "3"
+          elif [ "${{ github.event.inputs.mode }}" = "phase1" ]; then
+            python tools/extfeed_phase1_bulk.py
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
@@ -82,3 +85,15 @@ jobs:
             output/extfeed_phase0_smoke_bars.parquet
           if-no-files-found: warn
           retention-days: 7
+      - name: Upload phase1 artifacts
+        if: ${{ github.event.inputs.mode == 'phase1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-phase1
+          path: |
+            output/extfeed_intraday_1h_3y_master.parquet
+            output/extfeed_intraday_coverage.csv
+            output/extfeed_intraday_volume_recon.csv
+            output/_extfeed_phase1.log
+          if-no-files-found: warn
+          retention-days: 30
