@@ -322,11 +322,149 @@ def render_html(
 
     pf_section = _portfolio_section(portfolio, scan_df)
 
+    howto_dropdown = """
+    <details class="howto-card">
+      <summary>Bu tarama nasıl kullanılır?</summary>
+      <div class="howto-body">
+
+        <h3>Önce neye bakacağım?</h3>
+        <p>Bu raporda hisseler iki gruba ayrılır:</p>
+        <ul>
+          <li><b>Tradeable Candidates</b>: işlem için daha ciddi bakılacak grup</li>
+          <li><b>Watchlist Only</b>: izlemeye değer ama işlem için daha temkinli yaklaşılacak grup</li>
+        </ul>
+        <p>İşlem düşünüyorsan önce <b>Tradeable Candidates</b> listesine bakılır.</p>
+
+        <h3>İşleme giriş mantığı nedir?</h3>
+        <p>Basit kullanım:</p>
+        <ol>
+          <li>Tradeable Candidates listesini aç</li>
+          <li>En yüksek skorlu hisselere bak</li>
+          <li>Aynı hissede zaten pozisyonun var mı kontrol et</li>
+          <li>Sektörde aşırı yığılma var mı bak</li>
+          <li>İşlem yapacaksan 17:30 giriş mantığına göre hareket et</li>
+        </ol>
+        <p>Bu rapor doğrudan "hemen al" butonu değildir.<br>
+        Önce adayları sıralar, sonra işlem için daha uygun olanları ayırır.</p>
+
+        <h3>Girişten sonra pozisyon nasıl yönetilir?</h3>
+        <p>Bu sistemde asıl önemli kısım girişten sonrası, yani çıkış planıdır.</p>
+        <p>Ana mantık:</p>
+        <ul>
+          <li>işlem açıldıktan sonra pozisyon tek parça tutulmaz</li>
+          <li>belli seviyelerde küçük kâr kilitleri alınır</li>
+          <li>kalan kısım trend sürerse taşınır</li>
+          <li>trend bozulursa çıkılır</li>
+        </ul>
+
+        <h3>Ana çıkış sistemi çok basit nasıl okunur?</h3>
+        <p>Temel omurga şudur:</p>
+        <ul>
+          <li><b>başlangıç stopu</b> vardır</li>
+          <li><b>trend çıkışı</b> vardır</li>
+          <li>işlem çok uzarsa maksimum bekleme süresi vardır</li>
+        </ul>
+        <p>Açık hali:</p>
+        <ul>
+          <li>başlangıçta 1.5R stop vardır</li>
+          <li>fiyat trendi EMA-10 altına bozulursa trend çıkışı çalışır</li>
+          <li>hiçbir şey olmazsa işlem en fazla 40 bar tutulur</li>
+        </ul>
+        <p>Basit anlamı:</p>
+        <ul>
+          <li>zarar baştan sınırlanır</li>
+          <li>trend devam ederse pozisyon taşınır</li>
+          <li>trend bozulursa çıkılır</li>
+          <li>çok uzun süre sürünürse sonsuza kadar elde tutulmaz</li>
+        </ul>
+
+        <h4>Clean hisselerde çıkış nasıl işler?</h4>
+        <p>Clean grupta erken küçük kâr kilidi de vardır.</p>
+        <p>Clean işlemde:</p>
+        <ul>
+          <li>+0.7 ATR görülürse pozisyonun %25'i satılır</li>
+          <li>+1.5 ATR görülürse %15 daha satılır</li>
+          <li>+3.0 ATR görülürse %15 daha satılır</li>
+          <li>kalan %45, ana trend çıkış sistemiyle taşınır</li>
+        </ul>
+        <p>Yani clean hissede:</p>
+        <ul>
+          <li>önce biraz kâr cebe alınır</li>
+          <li>sonra biraz daha alınır</li>
+          <li>kalan parça trend devam ederse koşmaya bırakılır</li>
+        </ul>
+
+        <h4>Mild ve Elevated hisselerde çıkış nasıl işler?</h4>
+        <p>Bu gruplarda clean'deki erken ek satış yoktur.</p>
+        <p>Mild / Elevated işlemde:</p>
+        <ul>
+          <li>+1.5 ATR görülürse %15 satılır</li>
+          <li>+3.0 ATR görülürse %15 daha satılır</li>
+          <li>kalan %70, ana trend çıkış sistemiyle taşınır</li>
+        </ul>
+        <p>Yani:</p>
+        <ul>
+          <li>biraz kâr kilitlenir</li>
+          <li>ama pozisyonun büyük kısmı trend için açık bırakılır</li>
+        </ul>
+
+        <h4>Parabolic koruma ne demek?</h4>
+        <p>Bazen hisse 1 saatlik tek bir barda aşırı sert yukarı patlar.<br>
+        Bu durumda sistem ek bir koruma kullanır.</p>
+        <p>Eğer 1 saatlik <b>parabolik</b> bir bar oluşursa:</p>
+        <ul>
+          <li>bir sonraki 1 saat kapanışında pozisyon tamamen kapatılır</li>
+        </ul>
+        <p>Basit anlamı:</p>
+        <ul>
+          <li>hisse çok sert patladıysa</li>
+          <li>sonra geri vermesin diye</li>
+          <li>sistem daha hızlı çıkabilir</li>
+        </ul>
+        <p>Bu, normal çıkış sisteminin üstüne eklenen özel <b>parabolik koruma</b>dır.</p>
+
+        <h3>Ben bunu pratikte nasıl düşüneceğim?</h3>
+        <p>En kısa haliyle:</p>
+        <ul>
+          <li>liste bana hangi hisselere önce bakacağımı söyler</li>
+          <li><b>Tradeable Candidates</b> işlem için daha ciddi gruptur</li>
+          <li>girişten sonra sistem kârı parça parça kilitler</li>
+          <li>kalan pozisyonu trend sürerse taşır</li>
+          <li>çok sert ani patlamalarda ise daha hızlı çıkabilir</li>
+        </ul>
+
+        <h3>Önemli uyarı</h3>
+        <p>Bu sistem şunu garanti etmez:</p>
+        <ul>
+          <li>listedeki ilk hisse kesin en iyi gidecek</li>
+          <li>her PASS hisse mutlaka kazandıracak</li>
+          <li>her işlem tam tepesinden satılacak</li>
+        </ul>
+        <p>Doğru okuma:</p>
+        <ul>
+          <li>bu bir aday seçme ve pozisyon yönetme çerçevesidir</li>
+          <li>kesinlik değil, daha düzenli karar verme sağlar</li>
+        </ul>
+
+        <h3>En kısa özet</h3>
+        <ul>
+          <li><b>Tradeable Candidates</b> = işlem için daha ciddi bakılacak grup</li>
+          <li><b>Watchlist Only</b> = izlenecek ama daha temkinli olunacak grup</li>
+          <li>Clean hissede daha erken küçük kâr alınır</li>
+          <li>Mild / Elevated hissede kâr daha geç kilitlenir</li>
+          <li>Ani parabolik hareketlerde sistem daha hızlı çıkabilir</li>
+          <li>Kalan pozisyon trend bozulana kadar taşınır</li>
+        </ul>
+
+      </div>
+    </details>
+    """
+
     return f"""<!DOCTYPE html>
 <html lang="tr"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nyxexpansion v4C scan — {target_date.date()}</title>
+<title>Nyx-WinMag: Momentum Continuation Ranker — {target_date.date()}</title>
 <style>{_NOX_CSS}
 
 /* ── scan-specific overrides ── */
@@ -402,6 +540,59 @@ def render_html(
 td.num {{ text-align: right; font-variant-numeric: tabular-nums;
   font-family: var(--font-mono); }}
 .detail-cell {{ white-space: normal; max-width: 320px; }}
+
+/* How-to dropdown */
+details.howto-card {{
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+}}
+details.howto-card > summary {{
+  font-family: var(--font-display);
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+  letter-spacing: 0.01em;
+}}
+details.howto-card > summary::-webkit-details-marker {{ display: none; }}
+details.howto-card > summary::before {{
+  content: "▸ ";
+  color: var(--nox-gold);
+  margin-right: 4px;
+}}
+details.howto-card[open] > summary::before {{ content: "▾ "; }}
+details.howto-card .howto-body {{
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}}
+details.howto-card h3 {{
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 16px 0 6px 0;
+  letter-spacing: 0.01em;
+}}
+details.howto-card h3:first-child {{ margin-top: 0; }}
+details.howto-card h4 {{
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--nox-gold);
+  margin: 12px 0 4px 0;
+}}
+details.howto-card p {{ margin: 4px 0 8px 0; }}
+details.howto-card ul,
+details.howto-card ol {{ margin: 4px 0 8px 18px; padding: 0; }}
+details.howto-card li {{ margin: 2px 0; }}
+details.howto-card b {{ color: var(--text-primary); }}
 </style></head>
 <body>
 <div class="aurora-bg">
@@ -415,8 +606,8 @@ td.num {{ text-align: right; font-variant-numeric: tabular-nums;
 
   <header class="nox-header">
     <div class="nox-logo">
-      nyxexpansion<span class="proj"></span>
-      <span class="mode">v4C scan · {target_date.date()}</span>
+      Nyx-WinMag<span class="proj"></span>
+      <span class="mode">Momentum Continuation Ranker · {target_date.date()}</span>
     </div>
     <div class="nox-meta">
       Generated <b>{now_str}</b><br>
@@ -429,6 +620,8 @@ td.num {{ text-align: right; font-variant-numeric: tabular-nums;
   {warn_banner}
   {retention_banner}
   {pf_section}
+
+  {howto_dropdown}
 
   <section class="nox-card">
     <h2>✅ Tradeable Candidates<span class="sec-count">{len(tradeable_df)}</span></h2>
