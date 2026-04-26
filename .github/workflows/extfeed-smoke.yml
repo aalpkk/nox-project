@@ -3,13 +3,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Test mode: smoke (single symbol) or stress (multi-symbol)'
+        description: 'Test mode'
         required: false
         default: 'smoke'
         type: choice
         options:
           - smoke
           - stress
+          - paginate
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -54,6 +55,11 @@ jobs:
               "${{ github.event.inputs.n_bars }}" \
               "${{ github.event.inputs.n_tickers }}" \
               "${{ github.event.inputs.delay_s }}"
+          elif [ "${{ github.event.inputs.mode }}" = "paginate" ]; then
+            python tools/extfeed_paginate_probe.py \
+              "${{ github.event.inputs.symbol }}" \
+              "${{ github.event.inputs.timeframe }}" \
+              "${{ github.event.inputs.n_bars }}"
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
