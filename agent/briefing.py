@@ -3484,6 +3484,29 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     if news_items:
         print(f"  📰 {len(news_items)} haber çekildi")
 
+    # 4a-bis. Dış tarayıcılar (alpha, nyxexp, screener_combo, sbt1700)
+    # + 4'lü meta-Markowitz (max-Sharpe + risk-parity ERC) — fail-soft.
+    print("\n🛰  Dış tarayıcılar çekiliyor...")
+    try:
+        from agent.external_scans import gather_all as _gather_external_scans
+        ext = _gather_external_scans()
+        lists_dict['_external_scans'] = ext
+        print(f"  alpha={len(ext['alpha']['picks'])} | "
+              f"nyxexp={len(ext['nyxexp']['picks'])} | "
+              f"screener_combo={len(ext['screener_combo']['picks'])} | "
+              f"sbt1700={len(ext['sbt1700']['picks'])} | "
+              f"union={ext['union_size']}")
+        meta = ext.get('meta', {})
+        if meta.get('max_sharpe'):
+            ms = meta['max_sharpe']
+            tag = " (fallback)" if meta.get('used_fallback') else ""
+            print(f"  meta-Markowitz{tag}: max-Sharpe={ms['sharpe']:.2f} "
+                  f"({'/'.join(ms['tickers'])}) "
+                  f"@ ret={ms['expected_return']:.1f}% risk={ms['expected_risk']:.1f}%")
+    except Exception as e:
+        print(f"  ⚠️ Dış tarayıcı çekimi hatası: {e}")
+        lists_dict['_external_scans'] = None
+
     # 4b. Template brifing üret (kod tabanlı — AI yorumu yok)
     print("\n📝 Template brifing oluşturuluyor...")
     briefing_text = _build_template_briefing(
