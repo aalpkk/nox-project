@@ -1,0 +1,11 @@
+{
+  "produced_at": "2026-04-23T17:14:00.258712+00:00",
+  "frozen_version": "v1.1.0-frozen",
+  "frozen_meta_path": "output/nyxmomentum/artifacts/frozen_v1_1.json",
+  "n_rebalances_v5": 17,
+  "n_rebalances_m0": 17,
+  "n_pending": 0,
+  "cost_bps": 60,
+  "append_only": true,
+  "elapsed_sec": 0.2418527603149414
+}

@@ -1,0 +1,137 @@
+name: nyxmomentum — Monthly Rebalance
+
+on:
+  schedule:
+    # Fire on days 26-31 at 15:30 UTC = 18:30 TRT (after BIST 18:00 close).
+    # 26-31 covers every possible last-weekday-of-month (earliest case:
+    # Feb 26 when Feb 28 is a Sunday). Guard step skips non-last-weekday
+    # starts, so only one execution per month does real work.
+    # Note: Turkish public holidays are not in the guard — if the last
+    # weekday is a BIST holiday, manually dispatch the next trading day.
+    - cron: '30 15 26-31 * *'
+  workflow_dispatch:
+    inputs:
+      skip_fetch:
+        description: 'Skip step0-5 rebuild (run tracker only against existing artifacts)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: nyxmomentum-tracker
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  rebalance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — last business day check
+        id: guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — bypassing last-business-day guard."
+            exit 0
+          fi
+          # last weekday = (last-day-of-month) minus offset to back off Sat/Sun
+          # offset = max(0, weekday - 4)  // Mon=0 … Fri=4 → 0; Sat=5 → 1; Sun=6 → 2
+          proceed=$(python3 -c 'import datetime as d; t=d.date.today(); y,m=t.year,t.month; n=d.date(y+1,1,1) if m==12 else d.date(y,m+1,1); l=n-d.timedelta(days=1); l=l-d.timedelta(days=max(0,l.weekday()-4)); print("true" if t==l else "false")')
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+          echo "today_utc=$(date -u +%Y-%m-%d) is_last_business_day=$proceed"
+          if [ "$proceed" != "true" ]; then
+            echo "Not the last business day of the month — remaining steps will be skipped."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.proceed == 'true'
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        if: steps.guard.outputs.proceed == 'true'
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        if: steps.guard.outputs.proceed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
+
+      - name: Refresh OHLCV panel + XU100 cache (yfinance delta)
+        if: >-
+          steps.guard.outputs.proceed == 'true'
+          && (github.event_name == 'schedule'
+              || (github.event_name == 'workflow_dispatch' && !inputs.skip_fetch))
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 607-universe daily panel (canonical for nyxmomentum v1.1)
+          python -u tools/fetch_ohlcv_fintables_universe.py
+          # XU100 cache (calendar source for step0/1/2)
+          python - <<'PYEOF'
+          import yfinance as yf, pandas as pd
+          out = "output/xu100_cache.parquet"
+          xu = yf.download("XU100.IS", period="6y", progress=False, auto_adjust=True)
+          if isinstance(xu.columns, pd.MultiIndex):
+              xu.columns = xu.columns.get_level_values(0)
+          xu = xu[["Open","High","Low","Close","Volume"]].dropna(how="all")
+          xu.index.name = "Date"
+          xu.to_parquet(out)
+          print(f"  XU100 cache: {len(xu)} bars, last={xu.index.max().date()}")
+          PYEOF
+
+      - name: Rebuild pipeline (step0 → step5)
+        # only when guard passes AND (scheduled OR manual-without-skip)
+        if: >-
+          steps.guard.outputs.proceed == 'true'
+          && (github.event_name == 'schedule'
+              || (github.event_name == 'workflow_dispatch' && !inputs.skip_fetch))
+        shell: bash
+        env:
+          PANEL: output/ohlcv_6y_fintables.parquet
+        run: |
+          set -euo pipefail
+          python -u run_nyxmomentum_step0.py --ohlcv "$PANEL"
+          python -u run_nyxmomentum_step1.py --ohlcv "$PANEL"
+          python -u run_nyxmomentum_step2.py --ohlcv "$PANEL"
+          python -u run_nyxmomentum_step3.py
+          python -u run_nyxmomentum_step4.py
+          python -u run_nyxmomentum_step5.py
+
+      - name: Run live tracker
+        if: steps.guard.outputs.proceed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -u run_nyxmomentum_live_tracker.py
+
+      - name: Commit tracker outputs
+        if: steps.guard.outputs.proceed == 'true'
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+          RUN_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/nyxmomentum/live/ \
+                  output/ohlcv_6y_fintables.parquet \
+                  output/xu100_cache.parquet
+          if git diff --cached --quiet; then
+            echo "no tracker / panel changes — skipping commit"
+            exit 0
+          fi
+          DATE_UTC="$(date -u +%Y-%m-%d)"
+          SHORT_SHA="${RUN_SHA:0:7}"
+          git commit -m "chore(nyxmomentum): monthly rebalance ${DATE_UTC} (ref=${BRANCH}, src=${SHORT_SHA}, run=${RUN_ID}) [skip ci]"
+          git pull --rebase origin "$BRANCH"
+          git push origin "HEAD:$BRANCH"

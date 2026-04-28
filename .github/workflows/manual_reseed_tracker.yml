@@ -1,0 +1,74 @@
+name: nyxmomentum — Manual Reseed Tracker
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RESEED (exact, uppercase) to rebuild tracker.csv from scratch"
+        required: true
+        default: ''
+
+concurrency:
+  group: nyxmomentum-tracker
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  reseed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate confirm token
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "RESEED" ]; then
+            echo "::error::confirm input must be exactly 'RESEED' (got: '$CONFIRM'). Aborting."
+            exit 1
+          fi
+          echo "confirm accepted — proceeding with reseed."
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
+
+      - name: Reseed tracker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -u run_nyxmomentum_live_tracker.py --reseed
+
+      - name: Commit reseeded tracker
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+          RUN_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/nyxmomentum/live/
+          if git diff --cached --quiet; then
+            echo "no changes after reseed — skipping commit"
+            exit 0
+          fi
+          DATE_UTC="$(date -u +%Y-%m-%d)"
+          SHORT_SHA="${RUN_SHA:0:7}"
+          git commit -m "chore(nyxmomentum): manual tracker reseed ${DATE_UTC} (ref=${BRANCH}, src=${SHORT_SHA}, run=${RUN_ID}) [skip ci]"
+          git pull --rebase origin "$BRANCH"
+          git push origin "HEAD:$BRANCH"

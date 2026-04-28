@@ -21,3 +21,14 @@ agent/daily_input/
 
 # Claude Code
 .claude/
+
+# nyxmomentum — live/ + select artifacts are committed; parquets, reports stay local
+output/nyxmomentum/**
+!output/nyxmomentum/live/
+!output/nyxmomentum/live/**
+!output/nyxmomentum/artifacts/
+!output/nyxmomentum/artifacts/frozen_v1_1.json
+!output/nyxmomentum/reports/
+!output/nyxmomentum/reports/step1_labels.parquet
+!output/nyxmomentum/universe/
+!output/nyxmomentum/universe/fintables_bist_equities_20260422.csv

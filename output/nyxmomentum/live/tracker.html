@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="tr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nyxmomentum — Live Tracker · 2026-03-31</title>
+<style>
+
+@import url('https://fonts.googleapis.com/css2?family=Rubik+Glitch&family=Homemade+Apple&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+:root {
+  --bg-primary: #060709;
+  --bg-card: #0d0d10;
+  --bg-elevated: #141417;
+  --bg-hover: #1b1b1f;
+  --border-subtle: #1e1e23;
+  --border-dim: #2c2b30;
+  --text-primary: #e8e4dc;
+  --text-secondary: #8a8580;
+  --text-muted: #555250;
+  --nox-gold: #c9a96e;
+  --nox-gold-dim: rgba(201,169,110,0.10);
+  --nox-cyan: #c9a96e;
+  --nox-cyan-dim: rgba(201,169,110,0.10);
+  --nox-copper: #b8956e;
+  --nox-orange: #a8876a;
+  --nox-orange-dim: rgba(168,135,106,0.10);
+  --nox-green: #7a9e7a;
+  --nox-red: #9e5a5a;
+  --nox-purple: #8a7a9e;
+  --nox-yellow: #c9a96e;
+  --nox-blue: #7a8fa5;
+  --font-display: 'DM Sans', sans-serif;
+  --font-brand: 'Rubik Glitch', cursive;
+  --font-handwrite: 'Homemade Apple', cursive;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 14px;
+  --radius-sm: 8px;
+}
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: var(--font-display);
+  background: #060709;
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Aurora mesh gradient ── */
+.aurora-bg {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.aurora-layer {
+  position: absolute;
+  width: 200%; height: 200%;
+  top: -50%; left: -50%;
+  opacity: 1;
+}
+.aurora-layer-1 {
+  background:
+    radial-gradient(ellipse 35% 25% at 8% 12%, rgba(207,199,196,0.35) 0%, transparent 50%),
+    radial-gradient(ellipse 25% 20% at 88% 78%, rgba(32,30,33,0.6) 0%, transparent 50%);
+  animation: aurora-drift 28s ease-in-out infinite;
+}
+.aurora-layer-2 {
+  background:
+    radial-gradient(ellipse 30% 22% at 78% 8%, rgba(207,199,196,0.2) 0%, transparent 50%),
+    radial-gradient(ellipse 22% 22% at 12% 88%, rgba(32,30,33,0.5) 0%, transparent 50%);
+  animation: aurora-drift 35s ease-in-out infinite reverse;
+}
+.aurora-layer-3 {
+  background:
+    radial-gradient(ellipse 25% 15% at 45% 45%, rgba(184,149,110,0.12) 0%, transparent 40%);
+  animation: aurora-pulse 22s ease-in-out infinite;
+}
+.mesh-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle 400px at 12% 18%, rgba(207,199,196,0.08) 0%, transparent 50%),
+    radial-gradient(circle 350px at 88% 72%, rgba(32,30,33,0.2) 0%, transparent 50%);
+  filter: blur(40px);
+}
+@keyframes aurora-drift {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(4%, -4%) rotate(3deg); }
+  50% { transform: translate(-4%, 4%) rotate(-3deg); }
+  75% { transform: translate(2%, 2%) rotate(2deg); }
+}
+@keyframes aurora-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.1); }
+}
+.nox-container { position: relative; z-index: 1; max-width: 1440px; margin: 0 auto; padding: 20px 16px; }
+
+/* HEADER */
+.nox-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 0; margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.nox-logo {
+  font-family: var(--font-display);
+  font-size: 1.6rem; font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #c9a96e, #e8dcc8, #a8876a);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.nox-logo .proj { font-weight: 400; -webkit-text-fill-color: var(--text-secondary); font-size: 0.75em; margin-left: 2px; letter-spacing: 0.02em; }
+.nox-logo .mode { display: block; font-size: 0.45em; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; -webkit-text-fill-color: var(--text-muted); margin-top: 2px; }
+.nox-meta { text-align: right; font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono); }
+.nox-meta b { color: var(--nox-cyan); }
+
+/* STAT STRIP */
+.nox-stats {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.nox-stat {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: 20px; padding: 6px 14px;
+  font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; transition: all 0.2s;
+  user-select: none;
+}
+.nox-stat:hover { border-color: var(--border-dim); background: var(--bg-elevated); }
+.nox-stat.active { border-color: var(--nox-cyan); background: var(--nox-cyan-dim); color: var(--nox-cyan); }
+.nox-stat .cnt { font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem; }
+.nox-stat .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* FILTER BAR */
+.nox-filters {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.nox-filters label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 2px; }
+.nox-filters select, .nox-filters input {
+  background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  padding: 5px 10px; font-size: 0.78rem; font-family: var(--font-mono);
+  outline: none; transition: border-color 0.2s;
+}
+.nox-filters select:focus, .nox-filters input:focus { border-color: var(--nox-cyan); }
+.nox-filters input[type=number] { width: 60px; }
+.nox-filters input[type=text] { width: 100px; }
+.nox-btn { background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm); padding: 5px 12px; cursor: pointer; font-size: 0.72rem;
+  font-family: var(--font-display); font-weight: 500; transition: all 0.15s; }
+.nox-btn:hover { color: var(--text-primary); border-color: var(--border-dim); }
+
+/* TABLE */
+.nox-table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border-subtle); background: var(--bg-card); }
+table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+thead { position: sticky; top: 0; z-index: 10; }
+th {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-weight: 600; font-size: 0.68rem;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 10px 8px; text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer; user-select: none;
+  white-space: nowrap; transition: color 0.15s;
+}
+th:hover { color: var(--nox-cyan); }
+th.sorted { color: var(--nox-cyan); }
+td { padding: 8px; border-bottom: 1px solid rgba(39,39,42,0.5); white-space: nowrap; font-family: var(--font-mono); font-size: 0.74rem; }
+tr { transition: background 0.1s; }
+tr:hover { background: var(--bg-hover); }
+tr.hl { background: rgba(34,211,238,0.04); }
+tr.hidden { display: none; }
+
+/* BADGES */
+.sig-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 12px;
+  font-weight: 700; font-size: 0.68rem; font-family: var(--font-display);
+  letter-spacing: 0.02em; color: #fff;
+}
+.reg-badge {
+  display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm);
+  font-size: 0.65rem; font-weight: 600; font-family: var(--font-display);
+}
+.oe-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 8px;
+  font-size: 0.62rem; font-weight: 700; font-family: var(--font-mono);
+  background: rgba(248,113,113,0.15); color: var(--nox-red);
+}
+.kc-badge {
+  display: inline-block; padding: 2px 6px; border-radius: var(--radius-sm);
+  font-size: 0.68rem; font-weight: 600; font-family: var(--font-mono);
+}
+.kc-hi { background: rgba(74,222,128,0.12); color: var(--nox-green); }
+.kc-mid { background: rgba(96,165,250,0.12); color: var(--nox-blue); }
+.kc-lo { background: rgba(113,113,122,0.12); color: var(--text-muted); }
+
+.tv-link {
+  color: var(--text-primary); text-decoration: none; font-weight: 600;
+  font-family: var(--font-display); font-size: 0.8rem;
+  transition: color 0.15s;
+}
+.tv-link:hover { color: var(--nox-cyan); }
+.rr-val { font-weight: 700; }
+.rs-pos { color: var(--nox-green); }
+.rs-neg { color: var(--nox-red); }
+.detail-cell { font-family: var(--font-mono); font-size: 0.65rem; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.detail-cell .kctag { color: var(--nox-blue); }
+
+/* STATUS BAR */
+.nox-status {
+  text-align: center; padding: 16px 0; margin-top: 16px;
+  font-size: 0.72rem; color: var(--text-muted);
+  font-family: var(--font-mono);
+  border-top: 1px solid var(--border-subtle);
+}
+.nox-status b { color: var(--nox-cyan); }
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+  .nox-header { flex-direction: column; gap: 8px; text-align: center; }
+  .nox-meta { text-align: center; }
+  table { font-size: 0.7rem; }
+  td, th { padding: 5px 4px; }
+  .nox-logo { font-size: 1.2rem; }
+}
+
+
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--text-muted); }
+.rs-pos { color: var(--nox-green); }
+.rs-neg { color: var(--nox-red); }
+
+/* ── briefing-style container ── */
+.briefing-container {
+  position: relative; z-index: 1;
+  max-width: 1100px; margin: 0 auto;
+  padding: 0 1.5rem 2rem;
+}
+
+/* ── sticky status bar ── */
+.nox-status-bar {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(6,6,8,0.55);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  border-bottom: 1px solid rgba(201,169,110,0.08);
+  padding: 0.6rem 1.5rem;
+  margin: 0 -1.5rem 1.5rem;
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+}
+.nox-status-bar .logo {
+  display: inline-flex; align-items: baseline;
+  gap: 0.15rem; white-space: nowrap;
+}
+.nox-status-bar .logo .nox-text {
+  font-family: var(--font-brand); font-size: 4.2rem;
+  color: #fff; letter-spacing: 0.06em; line-height: 0.85;
+}
+.nox-status-bar .logo .brief-text {
+  font-family: var(--font-handwrite); font-size: 1.1rem;
+  color: var(--nox-gold); margin-left: 0.2rem;
+  position: relative; top: -0.15rem;
+}
+.nox-status-bar .mpill {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  padding: 0.15rem 0.55rem; border-radius: 0.75rem;
+  background: var(--bg-card); border: 1px solid var(--border-subtle);
+  color: var(--text-secondary); white-space: nowrap;
+}
+.nox-status-bar .mpill b { font-weight: 700; color: var(--nox-gold); }
+.nox-status-bar .meta-right {
+  font-size: 0.7rem; color: var(--text-muted);
+  font-family: var(--font-mono); white-space: nowrap; margin-left: auto;
+}
+
+/* ── action cards (briefing-style) ── */
+.action-card {
+  background: rgba(199,189,190,0.08);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: none; border-radius: 18px;
+  padding: 0.95rem 1.15rem;
+  border-left: 3px solid transparent;
+  transition: all 0.25s ease;
+  animation: cardFadeIn 0.3s ease-out both;
+  position: relative; overflow: hidden;
+}
+.action-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(184,149,110,0.15), transparent);
+  opacity: 0; transition: opacity 0.3s;
+}
+.action-card:hover {
+  background: rgba(199,189,190,0.12);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(184,149,110,0.03);
+  transform: translateY(-1px);
+}
+.action-card:hover::before { opacity: 1; }
+.action-card.tier1  { border-left: 3px solid rgba(201,169,110,0.45); }
+.action-card.tier2a { border-left: 3px solid rgba(184,149,110,0.25); }
+.action-card.tier2b { border-left: 3px solid rgba(138,122,158,0.30); }
+@keyframes cardFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.action-card .card-head {
+  display: flex; align-items: center; gap: 0.55rem;
+  margin-bottom: 0.65rem;
+}
+.action-card .card-head .ticker {
+  font-family: 'Inter', sans-serif; font-weight: 900;
+  font-size: 1.15rem; color: #fff;
+}
+.action-card .card-head .tier-tag {
+  font-size: 0.6rem; font-family: var(--font-mono);
+  padding: 0.1rem 0.4rem; border-radius: 0.25rem;
+  font-weight: 600; text-transform: uppercase;
+}
+.action-card .card-head .tier-tag.t1  { background: rgba(201,169,110,0.12); color: #c9a96e; }
+.action-card .card-head .tier-tag.t2a { background: rgba(168,135,106,0.12); color: #a8876a; }
+.action-card .card-head .tier-tag.t2b { background: rgba(138,122,158,0.12); color: #8a7a9e; }
+.action-card .card-head .env-n {
+  margin-left: auto; font-family: var(--font-mono);
+  font-size: 0.7rem; color: var(--text-muted);
+}
+
+/* envelope-card metric grid (4 cells per profile card) */
+.env-wrap {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 0.85rem; margin-bottom: 1.5rem;
+}
+.env-card .env-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.55rem;
+}
+.env-card .env-cell {
+  padding: 0.5rem 0.6rem;
+  background: rgba(6,7,9,0.45);
+  border-radius: 12px;
+}
+.env-card .env-lbl {
+  font-family: var(--font-mono); font-size: 0.62rem;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-bottom: 0.25rem;
+}
+.env-card .env-real {
+  font-size: 1rem; font-weight: 600; font-family: var(--font-mono);
+}
+.env-card .env-exp {
+  font-size: 0.62rem; color: var(--text-muted);
+  margin-top: 0.15rem; font-family: var(--font-mono);
+}
+
+/* badges (status pills) */
+.badge {
+  font-family: var(--font-mono); font-size: 0.62rem;
+  padding: 0.12rem 0.42rem; border-radius: 0.4rem;
+  font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; white-space: nowrap;
+  border: 1px solid transparent; display: inline-block;
+}
+.badge.bdg-dim   { background: rgba(138,133,128,0.10); color: var(--text-muted); }
+.badge.st-keep   { background: rgba(201,169,110,0.14); color: #c9a96e;
+                    border-color: rgba(201,169,110,0.25); }
+.badge.st-new    { background: rgba(122,158,122,0.16); color: var(--nox-green);
+                    border-color: rgba(122,158,122,0.30); }
+
+/* tier-group-label: section heading */
+.tier-group-label {
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 0.92rem; color: var(--text-secondary);
+  margin: 1.4rem 0 0.6rem;
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.tier-group-label:first-of-type { margin-top: 0.4rem; }
+.tier-group-label .cnt {
+  font-family: var(--font-mono); font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* per-rebalance log table inside backdrop-blur container */
+.log-shell {
+  background: rgba(199,189,190,0.07);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: none; border-radius: 18px;
+  padding: 0.4rem 0.4rem 0.6rem;
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+}
+.log-shell table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-mono); font-size: 0.74rem;
+}
+.log-shell thead th {
+  position: sticky; top: 0;
+  background: rgba(6,7,9,0.85);
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 0.7rem; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  text-align: left; padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.log-shell tbody td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid rgba(39,39,42,0.4);
+  white-space: nowrap;
+}
+.log-shell tbody tr:hover {
+  background: rgba(199,189,190,0.04);
+}
+.log-shell tbody tr:last-child td { border-bottom: none; }
+
+.footer-meta {
+  font-family: var(--font-mono); font-size: 0.68rem;
+  color: var(--text-muted); margin-top: 1.5rem;
+  padding-top: 0.8rem; border-top: 1px solid var(--border-subtle);
+  text-align: center;
+}
+.footer-meta b { color: var(--nox-gold); font-weight: 700; }
+</style>
+</head><body>
+<div class="aurora-bg">
+  <div class="aurora-layer aurora-layer-1"></div>
+  <div class="aurora-layer aurora-layer-2"></div>
+  <div class="aurora-layer aurora-layer-3"></div>
+</div>
+<div class="mesh-overlay"></div>
+
+<div class="briefing-container">
+  <div class="nox-status-bar">
+    <span class="logo">
+      <span class="nox-text">NYX</span><span class="brief-text">momentum</span>
+    </span>
+    <span class="mpill">frozen <b>v1.1.0-frozen</b></span>
+    <span class="mpill">last rebalance <b>2026-03-31</b></span>
+    <span class="mpill">V5 <b>17</b> · M0 <b>17</b></span>
+    <span class="mpill">realized <b>34</b> · pending <b>0</b></span>
+    <span class="mpill">OOS 2023-11-30 → 2026-03-31</span>
+    <span class="meta-right">rendered 2026-04-25 22:07 UTC</span>
+  </div>
+
+  <div class="tier-group-label">Realized vs frozen envelope
+    <span class="cnt">· 2 profiles</span>
+  </div>
+  <div class="env-wrap"><div class="action-card env-card tier1"><div class="card-head"><span class="ticker">V5</span><span class="tier-tag t1">default live</span><span class="env-n">N=17 realized · 0 pending</span></div><div class="env-grid"><div class="env-cell"><div class="env-lbl">nCAGR<sub>60</sub></div><div class="env-real"><span class="mono rs-pos">+80.4%</span></div><div class="env-exp">exp <span class="mono rs-pos">+80.4%</span> · Δ <span class="mono rs-neg">-0.0%</span></div></div><div class="env-cell"><div class="env-lbl">Sharpe<sub>60</sub></div><div class="env-real"><span class="mono rs-pos">+3.54</span></div><div class="env-exp">exp <span class="mono rs-pos">+3.54</span> · Δ <span class="mono rs-pos">+0.00</span></div></div><div class="env-cell"><div class="env-lbl">MaxDD<sub>60</sub></div><div class="env-real"><span class="mono rs-neg">-1.2%</span></div><div class="env-exp">exp <span class="mono rs-neg">-1.2%</span> · Δ <span class="mono rs-neg">-0.0%</span></div></div><div class="env-cell"><div class="env-lbl">Turnover</div><div class="env-real"><span class="mono rs-pos">+27.2%</span></div><div class="env-exp">exp <span class="mono rs-pos">+27.2%</span> · Δ <span class="mono rs-neg">-0.0%</span></div></div></div></div><div class="action-card env-card tier2b"><div class="card-head"><span class="ticker">M0</span><span class="tier-tag t2b">benchmark</span><span class="env-n">N=17 realized · 0 pending</span></div><div class="env-grid"><div class="env-cell"><div class="env-lbl">nCAGR<sub>60</sub></div><div class="env-real"><span class="mono rs-pos">+84.8%</span></div><div class="env-exp">exp <span class="mono rs-pos">+84.8%</span> · Δ <span class="mono rs-pos">+0.0%</span></div></div><div class="env-cell"><div class="env-lbl">Sharpe<sub>60</sub></div><div class="env-real"><span class="mono rs-pos">+2.15</span></div><div class="env-exp">exp <span class="mono rs-pos">+2.15</span> · Δ <span class="mono rs-pos">+0.00</span></div></div><div class="env-cell"><div class="env-lbl">MaxDD<sub>60</sub></div><div class="env-real"><span class="mono rs-neg">-11.6%</span></div><div class="env-exp">exp <span class="mono rs-neg">-11.6%</span> · Δ <span class="mono rs-neg">-0.0%</span></div></div><div class="env-cell"><div class="env-lbl">Turnover</div><div class="env-real"><span class="mono rs-pos">+44.4%</span></div><div class="env-exp">exp <span class="mono rs-pos">+44.4%</span> · Δ <span class="mono rs-neg">-0.0%</span></div></div></div></div></div>
+
+  <div class="tier-group-label">Per-rebalance log
+    <span class="cnt">· 34 rows · newest first</span>
+  </div>
+  <div class="log-shell">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>Profile</th><th>Status</th>
+          <th style="text-align:right">N</th>
+          <th style="text-align:right">Gross</th>
+          <th style="text-align:right">Net 60bps</th>
+          <th style="text-align:right">Turnover</th>
+          <th style="text-align:right">Rolling DD</th>
+          <th style="text-align:right">CAGR sofar</th>
+          <th style="text-align:right">Sharpe sofar</th>
+          <th style="text-align:right">Equity</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">2026-03-31</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2026-03-31_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+12.15%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+11.88%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+45.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+84.8%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.15</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.387</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2026-03-31</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2026-03-31_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+9.84%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+9.63%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+35.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+80.4%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.54</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.307</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2026-02-27</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2026-02-27_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+18.49%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+18.31%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+30.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+76.5%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.97</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.134</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2026-02-27</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2026-02-27_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+12.41%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+12.17%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+40.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+74.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.33</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.104</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2026-01-30</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2026-01-30_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+5.85%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+5.76%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+15.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+60.3%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.71</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.804</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2026-01-30</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2026-01-30_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.01%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.11%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+20.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.1%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+65.4%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.13</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.876</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-12-31</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2025-12-31_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+17.54%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+17.24%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+50.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+58.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.62</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.705</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-12-31</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2025-12-31_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+6.95%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+6.80%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+25.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+71.6%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.35</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.878</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-11-28</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2025-11-28_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+9.26%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+8.81%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+75.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+41.3%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.30</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.455</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-11-28</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2025-11-28_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+8.46%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+8.22%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+40.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+68.4%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.14</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.758</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-04-30</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2025-04-30_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.74%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.95%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+35.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.9%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+33.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.09</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.337</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-04-30</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2025-04-30_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.90%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-1.20%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+50.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-1.2%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+62.5%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.88</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.625</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-03-28</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2025-03-28_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+13.50%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+13.26%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+40.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+38.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.18</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.350</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-03-28</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2025-03-28_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.45%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.33%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+20.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+72.1%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.25</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.645</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-02-28</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2025-02-28_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+7.47%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+7.26%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+35.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+23.4%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.82</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.192</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-02-28</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2025-02-28_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+9.06%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+8.94%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+20.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+74.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.21</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.592</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-01-31</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2025-01-31_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+8.58%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+8.34%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+40.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-3.1%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+15.1%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.59</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.111</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2025-01-31</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2025-01-31_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.60%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.42%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+30.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+65.8%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.86</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.461</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-12-31</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2024-12-31_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.45%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-0.72%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+45.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-10.6%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.8%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.27</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.025</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-12-31</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2024-12-31_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.29%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.20%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+15.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+75.5%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.11</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.455</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-11-29</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2024-11-29_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.45%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.88%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+95.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-9.9%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+5.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.32</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.033</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-11-29</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2024-11-29_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.51%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.00%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+85.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+89.5%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.50</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.452</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-04-30</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2024-04-30_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-5.22%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-5.46%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+40.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-11.6%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.8%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.25</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.014</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-04-30</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2024-04-30_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+6.58%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+6.58%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+106.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.91</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.438</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-03-29</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2024-03-29_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.66%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.42%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+40.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-6.5%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+18.3%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.60</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.072</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-03-29</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2024-03-29_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+13.17%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+13.11%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+10.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+105.1%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+3.55</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.349</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-02-29</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2024-02-29_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-8.47%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-8.68%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+35.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-8.7%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+14.8%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.52</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.047</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-02-29</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2024-02-29_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+4.29%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+4.29%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+69.6%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.78</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.193</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-01-31</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2024-01-31_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+5.38%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+5.11%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+45.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+72.8%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.41</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.147</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2024-01-31</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2024-01-31_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+7.53%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+7.44%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+15.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+71.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+2.48</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.144</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2023-12-29</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2023-12-29_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+22.66%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+22.39%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+45.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+68.5%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.20</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.091</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2023-12-29</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2023-12-29_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-pos">+11.54%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+11.36%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+30.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+45.4%</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.52</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+1.064</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2023-11-30</td>
+          <td style="color:var(--nox-blue)"><a class="tv-link" href="2023-11-30_m0_picks.html">M0</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-10.87%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-10.87%</span></td>
+          <td style="text-align:right"><span class="mono muted">—</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-74.9%</span></td>
+          <td style="text-align:right"><span class="mono muted">—</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.891</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2023-11-30</td>
+          <td style="color:var(--nox-gold)"><a class="tv-link" href="2023-11-30_v5_picks.html">V5</a></td>
+          <td><span class="badge st-new">realized</span></td>
+          <td class="mono" style="text-align:right">20</td>
+          <td style="text-align:right"><span class="mono rs-neg">-4.42%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-4.42%</span></td>
+          <td style="text-align:right"><span class="mono muted">—</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.0%</span></td>
+          <td style="text-align:right"><span class="mono rs-neg">-41.9%</span></td>
+          <td style="text-align:right"><span class="mono muted">—</span></td>
+          <td style="text-align:right"><span class="mono rs-pos">+0.956</span></td>
+        </tr></tbody>
+    </table>
+  </div>
+
+  <div class="footer-meta">
+    nyxmomentum v1.1 · frozen <b>v1.1.0-frozen</b> · dual profile (V5 default · M0 bench) · append-only tracker
+  </div>
+</div>
+</body></html>

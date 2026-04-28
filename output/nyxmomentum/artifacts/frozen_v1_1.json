@@ -1,0 +1,164 @@
+{
+  "pipeline": "nyxmomentum",
+  "version": "v1.1.0-frozen",
+  "frozen_at": "2026-04-23",
+  "frozen_by_commit": "pending-first-tag",
+  "supersedes": "v1.0.0-frozen (invalidated 2026-04-22 — incomplete universe)",
+  "status": "FROZEN — live candidate restored",
+  "framing": {
+    "deployment": "dual-profile catalog",
+    "default_live_candidate": "V5 defensive",
+    "secondary_profile": "M0 aggressive (benchmark / alternative)",
+    "archived": "V4 ensemble strict (V5 dominates on Sharpe/DD/turnover under v1.1 universe too)",
+    "classifier_branch": "NOT OPENED — vol-switch warmup spread +18.5pp (v1.1) vs +17.8pp (v1.0); verdict unchanged"
+  },
+  "universe": {
+    "source": "Fintables: mumlar_gunluk_gf ∩ hisse_finansal_tablolari (2026-04-22)",
+    "universe_csv": "output/nyxmomentum/universe/fintables_bist_equities_20260422.csv",
+    "raw_universe_size": 607,
+    "fetched_filled": 590,
+    "fetched_missing": 17,
+    "missing_tickers": ["AAGYO","AKHAN","ARFYE","ATATR","BESTE","EMPAE","ENPRA","FRMPL","GATEG","GENKM","LXGYO","MCARD","MEYSU","NETCD","SVGYO","UCAYM","ZGYO"],
+    "coverage_pct": 97.2,
+    "panel_parquet": "output/ohlcv_6y_fintables.parquet",
+    "panel_rows": 727275,
+    "panel_date_range": ["2020-04-22", "2026-04-22"],
+    "market": "BIST",
+    "rebalance_frequency": "monthly (M, last_trading_day)",
+    "first_rebalance": "2022-01-31",
+    "n_oos_rebalances": 17,
+    "oos_window": ["2023-11-30", "2026-03-31"],
+    "min_price_tl": 2.0,
+    "min_tl_volume_20d": 5000000.0,
+    "step0_tickers_loaded": 578,
+    "step0_eligibility_rate": 0.7259,
+    "caveat": "17 missing tickers are all micro-cap (no material large-caps). yfinance .IS bars for the 590 Fintables-verified equities. Live suitability not impaired."
+  },
+  "labels": {
+    "train_target": "l2_excess_vs_universe_median",
+    "horizon_months": 1,
+    "entry_mode": "next_open",
+    "exit_mode": "rebalance_close",
+    "benchmark": "universe_median"
+  },
+  "features": {
+    "n_specs": 20,
+    "blocks": ["momentum", "relative_strength", "liquidity", "trend_quality", "volatility", "exhaustion"],
+    "sector_block": "deferred — BIST sector mapping too weak for reliable neutralization",
+    "emit_cs_rank": true,
+    "macro_us_close_shift": 1,
+    "leakage_check": "features.py::_assert_no_realized_cols enforces realized t+1 columns cannot enter feature set",
+    "step2_eligible_rows": 19703,
+    "high_corr_pairs_n": 5
+  },
+  "folds": [
+    {"fold_id": "fold2", "train_end": "2022-12-31", "test": ["2023-11-30", "2024-04-30"], "n_oos": 6},
+    {"fold_id": "fold3", "train_end": "2023-12-31", "test": ["2024-11-29", "2025-04-30"], "n_oos": 6},
+    {"fold_id": "fold4", "train_end": "2024-12-31", "test": ["2025-11-28", "2026-03-31"], "n_oos": 5}
+  ],
+  "models": {
+    "M0": {
+      "type": "handcrafted rank composite",
+      "feature_weights": {
+        "ret_12m_skip_1m": 1.0,
+        "ret_6m_skip_1m": 0.6,
+        "rs_xu100_6m": 0.5,
+        "liquidity_rank_cs": 0.3,
+        "trend_quality_score": 0.4,
+        "exhaustion_penalty": -0.5
+      },
+      "standardization": "cross-sectional z-score per rebalance_date"
+    },
+    "M1": {
+      "type": "ridge regression (all 20 features)",
+      "target": "l2_excess_vs_universe_median",
+      "refit_cadence": "per-fold",
+      "output_artifact": "output/nyxmomentum/reports/step4_predictions_M1.parquet"
+    },
+    "M2": {
+      "type": "LightGBM",
+      "status": "excluded from production — OOS unstable on train sizes around 5k×20"
+    }
+  },
+  "portfolio_construction": {
+    "top_n": 20,
+    "weighting": "equal",
+    "hold_until_next_rebalance": true
+  },
+  "overlay": {
+    "enabled": true,
+    "mode": "soft_penalty",
+    "strength": 0.25,
+    "inputs": [
+      "proxy_limit_open_freq_60d",
+      "proxy_stale_open_freq_60d",
+      "proxy_open_dislocation_20d",
+      "proxy_gap_dispersion_20d"
+    ],
+    "ex_ante_only": true
+  },
+  "V0_M0_spec": {
+    "description": "handcrafted rank composite → top-20 equal-weight, no smoothing, no hysteresis",
+    "top_n": 20,
+    "smoothing_alpha": null,
+    "hysteresis": null
+  },
+  "V5_default_spec": {
+    "description": "rank-blend ensemble of M0 + M1 + dampener → default live candidate",
+    "ensemble": {"type": "rank_blend_per_date", "w_M0": 0.5, "w_M1": 0.5},
+    "dampener": {"n_enter": 20, "n_exit": 30, "smoothing_alpha": 0.5},
+    "top_n": 20,
+    "weighting": "equal"
+  },
+  "V4_archived_spec": {
+    "description": "rank-blend ensemble of M0 + M1, strict top-20 (no dampener)",
+    "ensemble": {"type": "rank_blend_per_date", "w_M0": 0.5, "w_M1": 0.5},
+    "dampener": null,
+    "reason_archived": "V5 dominates on Sharpe (3.54 vs 3.07), DD (-1.2% vs -2.5%), turnover (27.2% vs 63.1%) under v1.1 universe"
+  },
+  "cost_model": {
+    "commission_bps": 25.0,
+    "slippage_bps": 15.0,
+    "round_trip_bps": 60,
+    "execution": "next_open"
+  },
+  "frozen_metrics_at_60bps_v1_1": {
+    "always_M0": {"nCAGR": 0.848, "nShp": 2.15, "DD": -0.1157, "turnover": 0.4438},
+    "always_V5": {"nCAGR": 0.804, "nShp": 3.54, "DD": -0.0120, "turnover": 0.2719},
+    "vol_switch_oracle_reference": {"nCAGR": 1.172, "nShp": 3.97, "DD": -0.0120, "note": "post-hoc ceiling, not deployable"},
+    "vol_switch_live_v5w": {"nCAGR": 1.157, "nShp": 3.91, "warmup_spread_vs_m0w_pp": 18.5}
+  },
+  "v1_0_vs_v1_1_delta": {
+    "V5_nCAGR": -6.1,
+    "V5_Sharpe": 0.71,
+    "V5_maxDD_pp": 3.52,
+    "V5_turnover_pp": -4.69,
+    "V5_basket_overlap_mean_pct": 72.6,
+    "M0_basket_overlap_mean_pct": 87.9,
+    "last_rebalance_V5_swaps": "7/20 (35%)",
+    "comparison_report": "output/nyxmomentum/reports/V1_0_vs_V1_1_COMPARISON.md"
+  },
+  "artifact_hashes_sha256_16": {
+    "step1_labels.parquet": "524f4eb65e5578cb",
+    "step2_features.parquet": "8275c95fc266cb96",
+    "step4_predictions_M0.parquet": "92a92332bb522135",
+    "step4_predictions_M1.parquet": "e36415403595ceb3",
+    "step4_folds.csv": "c3402b8b235c9e6a"
+  },
+  "kill_switch_rules": {
+    "dd_trigger_pct": -15.0,
+    "dd_trigger_note": "rolling 3-month realized DD beyond 1.5× backtest max (V5 v1.1 DD -1.2%) → halt and review",
+    "turnover_trigger": "monthly realized turnover > 60% (V5 v1.1 backtest 27.2%, M0 44.4%) → halt and review",
+    "cost_trigger_bps": 120,
+    "cost_trigger_note": "realized round-trip > 120bps → switch to V5 (lower turnover) and review"
+  },
+  "reopen_conditions": {
+    "classifier_branch": "OOS sample extends ≥ 2 more years OR exogenous vol signal (realized BIST-100 vol) proves more stable than cross-sectional median of vol_std_60d",
+    "V4_reconsideration": "not planned — V5 strictly dominates"
+  },
+  "review_cadence": {
+    "monthly": "record V5 + M0 selections and realized returns, compare to backtest envelope",
+    "quarterly": "kill-switch check; cost audit",
+    "annual": "full pipeline re-evaluation (retrain M1, regenerate V5 picks OOS, re-run Step 5.5 / 6 diagnostics)"
+  }
+}
