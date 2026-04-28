@@ -20,6 +20,15 @@ BAR_CUTOFF_HH = 16
 BAR_CUTOFF_MM = 45
 EXPECTED_BARS_PER_PAIR = 27
 
+# 1h variant (nox_intraday_v1 master, ts_istanbul = bar OPEN timestamp):
+# include all bars with ts_open hour ≤ 16, i.e., bar's [open,close] window
+# closes ≤ 17:00 TR. BIST hourly grid 09:00..18:00 → 8 bars: 09, 10, 11,
+# 12, 13, 14, 15, 16. The 09:00 bar is BIST opening-auction (real volume,
+# real OHLC); included for fuller session context. The 17:00-18:00 bar
+# is excluded because it ends after the SBT decision moment.
+BAR_CUTOFF_HOUR_1H = 16
+EXPECTED_BARS_1H = 8
+
 # Coverage policy
 COVERAGE_DROP_THRESHOLD = 0.80   # drop rows with intraday_coverage < 80%
 COVERAGE_PARTIAL_LOWER = 0.80    # 0.80 ≤ coverage < 0.95 → keep but flag

@@ -120,6 +120,7 @@ class CandidateRow:
 def detect_candidates_for_ticker(
     daily: pd.DataFrame,
     truncated_bars: pd.DataFrame,
+    expected_bars: int = EXPECTED_BARS_PER_PAIR,
 ) -> pd.DataFrame:
     """Return SBT-1700 candidate rows for a single ticker.
 
@@ -129,6 +130,9 @@ def detect_candidates_for_ticker(
         truncated_bars: 17:00-truncated bars for THIS ticker only, columns:
             signal_date (datetime, normalized), Open, High, Low, Close, Volume,
             n_bars, intraday_coverage.
+        expected_bars: full-session bar count used to scale the volume gate
+            from a daily SMA to the elapsed intraday session. Default = 27
+            (15m grid). 1h variant passes 8.
 
     For each truncated bar, patches the corresponding T row of `daily` with
     the truncated values, recomputes indicators on bars [T-PRIOR_REQ_BARS .. T],
@@ -202,8 +206,8 @@ def detect_candidates_for_ticker(
             continue
 
         # Volume gate: scale 20d full-day SMA to elapsed session.
-        # Elapsed fraction = n_bars / EXPECTED_BARS_PER_PAIR (= 27 at 16:45).
-        elapsed_frac = max(n_bars / EXPECTED_BARS_PER_PAIR, 1e-6)
+        # Elapsed fraction = n_bars / expected_bars.
+        elapsed_frac = max(n_bars / expected_bars, 1e-6)
         if vol_1700 < SBT_VOL_MULT * vol_sma_prev * elapsed_frac:
             continue
 
@@ -237,6 +241,7 @@ def detect_candidates_for_ticker(
 def detect_candidates(
     daily_master: pd.DataFrame,
     truncated_bars: pd.DataFrame,
+    expected_bars: int = EXPECTED_BARS_PER_PAIR,
 ) -> pd.DataFrame:
     """Whole-panel candidate detection.
 
@@ -245,6 +250,8 @@ def detect_candidates(
             OHLCV (the Fintables 10y master schema).
         truncated_bars: output of aggregator.aggregate_truncated_bars,
             with `ticker`, `signal_date`, OHLCV, n_bars, intraday_coverage.
+        expected_bars: full-session bar count for elapsed-session volume scaling
+            (15m=27 default, 1h=8).
     """
     if daily_master.empty or truncated_bars.empty:
         return pd.DataFrame()
@@ -260,7 +267,7 @@ def detect_candidates(
             continue
         sub = sub[["Open", "High", "Low", "Close", "Volume"]].sort_index()
         sub.attrs["ticker"] = tk
-        cands = detect_candidates_for_ticker(sub, t_bars)
+        cands = detect_candidates_for_ticker(sub, t_bars, expected_bars=expected_bars)
         if not cands.empty:
             out_chunks.append(cands)
 

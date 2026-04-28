@@ -76,6 +76,7 @@ def _prior_panel(
 def build_features_for_ticker(
     daily: pd.DataFrame,
     candidates: pd.DataFrame,
+    expected_bars: int = EXPECTED_BARS_PER_PAIR,
 ) -> pd.DataFrame:
     """Emit one feature row per candidate (ticker, date).
 
@@ -83,6 +84,8 @@ def build_features_for_ticker(
         daily: per-ticker daily OHLCV indexed by Date, ascending.
         candidates: per-ticker rows from signals.detect_candidates_for_ticker
             (one row per (date) for this ticker).
+        expected_bars: full-session bar count for elapsed-session volume
+            pace and missing_bar_count features (15m=27, 1h=8).
 
     All prior-day reads index by T-1 (`prev_date`). T's information is
     only the 17:00 fields already attached to ``candidates``.
@@ -180,10 +183,10 @@ def build_features_for_ticker(
             "close_loc_intraday": (c1700 - l1700) / max(h1700 - l1700, 1e-9),
             "high_above_box_atr": (h1700 - float(r.box_top)) / atr_prior,
             # Volume
-            "vol_pace_ratio": _vol_pace(v1700, vol_sma_prior, n_bars),
+            "vol_pace_ratio": _vol_pace(v1700, vol_sma_prior, n_bars, expected_bars),
             "dollar_vol_1700": c1700 * v1700,
             "dollar_vol_ratio_pace": _dollar_vol_pace(
-                c1700, v1700, dollar_vol_sma_prior, n_bars,
+                c1700, v1700, dollar_vol_sma_prior, n_bars, expected_bars,
             ),
             # Prior returns context
             "ret_1d_prior": float(p["ret_1d_prior"]),
@@ -192,7 +195,7 @@ def build_features_for_ticker(
             "ret_20d_prior": float(p["ret_20d_prior"]),
             # Coverage diagnostics (kept as feature so the ranker can
             # learn to discount partial sessions if it wants)
-            "missing_bar_count": EXPECTED_BARS_PER_PAIR - n_bars,
+            "missing_bar_count": expected_bars - n_bars,
         }
         rows.append(feat)
 
@@ -205,10 +208,11 @@ def _safe_pct(num: float, denom: float) -> float:
     return (num - denom) / denom
 
 
-def _vol_pace(vol_1700: float, vol_sma_prior: float, n_bars: int) -> float:
+def _vol_pace(vol_1700: float, vol_sma_prior: float, n_bars: int,
+              expected_bars: int = EXPECTED_BARS_PER_PAIR) -> float:
     if vol_sma_prior <= 0 or n_bars <= 0:
         return np.nan
-    elapsed = n_bars / EXPECTED_BARS_PER_PAIR
+    elapsed = n_bars / expected_bars
     if elapsed <= 0:
         return np.nan
     return vol_1700 / (vol_sma_prior * elapsed)
@@ -219,10 +223,11 @@ def _dollar_vol_pace(
     vol_1700: float,
     dollar_vol_sma_prior: float,
     n_bars: int,
+    expected_bars: int = EXPECTED_BARS_PER_PAIR,
 ) -> float:
     if dollar_vol_sma_prior <= 0 or n_bars <= 0:
         return np.nan
-    elapsed = n_bars / EXPECTED_BARS_PER_PAIR
+    elapsed = n_bars / expected_bars
     if elapsed <= 0:
         return np.nan
     return (close_1700 * vol_1700) / (dollar_vol_sma_prior * elapsed)
@@ -231,6 +236,7 @@ def _dollar_vol_pace(
 def build_features(
     daily_master: pd.DataFrame,
     candidates: pd.DataFrame,
+    expected_bars: int = EXPECTED_BARS_PER_PAIR,
 ) -> pd.DataFrame:
     """Whole-panel feature build."""
     if daily_master.empty or candidates.empty:
@@ -243,7 +249,7 @@ def build_features(
             continue
         sub = sub[["Open", "High", "Low", "Close", "Volume"]].sort_index()
         sub.attrs["ticker"] = tk
-        feats = build_features_for_ticker(sub, c_chunk)
+        feats = build_features_for_ticker(sub, c_chunk, expected_bars=expected_bars)
         if not feats.empty:
             out_chunks.append(feats)
 
