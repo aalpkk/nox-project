@@ -5,6 +5,6 @@ Public surface:
     auth_from_env() -> AuthCache
 """
 from .auth import AuthCache, auth_from_env
-from .ws_client import fetch_bars
+from .ws_client import fetch_bars, fetch_bars_until
 
-__all__ = ["AuthCache", "auth_from_env", "fetch_bars"]
+__all__ = ["AuthCache", "auth_from_env", "fetch_bars", "fetch_bars_until"]
