@@ -1,15 +1,12 @@
-name: SBT-1700 — E04_C01 Live Scan (paper)
+name: SBT-1700 — E04_C01 Scan (manual / paper)
 
-# Daily live-style scan of SBT-1700 candidates with the frozen 5D ranker
-# and frozen E04_C01 execution geometry. Renders an HTML watchlist using
-# the briefing aesthetic and (optionally) publishes to GitHub Pages.
-#
-# Cron: 17:30 TR (= 14:30 UTC) on weekdays — after the 17:00–18:00 BIST bar
-# closes and `close_1700` is observable. The scan is paper / NOT live.
+# Manual fallback scan: re-runs the frozen 5D ranker + E04_C01 execution
+# geometry against the 5d dataset already on disk. Does NOT refresh the
+# extfeed master or rebuild the dataset — use sbt1700-refresh-and-scan
+# for end-to-end (delta_pull → build → scan). Daily cron lives in
+# sbt1700-refresh-and-scan.yml.
 
 on:
-  schedule:
-    - cron: '30 14 * * 1-5'
   workflow_dispatch:
     inputs:
       date:
