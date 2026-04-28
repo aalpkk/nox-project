@@ -22,6 +22,12 @@ on:
         default: 'false'
         type: choice
         options: ['true', 'false']
+  # Daily auto-fire at 17:05 TR (Mon–Fri). With cache restored from the
+  # prior run, phase1 is a no-op and only delta_pull (~6 min) + build
+  # (~1 min) + scan dispatch actually run, so the published HTML lands
+  # ~17:15 TR — well before BIST 18:00 close.
+  schedule:
+    - cron: '5 14 * * 1-5'
 
 permissions:
   contents: write
