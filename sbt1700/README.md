@@ -50,14 +50,15 @@ E3 execution rule.
 - Production rank score (PR-2) = regression score.
 - **No ensemble with legacy SBT ML.** **No bucket inputs.**
 
-### Acceptance gate (PR-2)
-- mean Spearman rho ≥ 0.10
-- fold_rho_min ≥ 0
-- top-decile PF_net ≥ 1.5
-- top-decile avg_R_net > 0
-- permutation p(avg_R) ≤ 0.05
-- top-5 trades' total R ≤ 50% of cohort total R (small-N concentration check)
-- Gate fail ⇒ no live cron.
+### RESET methodology (PR-2 superseded — see Reset section)
+
+> **Previous PR-2 E7 result was contaminated by same-dataset exit selection
+> and is excluded from this reset.**
+
+The original PR-2 acceptance gate has been retired. Exit selection,
+model selection, and ranker evaluation are now strictly separated by
+phase, with the test slice locked behind an explicit unlock flag.
+See the **Reset pipeline** section below.
 
 ## Module layout
 
@@ -68,13 +69,16 @@ E3 execution rule.
 | `signal_seed.py` | Daily-only seed of (ticker, date) candidates for Matriks gap fetch |
 | `signals.py` | 17:00 SBT signal detection (with prior squeeze prefix + impulse + vol pace + HTF gates) |
 | `features.py` | 17:00-aware features (no lookahead; `*_prior` lookups index T-1) |
-| `execution.py` | `simulate_e3()` (LONG, 1R TP, 0.3 ATR SL, 5-bar timeout, gross+net) |
-| `labels.py` | Run E3 per row, emit label columns |
+| `execution.py` | `simulate_e3()` (LONG, 1R TP, 0.3 ATR SL, 5-bar timeout, gross+net) — used by PR-1 dataset builder |
+| `exits.py` | Multi-exit simulator (E3..E7 family) — used by reset pipeline |
+| `labels.py` | Run E3 per row, emit label columns (PR-1 dataset) |
 | `build_dataset.py` | End-to-end orchestration → `output/sbt_1700_dataset.parquet` |
 | `validate_dataset.py` | Coverage / label / concentration markdown report |
-| `train_ranker.py` | (PR-2 stub) LightGBM train |
-| `eval_ranker.py` | (PR-2 stub) acceptance gate |
-| `run_scan_1700.py` | (PR-3 stub) live cron |
+| `splits.py` | RESET: locked train/val/test bounds + test-period lock guard |
+| `train_ranker.py` | RESET: locked LightGBM regression, blacklist enforcement, walk-forward |
+| `eval_ranker.py` | RESET: phase-aware cohort + ranker metrics |
+| `reset_pipeline.py` | RESET: phase orchestrator (manifest / discovery / validation / final_test / report) |
+| `run_scan_1700.py` | (PR-3 stub) live cron — only after a final_test pass + explicit go-decision |
 
 External tools:
 - `tools/sbt1700_fetch_intraday.py` — gap-only Matriks 15m fetcher;
@@ -105,10 +109,99 @@ python -m sbt1700.build_dataset \
 The GitHub Actions workflow (`.github/workflows/sbt1700-build-dataset.yml`)
 runs all three steps on workflow_dispatch.
 
+## Reset pipeline (PR-3)
+
+> **Previous PR-2 E7 result was contaminated by same-dataset exit
+> selection and is excluded from this reset.**
+
+The original PR-2 ran exit selection and ranker evaluation on the same
+2024–2026 cohort, so the "E7 unconditional + rankable" verdict cannot
+be treated as out-of-sample evidence. The reset rebuilds the
+methodology from scratch with an explicit train / validation / test
+split and a lock that prevents the test slice from being read until a
+final, one-shot readout.
+
+### Locked split (do not silently change)
+
+| Phase | Date range | Use |
+|---|---|---|
+| train | 2024-01-16 → 2025-06-30 | All discovery: exit family scan, feature exploration, ranker walk-forward |
+| validation | 2025-07-01 → 2025-12-31 | At most 2 carried exits + locked model; freezes one final exit |
+| test | 2026-01-01 → 2026-04-24 | One-shot readout. Locked behind `--unlock-test` |
+
+`sbt1700/splits.py::load_split(phase="test")` raises `TestLockError`
+unless `allow_test=True` is passed. The CI guard
+(`tests/sbt1700/test_splits_lock.py`) verifies this so the lock cannot
+regress silently. The reset workflow refuses `phase=final_test`
+without `unlock_test=true`.
+
+### Phase semantics
+
+- **Discovery pass** ≠ validated. Discovery may surface candidates only.
+- **Validation pass** ≠ production. Validation freezes one exit + one model.
+- **Test pass** = paper candidate only. Live deployment requires a
+  separate go-decision and a forward paper-traded ledger built after
+  this reset.
+
+### Hard rules
+
+- The test slice is never accessed during discovery or validation.
+- Hyperparameters are locked in `train_ranker.LGBM_REGRESSION_PARAMS`.
+  No sweep, no random search, no per-fold tuning.
+- Feature blacklist (`train_ranker.FEATURE_BLACKLIST`) drops all
+  label-derived columns, identifiers, raw date strings, and per-trade
+  parameters (entry_px / stop_px / tp_px / atr_1700) before fitting.
+- Re-running validation does *not* re-search exits. If discovery
+  promotes E5 and E7, validation runs only those two and freezes one.
+
+### Run flow
+
+```bash
+# 1. Build dataset under the reset filename (re-run PR-1 builder, new path).
+python -m sbt1700.build_dataset \
+    --master output/ohlcv_10y_fintables_master.parquet \
+    --intraday output/nyxexp_intraday_15m_matriks.parquet \
+               output/sbt1700_intraday_15m.parquet \
+    --start 2023-11-15 \
+    --out output/sbt_1700_dataset_reset.parquet
+
+# 2. Manifest — record split bounds + dataset fingerprint.
+python -m sbt1700.reset_pipeline manifest
+
+# 3. Discovery — exit matrix + per-exit ranker WF on TRAIN only.
+python -m sbt1700.reset_pipeline discovery
+
+# 4. Validation — pick ≤2 carried exits, freeze one.
+python -m sbt1700.reset_pipeline validation --carry E5_symmetric,E7_partial
+
+# 5. Final test — ONE-SHOT readout, requires --unlock-test.
+python -m sbt1700.reset_pipeline final_test --exit E7_partial --unlock-test
+
+# 6. Report — synthesize sbt_1700_reset_report.md.
+python -m sbt1700.reset_pipeline report
+```
+
+The same phases are wired into
+`.github/workflows/sbt1700-reset.yml` (workflow_dispatch). The workflow
+runs the lock-guard pytest before every phase and refuses
+`phase=final_test` unless `unlock_test=true` is set on the dispatch.
+
+### Reset outputs
+
+- `output/sbt_1700_reset_split_manifest.json` — split bounds + dataset SHA-256 prefix
+- `output/sbt_1700_exit_discovery_train.csv` — raw cohort × 5 exits on TRAIN
+- `output/sbt_1700_ranker_discovery_train.csv` — per-exit walk-forward (TRAIN internal)
+- `output/sbt_1700_exit_validation.csv` — raw cohort × carried exits on VAL
+- `output/sbt_1700_ranker_validation.csv` — TRAIN-fit, VAL-applied ranker metrics
+- `output/sbt_1700_final_test_LOCKED.csv` / `.json` / `_trades.csv` — one-shot readout
+- `output/sbt_1700_reset_report.md` — synthesized report
+
 ## What this module does NOT do
 
 - Does not consume `breakout_master`, `tavan_*`, `rally_*`, `ml_breakout_*`,
   or any bucket score field from the legacy pipeline.
 - Does not patch the legacy `output/ml_dataset.parquet`.
 - Does not modify `run_smart_breakout.py` or its workflow.
-- Does not push to Telegram / GH Pages until the PR-2 gate is green.
+- Does not enable any live cron from the reset PR. Promotion to
+  `run_scan_1700.py` requires an explicit go-decision after the
+  final-test readout, never automatically.

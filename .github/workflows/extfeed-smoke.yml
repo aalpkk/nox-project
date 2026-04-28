@@ -3,13 +3,17 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Test mode: smoke (single symbol) or stress (multi-symbol)'
+        description: 'Test mode'
         required: false
         default: 'smoke'
         type: choice
         options:
           - smoke
           - stress
+          - paginate
+          - phase0
+          - phase1
+          - daily_recon
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -34,7 +38,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -54,9 +58,55 @@ jobs:
               "${{ github.event.inputs.n_bars }}" \
               "${{ github.event.inputs.n_tickers }}" \
               "${{ github.event.inputs.delay_s }}"
+          elif [ "${{ github.event.inputs.mode }}" = "paginate" ]; then
+            python tools/extfeed_paginate_probe.py \
+              "${{ github.event.inputs.symbol }}" \
+              "${{ github.event.inputs.timeframe }}" \
+              "${{ github.event.inputs.n_bars }}"
+          elif [ "${{ github.event.inputs.mode }}" = "phase0" ]; then
+            python tools/extfeed_phase0_smoke.py \
+              "${{ github.event.inputs.n_tickers }}" \
+              "${{ github.event.inputs.timeframe }}" \
+              "3"
+          elif [ "${{ github.event.inputs.mode }}" = "phase1" ]; then
+            python tools/extfeed_phase1_bulk.py
+          elif [ "${{ github.event.inputs.mode }}" = "daily_recon" ]; then
+            python tools/extfeed_daily_recon.py
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
               "${{ github.event.inputs.timeframe }}" \
               "${{ github.event.inputs.n_bars }}"
           fi
+      - name: Upload phase0 artifacts
+        if: ${{ github.event.inputs.mode == 'phase0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-phase0
+          path: |
+            output/extfeed_phase0_smoke_summary.csv
+            output/extfeed_phase0_smoke_bars.parquet
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload phase1 artifacts
+        if: ${{ github.event.inputs.mode == 'phase1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-phase1
+          path: |
+            output/extfeed_intraday_1h_3y_master.parquet
+            output/extfeed_intraday_coverage.csv
+            output/extfeed_intraday_volume_recon.csv
+            output/_extfeed_phase1.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload daily_recon artifacts
+        if: ${{ github.event.inputs.mode == 'daily_recon' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-daily-recon
+          path: |
+            output/extfeed_daily_recon.csv
+            output/extfeed_daily_recon_summary.csv
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,40 +1,41 @@
-name: SBT-1700 — Refresh 5d dataset + Scan
+name: SBT-1700 — Daily Refresh + Scan
 
-# One-shot manual chain:
-#   1. Pull fresh extfeed 1h master (cached between runs).
-#   2. Rebuild output/sbt_1700_dataset_5d_intraday_v1.parquet for the
-#      requested signal-date (default = today TR).
-#   3. Commit the rebuilt 5d parquet to main.
-#   4. Dispatch sbt1700-scan-live for the same date.
+# Tek-shot günlük zincir (mevsimsel BIST iş günü):
+#   1. extfeed master cache restore → delta_pull (son 4 gün, dedupe)
+#   2. sbt1700.build_dataset_5d → output/sbt_1700_dataset_5d_intraday_v1.parquet
+#   3. sbt1700.scan_live (frozen 5D ranker + frozen E04_C01)
+#   4. HTML → GitHub Pages publish
+#   5. Telegram bildirimi
+#   6. Commit edilmiş dataset (.parquet + .meta.json) repo'ya push
 #
-# Use this when the on-disk 5d dataset is missing the target signal-day.
+# Cron: 17:01 TR (14:01 UTC) hafta içi — BIST 16:00–17:00 saatlik bar kapandıktan
+# 1 dk sonra. Manual dispatch ile gerek date / full_pull override edilebilir.
 
 on:
+  schedule:
+    - cron: '1 14 * * 1-5'
   workflow_dispatch:
     inputs:
       date:
-        description: 'Signal-date (YYYY-MM-DD). Blank = today TR.'
+        description: 'Signal-date (YYYY-MM-DD). Boş = bugün TR.'
         required: false
         default: ''
       full_pull:
-        description: 'Force fresh extfeed master pull (slow, ~40 min).'
+        description: 'extfeed full bulk pull (slow, ~40 min). Genelde false.'
         required: false
         default: 'false'
         type: choice
         options: ['true', 'false']
-  # Daily auto-fire at 17:05 TR (Mon–Fri). With cache restored from the
-  # prior run, phase1 is a no-op and only delta_pull (~6 min) + build
-  # (~1 min) + scan dispatch actually run, so the published HTML lands
-  # ~17:15 TR — well before BIST 18:00 close.
-  schedule:
-    - cron: '5 14 * * 1-5'
 
 permissions:
   contents: write
-  actions: write
+
+concurrency:
+  group: sbt1700-daily
+  cancel-in-progress: false
 
 jobs:
-  refresh:
+  daily:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -63,9 +64,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: output/extfeed_intraday_1h_3y_master.parquet
-          key: extfeed-intraday-1h-master-v1
+          key: extfeed-master-1h-${{ steps.resolve_date.outputs.signal_date }}
+          restore-keys: |
+            extfeed-master-1h-
 
-      - name: Pull extfeed 1h master (full or resume)
+      - name: Optional full bulk pull
+        if: ${{ github.event.inputs.full_pull == 'true' }}
         env:
           INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
           INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
@@ -73,13 +77,9 @@ jobs:
           INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
         run: |
           set -o pipefail
-          if [ "${{ github.event.inputs.full_pull }}" = "true" ]; then
-            python tools/extfeed_phase1_bulk.py --force 2>&1 | tail -200
-          else
-            python tools/extfeed_phase1_bulk.py 2>&1 | tail -200
-          fi
+          python tools/extfeed_phase1_bulk.py --force 2>&1 | tail -200
 
-      - name: Delta-pull last 4 days for all tickers
+      - name: Delta-pull last 4 days (incremental)
         env:
           INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
           INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
@@ -100,38 +100,114 @@ jobs:
         run: |
           python - <<'PY'
           import pandas as pd
-          df = pd.read_parquet("output/sbt_1700_dataset_5d_intraday_v1.parquet", columns=["date"])
-          print(f"5d dataset: rows={len(df):,} "
+          df = pd.read_parquet("output/sbt_1700_dataset_5d_intraday_v1.parquet",
+                               columns=["date", "ticker"])
+          print(f"5d dataset rows={len(df):,} tickers={df['ticker'].nunique()} "
                 f"date_min={df['date'].min()} date_max={df['date'].max()}")
           PY
 
-      - name: Commit refreshed 5d dataset
+      - name: Run sbt1700.scan_live
+        run: |
+          set -o pipefail
+          python -m sbt1700.scan_live \
+            --date "${{ steps.resolve_date.outputs.signal_date }}" \
+            2>&1 | tee sbt1700_scan_output.txt
+
+      - name: Push HTML to GitHub Pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          from core.reports import push_html_to_github
+          html = pathlib.Path("output/sbt_1700_E04_scan_latest.html").read_text(encoding="utf-8")
+          url = push_html_to_github(html, "sbt_1700_E04_scan.html", "sbt1700-latest")
+          print(f"  ✓ published: {url}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, re, requests
+
+          try:
+              with open("sbt1700_scan_output.txt") as f:
+                  raw = f.read()
+          except FileNotFoundError:
+              raw = ""
+
+          m_n = re.search(r"candidates on (\S+):\s*(\d+)", raw)
+          date = m_n.group(1) if m_n else "?"
+          n_cand = int(m_n.group(2)) if m_n else 0
+
+          tickers = re.findall(r"^\[scan_live\]\s+(\S+)\s+score=([\d.]+)\s+\((\S+)\)", raw, re.M)
+          q80_match = re.search(r"q80=([\d.]+)\s+q90=([\d.]+)", raw)
+          cutoffs = ""
+          if q80_match:
+              cutoffs = f"q80={q80_match.group(1)} · q90={q80_match.group(2)}"
+
+          if n_cand == 0:
+              body = f"📊 <b>SBT-1700 / E04_C01 paper</b> · {date}\n\nNO TRIGGER — bugün aday yok.\n{cutoffs}"
+          else:
+              lines = [f"📊 <b>SBT-1700 / E04_C01 paper</b> · {date}", ""]
+              lines.append(f"{n_cand} aday tetikledi:")
+              for t, s, tag in tickers:
+                  emoji = "🟡" if tag == "TOP-DECILE" else "🟢" if tag == "TOP-QUINTILE" else "⚪"
+                  lines.append(f"  {emoji} <b>{t}</b> · {s} ({tag})")
+              lines.append("")
+              lines.append(f"<i>{cutoffs}</i>")
+              lines.append("")
+              lines.append("⚠️ Paper/watchlist · canlı para yok")
+              body = "\n".join(lines)
+
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": body[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:")
+              print(body)
+          PYEOF
+
+      - name: Commit refreshed dataset
+        if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f output/sbt_1700_dataset_5d_intraday_v1.parquet \
                      output/sbt_1700_dataset_5d_intraday_v1.meta.json
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+            echo "No dataset changes to commit"
           else
             git commit -m "chore(sbt1700): refresh 5d dataset → ${{ steps.resolve_date.outputs.signal_date }}"
+            git pull --rebase --autostash || true
             git push
           fi
-
-      - name: Dispatch sbt1700-scan-live
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh workflow run sbt1700-scan-live.yml \
-            --ref main \
-            -f date="${{ steps.resolve_date.outputs.signal_date }}"
 
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sbt1700-refresh-${{ github.run_number }}
+          name: sbt1700-daily-${{ steps.resolve_date.outputs.signal_date }}-${{ github.run_number }}
           path: |
+            sbt1700_scan_output.txt
+            output/sbt_1700_E04_scan_*.html
             output/sbt_1700_dataset_5d_intraday_v1.parquet
             output/sbt_1700_dataset_5d_intraday_v1.meta.json
             output/extfeed_intraday_coverage.csv

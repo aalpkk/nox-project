@@ -1,9 +1,9 @@
 {
   "schema_version": "v1-5d-intraday_v1",
-  "built_at": "2026-04-28T17:20:13Z",
+  "built_at": "2026-04-28T18:01:03Z",
   "dataset_source": "nox_intraday_v1",
-  "rows": 1240,
-  "tickers": 433,
+  "rows": 1247,
+  "tickers": 435,
   "date_min": "2023-03-13",
   "date_max": "2026-04-27",
   "expected_bars_per_pair": 8,
@@ -70,5 +70,5 @@
     "ret_20d_prior",
     "missing_bar_count"
   ],
-  "n_rows_with_labels": 1234
+  "n_rows_with_labels": 1241
 }

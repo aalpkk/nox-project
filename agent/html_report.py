@@ -90,6 +90,11 @@ def _prepare_lists_json(lists_dict, max_per_list=15):
                     entry['gate_penalty'] = sig['gate_penalty']
                 if sig.get('_rule_score') is not None:
                     entry['rule_score'] = sig['_rule_score']
+                # SBT-1700 paper-pick (E04_C01)
+                if sig.get('sbt1700_tier'):
+                    entry['sbt1700_tier'] = sig['sbt1700_tier']
+                    if sig.get('sbt1700_score') is not None:
+                        entry['sbt1700_score'] = sig['sbt1700_score']
                 # Vol tier (RT hacim-donus)
                 if sig.get('vol_tier'):
                     entry['vol_tier'] = sig['vol_tier']
@@ -169,6 +174,10 @@ def _prepare_overlap_json(lists_dict, max_per_group=15):
                 entry['sbt_bucket'] = meta['sbt_bucket']
             if meta.get('gate_penalty'):
                 entry['gate_penalty'] = meta['gate_penalty']
+            if meta.get('sbt1700_tier'):
+                entry['sbt1700_tier'] = meta['sbt1700_tier']
+                if meta.get('sbt1700_score') is not None:
+                    entry['sbt1700_score'] = meta['sbt1700_score']
             # Vol tier (RT hacim-donus)
             if meta.get('vol_tier'):
                 entry['vol_tier'] = meta['vol_tier']
@@ -250,6 +259,10 @@ def _prepare_shortlist_json(lists_dict, max_items=15):
                     entry['ml_effect'] = meta['ml_effect']
                 if meta.get('sbt_bucket'):
                     entry['sbt_bucket'] = meta['sbt_bucket']
+                if meta.get('sbt1700_tier'):
+                    entry['sbt1700_tier'] = meta['sbt1700_tier']
+                    if meta.get('sbt1700_score') is not None:
+                        entry['sbt1700_score'] = meta['sbt1700_score']
                 if meta.get('sector_index'):
                     entry['sector_index'] = meta['sector_index']
                     entry['sector_regime'] = meta.get('sector_regime', '')
@@ -327,6 +340,293 @@ def _prepare_sector_summary(lists_dict):
         'groups': groups,
         'total': len(all_regimes),
     }
+
+
+# ──────────────────────────── external scans HTML ────────────────────────────
+
+
+def _render_external_scans_html(ext: dict | None) -> str:
+    """Server-render the 4 external-scan sections + 5th meta-Markowitz section.
+
+    Layout: one outer <details> ("Dış Tarayıcılar") with 5 inner sub-details.
+    Each sub-section is independently fail-soft — empty lists render an
+    explicit "no candidates" message instead of being hidden.
+    """
+    if not ext:
+        return ""  # external scans disabled or hard-failed
+
+    base = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
+    cyan = "var(--nox-cyan)"
+    gold = "var(--nox-gold)"
+    muted = "var(--text-muted)"
+
+    def _ticker_link(t: str) -> str:
+        return f'<a href="{base}/{t}.html" style="color:{gold};text-decoration:none">{t}</a>'
+
+    def _empty(msg: str) -> str:
+        return f'<div style="color:{muted};font-size:0.8rem;padding:0.4rem 0">{msg}</div>'
+
+    parts: list[str] = []
+
+    # ─── 1. Alpha scan ───────────────────────────────────────────────────
+    alpha = ext.get("alpha", {}) or {}
+    a_picks = alpha.get("picks", [])
+    a_url = alpha.get("url", f"{base}/alpha_scan.html")
+    parts.append(f"""
+        <details class="detail-block" open>
+            <summary>1) NYX Alpha Scan <span class="det-count">{len(a_picks)}</span></summary>
+            <div class="detail-body">
+                <div style="font-size:0.75rem;color:{muted};margin-bottom:0.4rem">
+                    Kaynak: <a href="{a_url}" target="_blank" style="color:{gold}">alpha_scan.html</a>
+                    {' · cutoff ' + alpha.get('scan_date', '') if alpha.get('scan_date') else ''}
+                </div>""")
+    if alpha.get("error"):
+        parts.append(_empty(f"Çekilemedi ({alpha['error']})"))
+    elif not a_picks:
+        parts.append(_empty("Bugün aday yok."))
+    else:
+        rows = []
+        for i, p in enumerate(a_picks[:50], 1):
+            score = f"{p['score']:.1f}" if p.get("score") is not None else "—"
+            ml1 = f"{p['ml1g']:.2f}" if p.get("ml1g") is not None else "—"
+            ml3 = f"{p['ml3g']:.2f}" if p.get("ml3g") is not None else "—"
+            price = f"{p['price']:.2f}" if p.get("price") is not None else "—"
+            rows.append(
+                f"<tr><td>{i}</td><td>{_ticker_link(p['ticker'])}</td>"
+                f"<td>{score}</td><td>{ml1}</td><td>{ml3}</td><td>{price}</td></tr>"
+            )
+        more = ""
+        if len(a_picks) > 50:
+            more = (f'<div style="color:{muted};font-size:0.7rem;margin-top:0.3rem">'
+                    f'Yalnız ilk 50 / {len(a_picks)} gösteriliyor.</div>')
+        parts.append(f"""
+                <div style="overflow-x:auto">
+                <table class="confluence-table" style="font-size:0.75rem">
+                    <thead><tr><th>#</th><th>Hisse</th><th>Skor</th>
+                    <th>ML1g</th><th>ML3g</th><th>Fiyat</th></tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+                </div>{more}""")
+    parts.append("</div></details>")
+
+    # ─── 2. Nyxpansion daily ─────────────────────────────────────────────
+    nyx = ext.get("nyxexp", {}) or {}
+    n_picks = nyx.get("picks", [])
+    n_url = nyx.get("url", f"{base}/nyxexp_scan.html")
+    parts.append(f"""
+        <details class="detail-block" open>
+            <summary>2) Nyxpansion Daily Scan <span class="det-count">{len(n_picks)}</span></summary>
+            <div class="detail-body">
+                <div style="font-size:0.75rem;color:{muted};margin-bottom:0.4rem">
+                    Kaynak: <a href="{n_url}" target="_blank" style="color:{gold}">nyxexp_scan.html</a>
+                    · 18:05 EOD canonical · sadece <b>retention=PASS</b>
+                </div>""")
+    if nyx.get("error"):
+        parts.append(_empty(f"Çekilemedi ({nyx['error']})"))
+    elif not n_picks:
+        parts.append(_empty("Bugün PASS adayı yok."))
+    else:
+        rows = []
+        for i, p in enumerate(n_picks, 1):
+            winR = f"{p['winR']:.2f}" if p.get("winR") is not None else "—"
+            rows.append(
+                f"<tr><td>{i}</td><td>{_ticker_link(p['ticker'])}</td>"
+                f"<td>{winR}</td><td>{p.get('exec_tag', '')}</td>"
+                f"<td>{p.get('risk_bucket', '')}</td></tr>"
+            )
+        parts.append(f"""
+                <div style="overflow-x:auto">
+                <table class="confluence-table" style="font-size:0.75rem">
+                    <thead><tr><th>#</th><th>Hisse</th><th>winR</th>
+                    <th>exec_tag</th><th>risk_bucket</th></tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+                </div>""")
+    parts.append("</div></details>")
+
+    # ─── 3. Screener Combo daily ─────────────────────────────────────────
+    sc = ext.get("screener_combo", {}) or {}
+    sc_picks = sc.get("picks", [])
+    sc_url = sc.get("url", f"{base}/screener_combo_latest.html")
+    parts.append(f"""
+        <details class="detail-block" open>
+            <summary>3) Screener Combo Daily <span class="det-count">{len(sc_picks)}</span></summary>
+            <div class="detail-body">
+                <div style="font-size:0.75rem;color:{muted};margin-bottom:0.4rem">
+                    Kaynak: <a href="{sc_url}" target="_blank" style="color:{gold}">screener_combo_latest.html</a>
+                </div>""")
+    if sc.get("error"):
+        parts.append(_empty(f"Çekilemedi ({sc['error']})"))
+    elif not sc_picks:
+        parts.append(_empty("Bugün aday yok."))
+    else:
+        rows = []
+        for i, p in enumerate(sc_picks, 1):
+            score = f"{p['score']:.2f}" if p.get("score") is not None else "—"
+            rows.append(
+                f"<tr><td>{i}</td><td>{_ticker_link(p['ticker'])}</td>"
+                f"<td>{p.get('gate', '')}</td><td>{score}</td></tr>"
+            )
+        parts.append(f"""
+                <div style="overflow-x:auto">
+                <table class="confluence-table" style="font-size:0.75rem">
+                    <thead><tr><th>#</th><th>Hisse</th><th>Gate</th><th>Skor</th></tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+                </div>""")
+    parts.append("</div></details>")
+
+    # ─── 4. SBT-1700 ─────────────────────────────────────────────────────
+    sbt = ext.get("sbt1700", {}) or {}
+    sbt_picks = sbt.get("picks", [])
+    sbt_url = sbt.get("url", f"{base}/sbt_1700_E04_scan.html")
+    parts.append(f"""
+        <details class="detail-block" open>
+            <summary>4) SBT-1700 / E04_C01 (paper) <span class="det-count">{len(sbt_picks)}</span></summary>
+            <div class="detail-body">
+                <div style="font-size:0.75rem;color:{muted};margin-bottom:0.4rem">
+                    Kaynak: <a href="{sbt_url}" target="_blank" style="color:{gold}">sbt_1700_E04_scan.html</a>
+                    {' · scan ' + sbt.get('scan_date', '') if sbt.get('scan_date') else ''}
+                    · ⚠️ paper / canlı para yok
+                </div>""")
+    if sbt.get("error"):
+        parts.append(_empty(f"Çekilemedi ({sbt['error']})"))
+    elif not sbt_picks:
+        parts.append(_empty("NO TRIGGER — bugün aday yok."))
+    else:
+        rows = []
+        for i, p in enumerate(sbt_picks, 1):
+            score = f"{p['score']:.2f}" if p.get("score") is not None else "—"
+            tier_color = "#c9a96e" if p["tier"] == "D10" else "#7a9e7a"
+            rows.append(
+                f'<tr><td>{i}</td><td>{_ticker_link(p["ticker"])}</td>'
+                f'<td><span style="color:{tier_color};font-weight:600">{p["tier"]}</span></td>'
+                f'<td>{score}</td></tr>'
+            )
+        parts.append(f"""
+                <div style="overflow-x:auto">
+                <table class="confluence-table" style="font-size:0.75rem">
+                    <thead><tr><th>#</th><th>Hisse</th><th>Tier</th><th>Skor</th></tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+                </div>""")
+    parts.append("</div></details>")
+
+    # ─── 5. Meta-Markowitz (4 listenin birleşimi) ────────────────────────
+    meta = ext.get("meta", {}) or {}
+    n_uni = meta.get("n_universe_with_data", 0)
+    fb_note = ""
+    if meta.get("used_fallback"):
+        fb_note = ' · <span style="color:#c9a96e">⚠ fallback evren (likit BIST listesi)</span>'
+
+    parts.append(f"""
+        <details class="detail-block" open>
+            <summary>5) 4 Listeden 4'lü Markowitz Portföyü</summary>
+            <div class="detail-body">
+                <div style="font-size:0.75rem;color:{muted};margin-bottom:0.6rem;line-height:1.5">
+                    Birleşik universe: {ext.get('union_size', 0)} aday (4 tarayıcının
+                    sembolleri) → Top-{n_uni} (çoklu kaynak + skor) → C({n_uni},4)
+                    enumerasyon · lookback {meta.get('lookback_days', '?')}g · long-only
+                    · ağırlık ∈ [{meta.get('weight_bounds', [0, 0])[0]:.2f},
+                    {meta.get('weight_bounds', [0, 0])[1]:.2f}]
+                    · {meta.get('combos_evaluated', 0)} kombinasyon{fb_note}
+                </div>""")
+
+    err = meta.get("error")
+    ms = meta.get("max_sharpe")
+    rp = meta.get("risk_parity")
+
+    if err:
+        parts.append(_empty(f"Hesaplanamadı ({err})."))
+    elif not ms and not rp:
+        parts.append(_empty("Optimize edilebilir kombinasyon bulunamadı."))
+    else:
+        # Two cards side-by-side (collapse to stacked on mobile via flex-wrap)
+        cards = []
+
+        if ms:
+            ms_rows = []
+            for t, w in sorted(ms["weights"].items(), key=lambda x: -x[1]):
+                ms_rows.append(
+                    f"<tr><td>{_ticker_link(t)}</td>"
+                    f"<td style=\"text-align:right\">{w * 100:.1f}%</td></tr>"
+                )
+            cards.append(f"""
+                <div style="flex:1;min-width:280px;background:rgba(201,169,110,0.04);
+                            border:1px solid rgba(201,169,110,0.2);border-radius:8px;
+                            padding:0.8rem">
+                    <div style="font-weight:600;color:{gold};margin-bottom:0.4rem">
+                        Max-Sharpe Portföy
+                    </div>
+                    <div style="font-size:0.7rem;color:{muted};margin-bottom:0.5rem">
+                        Sharpe {ms['sharpe']:.2f} · Beklenen getiri
+                        {ms['expected_return']:+.1f}% · Risk
+                        {ms['expected_risk']:.1f}% (yıllık)
+                    </div>
+                    <table class="confluence-table" style="font-size:0.75rem;width:100%">
+                        <thead><tr><th>Hisse</th><th style="text-align:right">Ağırlık</th></tr></thead>
+                        <tbody>{''.join(ms_rows)}</tbody>
+                    </table>
+                </div>""")
+
+        if rp:
+            rp_rows = []
+            for t, w in sorted(rp["weights"].items(), key=lambda x: -x[1]):
+                rc = rp.get("risk_contributions", {}).get(t)
+                rc_cell = f"<td style=\"text-align:right;color:{muted};font-size:0.7rem\">{rc:.0f}%</td>" if rc is not None else "<td></td>"
+                rp_rows.append(
+                    f"<tr><td>{_ticker_link(t)}</td>"
+                    f"<td style=\"text-align:right\">{w * 100:.1f}%</td>"
+                    f"{rc_cell}</tr>"
+                )
+            cards.append(f"""
+                <div style="flex:1;min-width:280px;background:rgba(122,158,122,0.04);
+                            border:1px solid rgba(122,158,122,0.2);border-radius:8px;
+                            padding:0.8rem">
+                    <div style="font-weight:600;color:{cyan};margin-bottom:0.4rem">
+                        Risk-Parity Portföy (ERC)
+                    </div>
+                    <div style="font-size:0.7rem;color:{muted};margin-bottom:0.5rem">
+                        Sharpe {rp['sharpe']:.2f} · Beklenen getiri
+                        {rp['expected_return']:+.1f}% · Risk
+                        {rp['expected_risk']:.1f}% (yıllık)
+                    </div>
+                    <table class="confluence-table" style="font-size:0.75rem;width:100%">
+                        <thead><tr><th>Hisse</th>
+                        <th style="text-align:right">Ağırlık</th>
+                        <th style="text-align:right">Risk Katkı</th></tr></thead>
+                        <tbody>{''.join(rp_rows)}</tbody>
+                    </table>
+                </div>""")
+
+        parts.append(f"""
+                <div style="display:flex;gap:0.8rem;flex-wrap:wrap">
+                    {''.join(cards)}
+                </div>
+                <div style="font-size:0.7rem;color:{muted};margin-top:0.6rem;line-height:1.5">
+                    <b>Not:</b> Kovaryans Ledoit-Wolf shrinkage ile düzeltildi.
+                    60-günlük lookback yüksek momentumda yıllık %200+ μ üretebilir
+                    — bu sayılar geçmişten kalibre edilmiş beklenti, garanti değil.
+                    Risk-parity her hisseye eşit risk katkısı (%25) verir; max-Sharpe
+                    en yüksek Sharpe için çoğunlukla daha konsantredir.
+                </div>""")
+    parts.append("</div></details>")
+
+    # ─── Outer wrapper ───────────────────────────────────────────────────
+    inner = "\n".join(parts)
+    return f"""
+    <!-- 4i: Dış Tarayıcılar (alpha + nyxexp + screener_combo + sbt1700 + meta-MV) -->
+    <details class="detail-block" open>
+        <summary>🛰 Dış Tarayıcılar + 4'lü Markowitz</summary>
+        <div class="detail-body">
+            <div style="font-size:0.7rem;color:{muted};margin-bottom:0.6rem;line-height:1.5">
+                4 günlük tarayıcı + birleşik universe üzerinden 4'lü
+                max-Sharpe ve risk-parity portföyleri.
+                Çekilme zamanı: {ext.get('fetched_at', '?')} TR.
+            </div>
+            {inner}
+        </div>
+    </details>"""
 
 
 def generate_briefing_html(briefing_text, macro_data, confluence_results,
@@ -471,6 +771,12 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
     limit_order_html = ""
     if limit_order_text:
         limit_order_html = _linkify_tickers(_markdown_to_html(limit_order_text))
+
+    # Dış tarayıcılar (alpha/nyxexp/screener_combo/sbt1700) + 4'lü meta-Markowitz.
+    # Server-side render — JS tarafına veri taşınmıyor, sade <details> blokları.
+    external_scans_html = _render_external_scans_html(
+        lists_dict.get("_external_scans") if lists_dict else None
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="tr">
@@ -991,6 +1297,28 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 .sbt-badge.sbt-b {{ background: rgba(138,133,128,0.12); color: var(--text-secondary); }}
 .sbt-badge.sbt-x {{ background: rgba(158,90,90,0.15); color: var(--nox-red); }}
 
+/* SBT-1700 / E04_C01 paper-pick badge */
+.sbt1700-badge {{
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.32rem;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}}
+.sbt1700-badge.d10 {{
+    background: rgba(201,169,110,0.20);
+    color: var(--nox-gold);
+    border-color: rgba(201,169,110,0.45);
+}}
+.sbt1700-badge.q5 {{
+    background: rgba(168,135,106,0.14);
+    color: #c9a96e;
+    border-color: rgba(168,135,106,0.40);
+}}
+
 /* VOL TIER BADGE (Hacim-donus) */
 .vol-tier {{
     font-family: var(--font-mono);
@@ -1476,6 +1804,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
         </div>
         </div>
     </details>
+    {external_scans_html}
 
     <!-- 4f: Haberler -->
     <details class="detail-block">
@@ -1624,6 +1953,14 @@ function sbtBadge(item) {{
     const c={{'A+':'sbt-ap','A':'sbt-a','B':'sbt-b','C':'sbt-b','X':'sbt-x'}}[item.sbt_bucket]||'';
     return `<span class="sbt-badge ${{c}}">SBT:${{item.sbt_bucket}}</span>`;
 }}
+function sbt1700Badge(item) {{
+    if(!item.sbt1700_tier) return '';
+    const tier = item.sbt1700_tier;
+    const cls = tier === 'D10' ? 'd10' : 'q5';
+    const sc = item.sbt1700_score != null ? `·${{Number(item.sbt1700_score).toFixed(2)}}` : '';
+    const tt = `SBT-1700 / E04_C01 paper-pick · ${{tier}}${{sc}}`;
+    return `<span class="sbt1700-badge ${{cls}}" title="${{tt}}">🎯 SBT-1700·${{tier}}</span>`;
+}}
 function sectorBadge(item) {{
     if(!item.sector_index) return '';
     return item.sector_regime==='AL'
@@ -1746,7 +2083,7 @@ function filterReasons(reasons) {{
                     <span class="score-pill">${{item.score}}p</span>
                 </div>
                 <div class="card-badges">
-                    ${{mlBadge(item)}}${{sbtBadge(item)}}${{sectorBadge(item)}}${{brkBadge(item)}}${{iceBadge(item)}}${{volBadge(item)}}
+                    ${{sbt1700Badge(item)}}${{mlBadge(item)}}${{sbtBadge(item)}}${{sectorBadge(item)}}${{brkBadge(item)}}${{iceBadge(item)}}${{volBadge(item)}}
                 </div>
                 <div class="card-reasons">${{reasons}}</div>
                 ${{entryHtml}}
@@ -1836,7 +2173,7 @@ function filterReasons(reasons) {{
                 <span class="rank">${{i+1}}</span>
                 <a href="${{TV}}${{item.ticker}}" target="_blank" class="tv-link ticker">${{item.ticker}}</a>
                 <span class="reasons">${{reasons}}</span>
-                ${{volBadge(item)}}${{sectorBadge(item)}}${{sbtBadge(item)}}${{mlBadge(item)}}${{brkBadge(item)}}${{gateTag}}${{iceBadge(item)}}
+                ${{sbt1700Badge(item)}}${{volBadge(item)}}${{sectorBadge(item)}}${{sbtBadge(item)}}${{mlBadge(item)}}${{brkBadge(item)}}${{gateTag}}${{iceBadge(item)}}
                 <span class="score-pill">${{item.score}}p</span>
             </div>`;
         }});

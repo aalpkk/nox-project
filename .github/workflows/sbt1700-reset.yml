@@ -1,0 +1,211 @@
+name: SBT-1700 RESET — phased pipeline
+
+# Manual trigger only. Runs one phase per dispatch so the test slice
+# never gets unlocked accidentally during discovery / validation.
+#
+# Phase semantics:
+#   manifest        : write split manifest JSON for the dataset.
+#   discovery       : legacy exit matrix + per-exit ranker WF on TRAIN only.
+#   discovery_grid  : F0..F8 controlled-grammar exit grid (~142 variants) on
+#                     TRAIN only. Cohort metrics + ≤4 carried candidates
+#                     (slot 4 is the conditional F8 profit-lock carry).
+#                     No ranker work in this phase.
+#   validation      : ≤4 carried exits on VAL only (TRAIN-fit, VAL-applied).
+#   final_test      : ONE-SHOT readout on TEST. Requires unlock_test=true.
+#   report          : synthesize sbt_1700_reset_report.md from prior outputs.
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'manifest | discovery | discovery_grid | validation | final_test | report'
+        required: true
+        default: 'discovery_grid'
+        type: choice
+        options:
+          - manifest
+          - discovery
+          - discovery_grid
+          - validation
+          - final_test
+          - report
+      dataset_run_number:
+        description: 'sbt1700-build-dataset run number (downloads sbt1700-dataset-<N>). Leave empty to use a committed dataset.'
+        required: false
+        default: ''
+      dataset_path:
+        description: 'Dataset parquet path (in repo or downloaded). Default = output/sbt_1700_dataset_reset.parquet'
+        required: false
+        default: 'output/sbt_1700_dataset_reset.parquet'
+      master_path:
+        description: 'Daily master parquet path. Default = output/ohlcv_10y_fintables_master.parquet'
+        required: false
+        default: 'output/ohlcv_10y_fintables_master.parquet'
+      carry_exits:
+        description: '(validation only) 1 to 4 comma-separated exits, e.g. F2_sl1.5_p33at1R_be1.5R_atr2.0_h40,F8a_lock_1R_sl1.5_p0_lockL1_h40'
+        required: false
+        default: ''
+      final_exit:
+        description: '(final_test only) the single locked exit, e.g. E7_partial'
+        required: false
+        default: ''
+      unlock_test:
+        description: '(final_test only) MUST be set to "true" to unlock the test split. Any other value refuses.'
+        required: false
+        default: 'false'
+
+jobs:
+  phase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run CI lock-guard tests (mandatory before any phase)
+        run: pytest tests/sbt1700/test_splits_lock.py -v
+
+      - name: Pull dataset from prior build (if requested)
+        if: ${{ github.event.inputs.dataset_run_number != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p output
+          gh run download "${{ github.event.inputs.dataset_run_number }}" \
+            -n "sbt1700-dataset-${{ github.event.inputs.dataset_run_number }}" \
+            -D output \
+            -R "${{ github.repository }}"
+          # The build_dataset workflow writes sbt_1700_dataset.parquet; the
+          # reset pipeline expects sbt_1700_dataset_reset.parquet by default.
+          # Copy to the reset filename to make the dataset identity explicit.
+          if [ -f output/sbt_1700_dataset.parquet ] && [ ! -f "${{ github.event.inputs.dataset_path }}" ]; then
+            cp output/sbt_1700_dataset.parquet "${{ github.event.inputs.dataset_path }}"
+          fi
+
+      - name: Verify dataset present
+        run: |
+          if [ ! -f "${{ github.event.inputs.dataset_path }}" ]; then
+            echo "::error::dataset not found at ${{ github.event.inputs.dataset_path }}. Either commit it or pass dataset_run_number."
+            exit 1
+          fi
+          python -c "import pandas as pd; df=pd.read_parquet('${{ github.event.inputs.dataset_path }}'); print('rows', len(df), 'cols', len(df.columns))"
+
+      - name: Refuse final_test without unlock_test=true
+        if: ${{ github.event.inputs.phase == 'final_test' && github.event.inputs.unlock_test != 'true' }}
+        run: |
+          echo "::error::phase=final_test requires unlock_test=true. Refusing."
+          echo "::error::Previous PR-2 E7 result was contaminated by same-dataset exit selection and is excluded from this reset."
+          exit 1
+
+      - name: Refuse final_test without --final_exit
+        if: ${{ github.event.inputs.phase == 'final_test' && github.event.inputs.final_exit == '' }}
+        run: |
+          echo "::error::phase=final_test requires final_exit input."
+          exit 1
+
+      - name: Refuse validation without --carry_exits
+        if: ${{ github.event.inputs.phase == 'validation' && github.event.inputs.carry_exits == '' }}
+        run: |
+          echo "::error::phase=validation requires carry_exits input (1 to 4 exit names)."
+          exit 1
+
+      - name: Run phase — manifest
+        if: ${{ github.event.inputs.phase == 'manifest' }}
+        run: |
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            manifest
+
+      - name: Run phase — discovery
+        if: ${{ github.event.inputs.phase == 'discovery' }}
+        run: |
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            discovery
+
+      - name: Run phase — discovery_grid
+        if: ${{ github.event.inputs.phase == 'discovery_grid' }}
+        run: |
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            discovery_grid
+
+      - name: Run phase — validation
+        if: ${{ github.event.inputs.phase == 'validation' }}
+        run: |
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            validation \
+            --carry "${{ github.event.inputs.carry_exits }}"
+
+      - name: Run phase — final_test (unlocked)
+        if: ${{ github.event.inputs.phase == 'final_test' && github.event.inputs.unlock_test == 'true' }}
+        run: |
+          echo "::warning::Test split unlocked for one-shot readout. Subsequent rule changes invalidate this readout."
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            final_test \
+            --exit "${{ github.event.inputs.final_exit }}" \
+            --unlock-test
+
+      - name: Run phase — report
+        if: ${{ github.event.inputs.phase == 'report' }}
+        run: |
+          python -m sbt1700.reset_pipeline \
+            --dataset "${{ github.event.inputs.dataset_path }}" \
+            --master  "${{ github.event.inputs.master_path }}" \
+            --out-dir output \
+            report
+
+      - name: Show phase output
+        if: always()
+        run: |
+          echo "::group::Output directory listing"
+          ls -la output/sbt_1700_*reset* output/sbt_1700_exit_discovery* output/sbt_1700_exit_validation* output/sbt_1700_final_test* output/sbt_1700_ranker_discovery* output/sbt_1700_ranker_validation* 2>/dev/null || true
+          echo "::endgroup::"
+          if [ -f output/sbt_1700_reset_report.md ]; then
+            echo "::group::Report"
+            cat output/sbt_1700_reset_report.md
+            echo "::endgroup::"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbt1700-reset-${{ github.event.inputs.phase }}-${{ github.run_number }}
+          path: |
+            output/sbt_1700_reset_split_manifest.json
+            output/sbt_1700_exit_discovery_train.csv
+            output/sbt_1700_ranker_discovery_train.csv
+            output/sbt_1700_exit_discovery_grid.csv
+            output/sbt_1700_exit_discovery_family_summary.csv
+            output/sbt_1700_exit_discovery_recommended_validation_exits.md
+            output/sbt_1700_exit_discovery_yearly.csv
+            output/sbt_1700_exit_discovery_carried.csv
+            output/sbt_1700_exit_discovery_rejected_top.csv
+            output/sbt_1700_exit_validation.csv
+            output/sbt_1700_ranker_validation.csv
+            output/sbt_1700_final_test_LOCKED.csv
+            output/sbt_1700_final_test_LOCKED.json
+            output/sbt_1700_final_test_LOCKED_trades.csv
+            output/sbt_1700_reset_model_*.txt
+            output/sbt_1700_reset_importance_*.csv
+            output/sbt_1700_reset_features_*.json
+            output/sbt_1700_reset_report.md
+          if-no-files-found: warn
+          retention-days: 60

@@ -535,6 +535,48 @@ def _parse_sbt_html(html_text):
     return _SBTTableParser.parse(html_text)
 
 
+def _fetch_sbt1700_data():
+    """SBT-1700 / E04_C01 paper-pick verisini GH Pages'ten çek.
+
+    Kaynak: sbt_1700_E04_scan.html içindeki <script id="sbt1700-data"> JSON marker.
+    Returns: {ticker: {'tier': 'D10'|'Q5', 'score': float, 'scan_date': str}} veya {}
+    """
+    import re
+    import json as _json
+    import requests
+
+    nox_base = os.environ.get(
+        "GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals"
+    ).rstrip("/")
+    url = f"{nox_base}/sbt_1700_E04_scan.html"
+
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        m = re.search(
+            r'<script\s+id="sbt1700-data"\s+type="application/json">(.*?)</script>',
+            resp.text, re.DOTALL,
+        )
+        if not m:
+            return {}
+        payload = _json.loads(m.group(1))
+        scan_date = payload.get("scan_date", "")
+        out = {}
+        for p in payload.get("picks", []):
+            tkr = p.get("ticker")
+            tier = p.get("tier")
+            if tkr and tier in ("D10", "Q5"):
+                out[tkr] = {
+                    "tier": tier,
+                    "score": float(p.get("score", 0)),
+                    "scan_date": scan_date,
+                }
+        return out
+    except Exception:
+        return {}
+
+
 def _calc_gate_penalty(ticker, sig, sbt_data):
     """SBT gate penalty hesapla.
 
@@ -664,6 +706,14 @@ def _ml_overlay_v2(lists_dict, latest_signals):
         else:
             print("  [ML] SBT verisi yok — atlanıyor")
 
+        # SBT-1700 / E04_C01 paper-pick badge feed (opportunistic, hata={})
+        print("  [ML] SBT-1700 paper-pick verisi çekiliyor...")
+        sbt1700_data = _fetch_sbt1700_data()
+        if sbt1700_data:
+            print(f"  [ML] SBT-1700: {len(sbt1700_data)} pick")
+        else:
+            print("  [ML] SBT-1700 pick yok — atlanıyor")
+
         # ── Step 6: Pre-ML sıralama snapshot ──
         _LIST_SHORT = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW', 'rt': 'RT', 'sbt': 'SBT'}
         pre_ml_ranks = {}  # {key: {ticker: rank_index}}
@@ -738,6 +788,12 @@ def _ml_overlay_v2(lists_dict, latest_signals):
                     if sbt_bucket:
                         sig_or_meta['sbt_bucket'] = sbt_bucket
                     sig_or_meta['_rule_score'] = score  # Orijinal rule score sakla
+
+                # SBT-1700 paper-pick enjekte et (D10 / Q5 / yok)
+                sbt1700_info = sbt1700_data.get(ticker)
+                if isinstance(sig_or_meta, dict) and sbt1700_info:
+                    sig_or_meta['sbt1700_tier'] = sbt1700_info['tier']
+                    sig_or_meta['sbt1700_score'] = sbt1700_info['score']
 
                 # ── Step 8: Composite score hesapla ──
                 # Tier1 için overlap_bonus=0 (zaten overlap quality baked-in)
@@ -3427,6 +3483,29 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
     news_items = fetch_market_news()
     if news_items:
         print(f"  📰 {len(news_items)} haber çekildi")
+
+    # 4a-bis. Dış tarayıcılar (alpha, nyxexp, screener_combo, sbt1700)
+    # + 4'lü meta-Markowitz (max-Sharpe + risk-parity ERC) — fail-soft.
+    print("\n🛰  Dış tarayıcılar çekiliyor...")
+    try:
+        from agent.external_scans import gather_all as _gather_external_scans
+        ext = _gather_external_scans()
+        lists_dict['_external_scans'] = ext
+        print(f"  alpha={len(ext['alpha']['picks'])} | "
+              f"nyxexp={len(ext['nyxexp']['picks'])} | "
+              f"screener_combo={len(ext['screener_combo']['picks'])} | "
+              f"sbt1700={len(ext['sbt1700']['picks'])} | "
+              f"union={ext['union_size']}")
+        meta = ext.get('meta', {})
+        if meta.get('max_sharpe'):
+            ms = meta['max_sharpe']
+            tag = " (fallback)" if meta.get('used_fallback') else ""
+            print(f"  meta-Markowitz{tag}: max-Sharpe={ms['sharpe']:.2f} "
+                  f"({'/'.join(ms['tickers'])}) "
+                  f"@ ret={ms['expected_return']:.1f}% risk={ms['expected_risk']:.1f}%")
+    except Exception as e:
+        print(f"  ⚠️ Dış tarayıcı çekimi hatası: {e}")
+        lists_dict['_external_scans'] = None
 
     # 4b. Template brifing üret (kod tabanlı — AI yorumu yok)
     print("\n📝 Template brifing oluşturuluyor...")

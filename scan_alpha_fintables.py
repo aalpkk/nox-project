@@ -29,7 +29,7 @@ from alpha.config import (
 )
 from core.indicators import calc_atr
 
-OHLCV_PATH = Path("output/ohlcv_6y_fintables.parquet")
+OHLCV_PATH = Path("output/ohlcv_10y_fintables_master.parquet")
 # Tracked in git; also fall back to output/nyxmomentum path for dev machines
 UNIVERSE_CSV_CANDIDATES = [
     Path("data/fintables_bist_equities_20260422.csv"),
@@ -100,89 +100,369 @@ def _build_markowitz_top4(all_data: dict, candidates: list) -> dict:
 
 
 def _render_html(candidates: list, portfolio: dict, cutoff: pd.Timestamp, meta: dict) -> str:
-    """Dashboard HTML — all candidates table + Markowitz top-4."""
+    """Dashboard HTML — NOX briefing aesthetic (dark, aurora bg, gold/copper palette)."""
     n = len(candidates)
+    cutoff_str = cutoff.strftime("%d.%m.%Y")
+    gen_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+
     pf_rows = ""
     if portfolio and portfolio.get("weights"):
         for t, w in sorted(portfolio["weights"].items(), key=lambda x: -x[1]):
             match = next((c for c in candidates if c["ticker"] == t), None)
             if match:
                 pf_rows += (
-                    f"<tr><td><b>{t}</b></td>"
-                    f"<td>{w*100:.1f}%</td>"
-                    f"<td>{match['composite']:.1f}</td>"
+                    f"<tr>"
+                    f"<td class='ticker'><b>{t}</b></td>"
+                    f"<td class='wt'>{w*100:.1f}%</td>"
+                    f"<td class='score'>{match['composite']:.1f}</td>"
                     f"<td>{match['ml_1g']:.2f}</td>"
                     f"<td>{match['ml_3g']:.2f}</td>"
                     f"<td>{match['close']:,.2f}</td>"
-                    f"<td>{match['stop']:,.2f}</td>"
-                    f"<td>{match['stop_pct']:.1f}%</td>"
-                    f"<td>{match['trail_target']:,.2f}</td></tr>"
+                    f"<td class='neg'>{match['stop']:,.2f}</td>"
+                    f"<td class='neg'>{match['stop_pct']:.1f}%</td>"
+                    f"<td class='pos'>{match['trail_target']:,.2f}</td>"
+                    f"</tr>"
                 )
+
     cand_rows = ""
     for i, c in enumerate(candidates, 1):
         ml3g = f"{c['ml_3g']:.2f}" if c.get("ml_3g") else "—"
+        cmf_v = c['cmf']
+        cmf_cls = "pos" if cmf_v > 0 else ("neg" if cmf_v < 0 else "")
         cand_rows += (
-            f"<tr><td>{i}</td><td><b>{c['ticker']}</b></td>"
-            f"<td>{c['composite']:.1f}</td>"
+            f"<tr>"
+            f"<td class='idx'>{i}</td>"
+            f"<td class='ticker'><b>{c['ticker']}</b></td>"
+            f"<td class='score'>{c['composite']:.1f}</td>"
             f"<td>{c['ml_1g']:.2f}</td><td>{ml3g}</td>"
             f"<td>{c['adx']:.1f}</td>"
-            f"<td>{c['cmf']:+.3f}</td>"
+            f"<td class='{cmf_cls}'>{cmf_v:+.3f}</td>"
             f"<td>{c['rsi']:.1f}</td>"
             f"<td>{c['close']:,.2f}</td>"
-            f"<td>{c['stop']:,.2f}</td>"
-            f"<td>{c['stop_pct']:.1f}%</td>"
-            f"<td>{c['trail_target']:,.2f}</td></tr>"
+            f"<td class='neg'>{c['stop']:,.2f}</td>"
+            f"<td class='neg'>{c['stop_pct']:.1f}%</td>"
+            f"<td class='pos'>{c['trail_target']:,.2f}</td>"
+            f"</tr>"
         )
 
     pf_section = ""
     if portfolio and portfolio.get("weights"):
+        sharpe = portfolio['sharpe_ratio']
+        sharpe_cls = "kpi-pos" if sharpe >= 1.0 else ("kpi-mid" if sharpe >= 0.5 else "kpi-neg")
         pf_section = f"""
-        <div class="box">
-          <h2>🎯 Markowitz 4'lü Portföy (Max Sharpe)</h2>
-          <div class="kpis">
-            <div>Beklenen Getiri: <b>{portfolio['expected_return']:+.1f}%</b></div>
-            <div>Risk (σ): <b>{portfolio['expected_risk']:.1f}%</b></div>
-            <div>Sharpe: <b>{portfolio['sharpe_ratio']:.2f}</b></div>
-            <div>Hisse: <b>{portfolio['n_stocks']}</b></div>
-          </div>
-          <table class="data">
-            <thead><tr><th>Hisse</th><th>Ağırlık</th><th>Skor</th><th>ML1g</th><th>ML3g</th>
-            <th>Fiyat</th><th>Stop</th><th>Stop%</th><th>Trail</th></tr></thead>
-            <tbody>{pf_rows}</tbody>
-          </table>
-        </div>
-        """
+    <div class="layer-title">Markowitz Portföy — Max Sharpe</div>
+    <div class="card portfolio-card">
+      <div class="kpi-strip">
+        <div class="kpi"><span class="kpi-label">Beklenen Getiri</span><span class="kpi-val kpi-pos">{portfolio['expected_return']:+.1f}%</span></div>
+        <div class="kpi"><span class="kpi-label">Risk (σ)</span><span class="kpi-val">{portfolio['expected_risk']:.1f}%</span></div>
+        <div class="kpi"><span class="kpi-label">Sharpe</span><span class="kpi-val {sharpe_cls}">{sharpe:.2f}</span></div>
+        <div class="kpi"><span class="kpi-label">Hisse</span><span class="kpi-val">{portfolio['n_stocks']}</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Hisse</th><th>Ağırlık</th><th>Skor</th><th>ML1g</th><th>ML3g</th>
+            <th>Fiyat</th><th>Stop</th><th>Stop %</th><th>Trail</th>
+          </tr></thead>
+          <tbody>{pf_rows}</tbody>
+        </table>
+      </div>
+    </div>
+"""
+
+    be_shift = os.environ.get('BE_SHIFT_R', '2.0')
 
     return f"""<!DOCTYPE html>
-<html lang="tr"><head>
-<meta charset="utf-8"><title>nyxalpha scan — {cutoff.date()}</title>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYX Alpha Scan — {cutoff_str}</title>
 <style>
-body {{ font-family: -apple-system, sans-serif; margin: 20px; background: #fafafa; color: #222; }}
-h1 {{ margin: 0 0 4px; }}
-.meta {{ color: #666; margin-bottom: 16px; font-size: 0.9em; }}
-.box {{ background: white; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px;
-       box-shadow: 0 1px 4px rgba(0,0,0,0.06); }}
-h2 {{ margin-top: 0; font-size: 1.1em; }}
-.kpis {{ display: flex; gap: 24px; font-size: 0.95em; margin-bottom: 12px; color: #444; }}
-table.data {{ width: 100%; border-collapse: collapse; font-size: 0.88em; }}
-table.data th {{ text-align: left; background: #f0f0f0; padding: 6px 8px; }}
-table.data td {{ padding: 4px 8px; border-bottom: 1px solid #eee; }}
-table.data tr:hover {{ background: #f7f7f7; }}
-.footer {{ color: #888; font-size: 0.8em; margin-top: 16px; }}
-</style></head><body>
-<h1>nyxalpha scan</h1>
-<div class="meta">Kapanış: <b>{cutoff.date()}</b> · Evren: <b>{meta['n_universe']}</b> → Likit: <b>{meta['n_liquid']}</b> → Aday: <b>{n}</b> · Mode: {meta['mode']}</div>
-{pf_section}
-<div class="box">
-  <h2>Tüm Adaylar ({n})</h2>
-  <table class="data">
-    <thead><tr><th>#</th><th>Hisse</th><th>Skor</th><th>ML1g</th><th>ML3g</th><th>ADX</th><th>CMF</th><th>RSI</th>
-    <th>Fiyat</th><th>Stop</th><th>Stop%</th><th>Trail</th></tr></thead>
-    <tbody>{cand_rows}</tbody>
-  </table>
+@import url('https://fonts.googleapis.com/css2?family=Rubik+Glitch&family=Homemade+Apple&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+:root {{
+  --bg-primary: #060709;
+  --bg-card: #0d0d10;
+  --bg-elevated: #141417;
+  --bg-hover: #1b1b1f;
+  --border-subtle: #1e1e23;
+  --border-dim: #2c2b30;
+  --text-primary: #e8e4dc;
+  --text-secondary: #8a8580;
+  --text-muted: #555250;
+  --nox-gold: #c9a96e;
+  --nox-gold-dim: rgba(201,169,110,0.10);
+  --nox-copper: #b8956e;
+  --nox-green: #7a9e7a;
+  --nox-red: #9e5a5a;
+  --nox-blue: #7a8fa5;
+  --font-display: 'DM Sans', sans-serif;
+  --font-brand: 'Rubik Glitch', cursive;
+  --font-handwrite: 'Homemade Apple', cursive;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 14px;
+  --radius-sm: 8px;
+}}
+*, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{
+  font-family: var(--font-display);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}}
+
+.aurora-bg {{ position: fixed; top:0; left:0; width:100%; height:100%; z-index:0; overflow:hidden; pointer-events:none; }}
+.aurora-layer {{ position: absolute; width:200%; height:200%; top:-50%; left:-50%; opacity:1; }}
+.aurora-layer-1 {{
+  background:
+    radial-gradient(ellipse 35% 25% at 8% 12%, rgba(207,199,196,0.35) 0%, transparent 50%),
+    radial-gradient(ellipse 25% 20% at 88% 78%, rgba(32,30,33,0.6) 0%, transparent 50%);
+  animation: aurora-drift 28s ease-in-out infinite;
+}}
+.aurora-layer-2 {{
+  background:
+    radial-gradient(ellipse 30% 22% at 78% 8%, rgba(207,199,196,0.2) 0%, transparent 50%),
+    radial-gradient(ellipse 22% 22% at 12% 88%, rgba(32,30,33,0.5) 0%, transparent 50%);
+  animation: aurora-drift 35s ease-in-out infinite reverse;
+}}
+.aurora-layer-3 {{
+  background: radial-gradient(ellipse 25% 15% at 45% 45%, rgba(184,149,110,0.12) 0%, transparent 40%);
+  animation: aurora-pulse 22s ease-in-out infinite;
+}}
+.mesh-overlay {{
+  position: fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;
+  background-image:
+    radial-gradient(circle 400px at 12% 18%, rgba(207,199,196,0.08) 0%, transparent 50%),
+    radial-gradient(circle 350px at 88% 72%, rgba(32,30,33,0.2) 0%, transparent 50%);
+  filter: blur(40px);
+}}
+@keyframes aurora-drift {{
+  0%,100% {{ transform: translate(0,0) rotate(0deg); }}
+  25% {{ transform: translate(4%,-4%) rotate(3deg); }}
+  50% {{ transform: translate(-4%,4%) rotate(-3deg); }}
+  75% {{ transform: translate(2%,2%) rotate(2deg); }}
+}}
+@keyframes aurora-pulse {{
+  0%,100% {{ opacity: 0.3; transform: scale(1); }}
+  50% {{ opacity: 0.6; transform: scale(1.1); }}
+}}
+
+.container {{
+  position: relative; z-index: 1;
+  max-width: 1200px; margin: 0 auto; padding: 0 1.5rem 3rem;
+}}
+
+/* Sticky status bar */
+.status-bar {{
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(6,6,8,0.55);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  border-bottom: 1px solid rgba(201,169,110,0.08);
+  padding: 0.6rem 1.5rem;
+  margin: 0 -1.5rem 1.75rem;
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+}}
+.status-bar .logo {{
+  display: inline-flex; align-items: baseline; gap: 0.15rem; white-space: nowrap;
+}}
+.status-bar .logo .nox-text {{
+  font-family: var(--font-brand);
+  font-size: 2.4rem;
+  color: #fff;
+  letter-spacing: 0.06em;
+  line-height: 0.85;
+}}
+.status-bar .logo .alpha-text {{
+  font-family: var(--font-handwrite);
+  font-size: 1.3rem;
+  color: var(--nox-gold);
+  margin-left: 0.25rem;
+  position: relative;
+  top: -0.1rem;
+}}
+.status-bar .meta-pill {{
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}}
+.status-bar .meta-pill b {{ color: var(--nox-gold); font-weight: 600; }}
+.status-bar .meta-right {{
+  font-size: 0.72rem; color: var(--text-muted);
+  font-family: var(--font-mono); white-space: nowrap; margin-left: auto;
+}}
+
+/* Layer titles */
+.layer-title {{
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--nox-gold);
+  margin: 1.5rem 0 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-subtle);
+}}
+.layer-title:first-of-type {{ margin-top: 0; }}
+
+/* Cards */
+.card {{
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem 1.25rem;
+  margin-bottom: 0.5rem;
+}}
+.portfolio-card {{
+  border-color: rgba(201,169,110,0.18);
+  background: linear-gradient(180deg, rgba(201,169,110,0.025) 0%, var(--bg-card) 60%);
+}}
+
+/* KPI strip */
+.kpi-strip {{
+  display: flex; flex-wrap: wrap; gap: 1.5rem;
+  padding: 0.5rem 0 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 1rem;
+}}
+.kpi {{ display: flex; flex-direction: column; gap: 0.15rem; }}
+.kpi-label {{
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}}
+.kpi-val {{
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}}
+.kpi-pos {{ color: var(--nox-green); }}
+.kpi-mid {{ color: var(--nox-gold); }}
+.kpi-neg {{ color: var(--nox-red); }}
+
+/* Tables */
+.table-wrap {{
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: rgba(6,7,9,0.3);
+}}
+table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
+thead {{ position: sticky; top: 0; z-index: 5; }}
+th {{
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-weight: 600; font-size: 0.66rem;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  padding: 9px 10px; text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  font-family: var(--font-display);
+}}
+td {{
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(39,39,42,0.4);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}}
+tr {{ transition: background 0.1s; }}
+tr:hover {{ background: var(--bg-hover); }}
+td.idx {{ color: var(--text-muted); }}
+td.ticker {{ color: var(--text-primary); font-family: var(--font-display); font-weight: 600; }}
+td.ticker b {{ color: var(--nox-gold); }}
+td.score {{ color: var(--nox-gold); font-weight: 600; }}
+td.wt {{ color: var(--nox-copper); font-weight: 600; }}
+td.pos {{ color: var(--nox-green); }}
+td.neg {{ color: var(--nox-red); }}
+
+/* Counter pill in header */
+.section-meta {{
+  display: inline-flex; gap: 0.4rem; align-items: center;
+  font-family: var(--font-mono); font-size: 0.66rem;
+  color: var(--text-muted);
+  text-transform: none; letter-spacing: 0.02em;
+  margin-left: 0.6rem;
+  padding: 0.15rem 0.55rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.6rem;
+}}
+.section-meta b {{ color: var(--nox-gold); font-weight: 600; }}
+
+/* Footer */
+.footer {{
+  text-align: center;
+  padding: 1.75rem 0 0.5rem;
+  margin-top: 1.5rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  border-top: 1px solid var(--border-subtle);
+}}
+.footer b {{ color: var(--nox-gold); font-weight: 500; }}
+.footer .sep {{ color: var(--border-dim); margin: 0 0.5rem; }}
+
+@media (max-width: 768px) {{
+  .container {{ padding: 0 0.75rem 2rem; }}
+  .status-bar {{ margin: 0 -0.75rem 1.25rem; }}
+  .kpi-strip {{ gap: 1rem; }}
+  table {{ font-size: 0.7rem; }}
+  td, th {{ padding: 6px 7px; }}
+}}
+</style>
+</head>
+<body>
+<div class="aurora-bg">
+  <div class="aurora-layer aurora-layer-1"></div>
+  <div class="aurora-layer aurora-layer-2"></div>
+  <div class="aurora-layer aurora-layer-3"></div>
 </div>
-<div class="footer">nyxalpha · {datetime.now().strftime('%Y-%m-%d %H:%M')} · BE_SHIFT_R={os.environ.get('BE_SHIFT_R', '2.0')}</div>
-</body></html>"""
+<div class="mesh-overlay"></div>
+
+<div class="container">
+  <div class="status-bar">
+    <span class="logo"><span class="nox-text">NYX</span><span class="alpha-text">alpha</span></span>
+    <span class="meta-pill">Kapanış: <b>{cutoff_str}</b></span>
+    <span class="meta-pill">Evren <b>{meta['n_universe']}</b> → Likit <b>{meta['n_liquid']}</b> → Aday <b>{n}</b></span>
+    <span class="meta-pill">Mode <b>{meta['mode']}</b></span>
+    <span class="meta-right">{gen_str}</span>
+  </div>
+{pf_section}
+  <div class="layer-title">Tüm Adaylar <span class="section-meta">N = <b>{n}</b></span></div>
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Hisse</th><th>Skor</th><th>ML1g</th><th>ML3g</th>
+          <th>ADX</th><th>CMF</th><th>RSI</th>
+          <th>Fiyat</th><th>Stop</th><th>Stop %</th><th>Trail</th>
+        </tr></thead>
+        <tbody>{cand_rows}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">
+    nyxalpha <span class="sep">·</span> generated <b>{gen_str}</b>
+    <span class="sep">·</span> BE_SHIFT_R <b>{be_shift}</b>
+    <span class="sep">·</span> Fintables {meta['n_universe']}-universe
+  </div>
+</div>
+</body>
+</html>"""
 
 
 def main():
