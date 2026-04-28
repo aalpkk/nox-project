@@ -1,11 +1,11 @@
 {
   "schema_version": "v1-5d-intraday_v1",
-  "built_at": "2026-04-26T18:58:00Z",
+  "built_at": "2026-04-28T17:20:13Z",
   "dataset_source": "nox_intraday_v1",
-  "rows": 833,
-  "tickers": 378,
-  "date_min": "2024-01-16",
-  "date_max": "2026-04-24",
+  "rows": 1240,
+  "tickers": 433,
+  "date_min": "2023-03-13",
+  "date_max": "2026-04-27",
   "expected_bars_per_pair": 8,
   "per_day_coverage_drop_threshold": 0.875,
   "horizon_days": 5,
@@ -70,5 +70,5 @@
     "ret_20d_prior",
     "missing_bar_count"
   ],
-  "n_rows_with_labels": 827
+  "n_rows_with_labels": 1234
 }
