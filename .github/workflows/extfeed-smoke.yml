@@ -14,6 +14,7 @@ on:
           - phase0
           - phase1
           - daily_recon
+          - xu100_pull
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -72,6 +73,8 @@ jobs:
             python tools/extfeed_phase1_bulk.py
           elif [ "${{ github.event.inputs.mode }}" = "daily_recon" ]; then
             python tools/extfeed_daily_recon.py
+          elif [ "${{ github.event.inputs.mode }}" = "xu100_pull" ]; then
+            python tools/extfeed_pull_xu100.py
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
@@ -100,6 +103,16 @@ jobs:
             output/_extfeed_phase1.log
           if-no-files-found: warn
           retention-days: 30
+      - name: Upload xu100_pull artifacts
+        if: ${{ github.event.inputs.mode == 'xu100_pull' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xu100-extfeed-daily
+          path: |
+            output/xu100_extfeed_daily.parquet
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload daily_recon artifacts
         if: ${{ github.event.inputs.mode == 'daily_recon' }}
         uses: actions/upload-artifact@v4
