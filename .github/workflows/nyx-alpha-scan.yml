@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Data source (cache=Fintables parquet, live=yfinance)'
+        description: 'Data source (live=yfinance fresh EOD, cache=Fintables parquet — only ≤2026-04-24)'
         type: choice
-        options: [cache, live]
-        default: cache
+        options: [live, cache]
+        default: live
       cutoff:
         description: 'Cutoff date YYYY-MM-DD (boş = bugün veya parquet son bar)'
         type: string

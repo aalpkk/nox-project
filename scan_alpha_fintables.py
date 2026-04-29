@@ -484,6 +484,16 @@ def main():
         cutoff = pd.Timestamp(datetime.now().date())
     print(f"NYX ALPHA SCAN — mode={args.mode} cutoff={cutoff.date()}")
 
+    # Cache staleness guard — fail loud if user requested cache and the parquet
+    # is more than 1 weekday behind today. Prevents silent stale-data outputs.
+    if args.mode == "cache" and not args.cutoff:
+        today = pd.Timestamp(datetime.now().date())
+        biz_lag = len(pd.bdate_range(cutoff + pd.Timedelta(days=1), today)) - 1
+        if biz_lag >= 1:
+            print(f"  ⚠ STALE CACHE: parquet last bar {cutoff.date()} is "
+                  f"{biz_lag} işgünü behind today ({today.date()}). "
+                  f"Use --mode live for fresh EOD or refresh the parquet first.")
+
     # Veri
     t0 = time.time()
     if args.mode == "cache":
