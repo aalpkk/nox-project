@@ -211,5 +211,6 @@ jobs:
             output/sbt_1700_dataset_5d_intraday_v1.parquet
             output/sbt_1700_dataset_5d_intraday_v1.meta.json
             output/extfeed_intraday_coverage.csv
+            output/extfeed_intraday_1h_3y_master.parquet
           if-no-files-found: warn
           retention-days: 14
