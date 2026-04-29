@@ -12,8 +12,15 @@ name: SBT-1700 — Daily Refresh + Scan
 # 1 dk sonra. Manual dispatch ile gerek date / full_pull override edilebilir.
 
 on:
+  # GitHub Actions cron is best-effort: free public repos can have a
+  # scheduled fire silently delayed or skipped during peak load. We
+  # trigger 3 times (17:01 / 17:15 / 17:30 TR) so any single skip is
+  # absorbed. The concurrency group + idempotent dataset commit
+  # (`git diff --cached --quiet`) make duplicate fires harmless.
   schedule:
     - cron: '1 14 * * 1-5'
+    - cron: '15 14 * * 1-5'
+    - cron: '30 14 * * 1-5'
   workflow_dispatch:
     inputs:
       date:
