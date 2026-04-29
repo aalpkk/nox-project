@@ -17,13 +17,13 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-OHLC_PATH = ROOT / "output" / "xu100_cache.parquet"
+OHLC_PATH = ROOT / "output" / "xu100_extfeed_daily.parquet"
 OUT_PATH  = ROOT / "output" / "regime_labels_daily_rdp_v1.csv"
 
 # ---- params (locked per user choice) ----
-RDP_MULT          = 1.0    # tolerance multiplier in vol-space units
+RDP_MULT          = 8.0    # tolerance multiplier in vol-space units
 ATR_LEN           = 14
-SIDEWAYS_PCT      = 0.12   # |net move| < 12% -> sideways
+SIDEWAYS_PCT      = 0.08   # |net move| < 8% -> sideways
 LABEL_SOURCE      = "rdp_v1"
 WINDOW_ID         = f"rdp_v1_mult{RDP_MULT:g}_atr{ATR_LEN}_sw{int(SIDEWAYS_PCT*100)}"
 
