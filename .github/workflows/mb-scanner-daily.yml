@@ -1,0 +1,248 @@
+name: MB/BB Scanner — Daily Refresh + Scan
+
+# Tek-shot günlük zincir (BIST iş günü, 18:00 TR kapanışı sonrası):
+#   1. extfeed master cache restore → delta_pull (son 4 gün, 17:00 bar dahil)
+#   2. tools/mb_scanner_run.py (8 aile: mb/bb × 5h/1d/1w/1M)
+#   3. tools/mb_scanner_html.py → 4 per-TF + 1 index HTML
+#   4. HTML → GitHub Pages (5h/1d/1w/1mo + scan index)
+#   5. Telegram bildirimi (TF total + top retest_bounce)
+#
+# Cron: 18:10 + 18:30 TR (15:10/15:30 UTC) hafta içi — BIST 17:00–18:00
+# saatlik bar kapandıktan sonra. Best-effort double-fire; concurrency
+# group + idempotent push duplicate fires'ı emer.
+#
+# NOTE: descriptive scanner. ML ranker line (v1, v1.1) CLOSED 2026-05-02
+# — bu çıktı trade-edge iddiası taşımaz. See:
+# `memory/mb_scanner_ranker_line_closed.md`,
+# `memory/mb_scanner_descriptive_html.md`.
+
+on:
+  schedule:
+    - cron: '10 15 * * 1-5'
+    - cron: '30 15 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      asof:
+        description: 'As-of date YYYY-MM-DD (boş = son bar tarihi).'
+        required: false
+        default: ''
+      full_pull:
+        description: 'extfeed full bulk pull (slow ~40 dk, genelde false).'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mb-scanner-daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve as-of date
+        id: resolve_date
+        run: |
+          if [ -n "${{ github.event.inputs.asof }}" ]; then
+            DATE="${{ github.event.inputs.asof }}"
+          else
+            DATE=$(TZ='Europe/Istanbul' date +%Y-%m-%d)
+          fi
+          echo "asof=$DATE" >> $GITHUB_OUTPUT
+          echo "As-of date: $DATE"
+
+      - name: Restore extfeed master cache
+        uses: actions/cache@v4
+        with:
+          path: output/extfeed_intraday_1h_3y_master.parquet
+          key: extfeed-master-1h-${{ steps.resolve_date.outputs.asof }}
+          restore-keys: |
+            extfeed-master-1h-
+
+      - name: Optional full bulk pull
+        if: ${{ github.event.inputs.full_pull == 'true' }}
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -o pipefail
+          python tools/extfeed_phase1_bulk.py --force 2>&1 | tail -200
+
+      - name: Delta-pull last 4 days (incremental)
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -o pipefail
+          python tools/extfeed_delta_pull.py 2>&1 | tail -100
+
+      - name: Run mb_scanner (8 families)
+        run: |
+          set -o pipefail
+          python tools/mb_scanner_run.py \
+            --asof "${{ steps.resolve_date.outputs.asof }} 18:00" \
+            --families mb_5h mb_1d mb_1w mb_1M bb_5h bb_1d bb_1w bb_1M \
+            2>&1 | tee mb_scanner_run.txt | tail -80
+
+      - name: Build HTML report
+        run: |
+          set -o pipefail
+          python tools/mb_scanner_html.py \
+            --asof "${{ steps.resolve_date.outputs.asof }}" \
+            --top 25 \
+            2>&1 | tee mb_scanner_html.txt
+
+      - name: Push HTMLs to GitHub Pages (4 per-TF + index)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          from core.reports import push_html_to_github
+
+          # Index links to per-TF pages by `mb_scanner_<tf>_latest.html`
+          # and per-TF back-links use `mb_scanner_scan_latest.html` —
+          # publish with the same filenames the HTML already references
+          # so cross-navigation works on Pages.
+          targets = [
+              ("output/mb_scanner_5h_latest.html",   "mb_scanner_5h_latest.html"),
+              ("output/mb_scanner_1d_latest.html",   "mb_scanner_1d_latest.html"),
+              ("output/mb_scanner_1w_latest.html",   "mb_scanner_1w_latest.html"),
+              ("output/mb_scanner_1mo_latest.html",  "mb_scanner_1mo_latest.html"),
+              ("output/mb_scanner_scan_latest.html", "mb_scanner_scan_latest.html"),
+          ]
+          for src, dst in targets:
+              p = pathlib.Path(src)
+              if not p.exists():
+                  print(f"  ⚠ skip {src} (yok)")
+                  continue
+              html = p.read_text(encoding="utf-8")
+              url = push_html_to_github(html, dst, "mb-scanner-latest")
+              print(f"  ✓ {dst}: {url}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, json, sys, pathlib, requests
+          sys.path.insert(0, os.getcwd())
+          import re, html as h
+
+          asof = "${{ steps.resolve_date.outputs.asof }}"
+          repo = os.environ.get("GH_PAGES_REPO", "")
+          page_url = ""
+          if repo:
+              owner, name = repo.split("/")
+              page_url = f"https://{owner}.github.io/{name}/mb_scanner_scan_latest.html"
+
+          # parse JSON marker from emitted HTML
+          html_path = pathlib.Path("output/mb_scanner_scan_latest.html")
+          tf_totals = {}
+          stack_count = 0
+          fam_n = {}
+          if html_path.exists():
+              raw = html_path.read_text(encoding="utf-8")
+              m = re.search(r'<script id="mb-scanner-data".*?>(.*?)</script>', raw, re.S)
+              if m:
+                  try:
+                      data = json.loads(m.group(1))
+                      tf_totals = data.get("tf_totals", {})
+                      stack_count = data.get("stack_count", 0)
+                      fam_n = data.get("fam_n", {})
+                  except Exception:
+                      pass
+
+          # top retest_bounces per TF (read parquets directly)
+          top_lines = []
+          try:
+              import pandas as pd
+              from mb_scanner.rank import rank_family, build_cross_tf_index
+              cross = build_cross_tf_index()
+              for tf in ("5h", "1d", "1w", "1M"):
+                  for mode in ("mb", "bb"):
+                      fam = f"{mode}_{tf}"
+                      df = rank_family(fam, cross)
+                      if df is None or df.empty:
+                          continue
+                      retest = df[df["signal_state"] == "retest_bounce"].head(2)
+                      for _, r in retest.iterrows():
+                          top_lines.append(f"  🟡 <b>{h.escape(str(r['ticker']))}</b> · {fam} · score {r['score']:.2f}")
+          except Exception as e:
+              top_lines = [f"  (rank read err: {e})"]
+
+          n_total = sum(tf_totals.values()) if tf_totals else 0
+          body = [
+              f"📊 <b>MB/BB Scanner</b> · {asof}",
+              "",
+              f"Aktif setup: <b>{n_total}</b> "
+              f"(5h {tf_totals.get('5h', 0)} · 1d {tf_totals.get('1d', 0)} "
+              f"· 1w {tf_totals.get('1w', 0)} · 1M {tf_totals.get('1M', 0)})",
+              f"Cross-TF stack ≥3: <b>{stack_count}</b> ticker",
+          ]
+          if top_lines:
+              body.append("")
+              body.append("Top retest_bounce (taze reclaim):")
+              body.extend(top_lines[:10])
+          if page_url:
+              body.append("")
+              body.append(f'<a href="{page_url}">📰 HTML rapor</a>')
+          body.append("")
+          body.append("⚠️ Descriptive scanner · NOT live · trade-edge iddiası YOK")
+          msg = "\n".join(body)
+
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": msg[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:")
+              print(msg)
+          PYEOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mb-scanner-${{ steps.resolve_date.outputs.asof }}-${{ github.run_number }}
+          path: |
+            mb_scanner_run.txt
+            mb_scanner_html.txt
+            output/mb_scanner_*.html
+            output/mb_scanner_*.parquet
+            output/mb_scanner_rank_*.parquet
+          if-no-files-found: warn
+          retention-days: 14
