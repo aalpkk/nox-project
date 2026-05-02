@@ -34,7 +34,7 @@ DATASET_VERSION = "nox_intraday_v1"
 
 MASTER = Path("output/extfeed_intraday_1h_3y_master.parquet")
 COVERAGE = Path("output/extfeed_intraday_coverage.csv")
-REGIME = Path("output/regime_labels_daily.csv")
+REGIME = Path("output/regime_labels_daily_rdp_v1.csv")
 SPLITS = Path("output/dataset_splits.json")
 MANIFEST = Path("output/dataset_manifest.json")
 

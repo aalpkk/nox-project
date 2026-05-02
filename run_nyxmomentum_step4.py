@@ -106,11 +106,13 @@ ABLATIONS: dict[str, tuple[str, ...]] = {
 
 def build_model_panel(features: pd.DataFrame,
                       labels: pd.DataFrame) -> pd.DataFrame:
-    """Join features ← labels[l2_excess_vs_universe_median] inner; keep
-    eligibility column from features. Rows without label are dropped so
-    models only train where we have a target."""
+    """Join features ← labels[l2_excess_vs_universe_median] LEFT; keep
+    eligibility from features. Unlabeled rows (e.g. the live anchor whose
+    forward window has not closed) flow through to test-set scoring;
+    `_make_eligible_train_frame` filters them out of train via target.notna()
+    so they never influence fits."""
     keep_label = ["ticker", "rebalance_date", "l2_excess_vs_universe_median"]
-    return features.merge(labels[keep_label], on=["ticker", "rebalance_date"], how="inner")
+    return features.merge(labels[keep_label], on=["ticker", "rebalance_date"], how="left")
 
 
 # ── Single-model driver ──────────────────────────────────────────────────────

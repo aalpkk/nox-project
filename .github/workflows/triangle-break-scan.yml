@@ -1,0 +1,241 @@
+name: Triangle Break — Daily Refresh + Scan
+
+# Tek-shot günlük zincir (BIST iş günü, 18:00 TR kapanışı sonrası):
+#   1. extfeed master cache restore → delta_pull (son 4 gün, 17:00 bar dahil)
+#   2. tools/triangle_break_scan_live.py — TRIANGLE_BREAK 0.3
+#      ATR-relative containment (k=0.30 plateau midpoint, floor 0.4% / cap 2.0%).
+#      4 family parquet: triangle_break_tr_{5h,1d,1w,1M}.parquet
+#   3. tools/triangle_break_html.py → output/triangle_break_scan_latest.html
+#      (per-TF + index briefing, JSON marker id="triangle-break-data")
+#   4. HTML index → GitHub Pages (triangle_break_scan.html)
+#   5. Telegram bildirimi (tier-A roster + per-TF trigger sayısı)
+#
+# Cron: 18:35 TR (15:35 UTC) hafta içi — horizontal_base scan'den 5 dk sonra
+# (concurrency offset). BIST kapanış + buffer.
+#
+# NOTE: descriptive scanner. Trade-edge iddiası YOK. Tier-A = ≥3 H + ≥3 L
+# containment touch (ATR-relative band). v0.3 schema bump (`memory/
+# triangle_break_v0_3_atr_tolerance.md`); k≥0.35 değişiklikleri pre-reg
+# backtest gerektirir, otomatik tweak YOK.
+
+on:
+  schedule:
+    - cron: '35 15 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      asof:
+        description: 'As-of date YYYY-MM-DD (boş = son bar tarihi).'
+        required: false
+        default: ''
+      full_pull:
+        description: 'extfeed full bulk pull (slow ~40 dk, genelde false).'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: triangle-break-daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve as-of date
+        id: resolve_date
+        run: |
+          if [ -n "${{ github.event.inputs.asof }}" ]; then
+            DATE="${{ github.event.inputs.asof }}"
+          else
+            DATE=$(TZ='Europe/Istanbul' date +%Y-%m-%d)
+          fi
+          echo "asof=$DATE" >> $GITHUB_OUTPUT
+          echo "As-of date: $DATE"
+
+      - name: Restore extfeed master cache
+        uses: actions/cache@v4
+        with:
+          path: output/extfeed_intraday_1h_3y_master.parquet
+          key: extfeed-master-1h-${{ steps.resolve_date.outputs.asof }}
+          restore-keys: |
+            extfeed-master-1h-
+
+      - name: Optional full bulk pull
+        if: ${{ github.event.inputs.full_pull == 'true' }}
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -o pipefail
+          python tools/extfeed_phase1_bulk.py --force 2>&1 | tail -200
+
+      - name: Delta-pull last 4 days (incremental)
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -o pipefail
+          python tools/extfeed_delta_pull.py 2>&1 | tail -100
+
+      - name: Run triangle_break live scanner
+        run: |
+          set -o pipefail
+          python -m tools.triangle_break_scan_live \
+            --asof "${{ steps.resolve_date.outputs.asof }}" \
+            2>&1 | tee triangle_break_scan.txt | tail -120
+
+      - name: Build HTML report
+        run: |
+          set -o pipefail
+          python -m tools.triangle_break_html \
+            --asof "${{ steps.resolve_date.outputs.asof }}" \
+            2>&1 | tee triangle_break_html.txt
+
+      - name: Push HTML to GitHub Pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          from core.reports import push_html_to_github
+          html = pathlib.Path("output/triangle_break_scan_latest.html").read_text(encoding="utf-8")
+          url = push_html_to_github(html, "triangle_break_scan.html", "triangle-break-latest")
+          print(f"  ✓ published: {url}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          python - <<'PYEOF'
+          import os, json, sys, pathlib, re, html as h, requests
+
+          asof = "${{ steps.resolve_date.outputs.asof }}"
+          repo = os.environ.get("GH_PAGES_REPO", "")
+          page_url = ""
+          if repo:
+              owner, name = repo.split("/")
+              page_url = f"https://{owner}.github.io/{name}/triangle_break_scan.html"
+
+          html_path = pathlib.Path("output/triangle_break_scan_latest.html")
+          data = {}
+          if html_path.exists():
+              raw = html_path.read_text(encoding="utf-8")
+              m = re.search(r'<script id="triangle-break-data"[^>]*>(.*?)</script>', raw, re.S)
+              if m:
+                  try:
+                      data = json.loads(m.group(1))
+                  except Exception:
+                      data = {}
+
+          tf_totals = data.get("tf_totals", {})
+          tier_a_per_tf = data.get("tier_a_per_tf", {})
+          trigger_per_tf = data.get("trigger_per_tf", {})
+          subs = data.get("subtype_counts", {})
+          stack_count = data.get("stack_count", 0)
+          grand = data.get("grand_total", 0)
+          n_tier_a = sum(len(v) for v in tier_a_per_tf.values())
+          n_trig = sum(len(v) for v in trigger_per_tf.values())
+
+          def _fmt_list(tickers, cap=10):
+              if not tickers:
+                  return "—"
+              shown = tickers[:cap]
+              extra = len(tickers) - len(shown)
+              s = ", ".join(h.escape(t) for t in shown)
+              if extra > 0:
+                  s += f" <i>(+{extra})</i>"
+              return s
+
+          tf_label = {"5h": "5h", "1d": "1d", "1w": "1w", "1M": "1M"}
+          body = [
+              f"📐 <b>Triangle Break · LIVE</b> · {asof}",
+              "",
+              f"N <b>{grand}</b> "
+              f"(5h <b>{tf_totals.get('5h',0)}</b> · "
+              f"1d <b>{tf_totals.get('1d',0)}</b> · "
+              f"1w <b>{tf_totals.get('1w',0)}</b> · "
+              f"1M <b>{tf_totals.get('1M',0)}</b>)",
+              f"Tier-A <b>{n_tier_a}</b> · trigger <b>{n_trig}</b> · stack ≥2 TF <b>{stack_count}</b>",
+          ]
+          if subs:
+              sub_str = " · ".join(
+                  f"{k} <b>{v}</b>" for k, v in subs.items() if v
+              )
+              body.append(f"Subtypes: {sub_str}")
+
+          if n_tier_a > 0:
+              body += ["", "<b>🟡 Tier-A:</b>"]
+              for tf in ("5h", "1d", "1w", "1M"):
+                  ta = tier_a_per_tf.get(tf, [])
+                  if ta:
+                      body.append(f"  {tf_label[tf]}: {_fmt_list(ta)}")
+          else:
+              body += ["", "<i>Tier-A: yok (≥3 H + ≥3 L containment touch)</i>"]
+
+          if n_trig > 0:
+              body += ["", "<b>⚡ Trigger:</b>"]
+              for tf in ("5h", "1d", "1w", "1M"):
+                  tg = trigger_per_tf.get(tf, [])
+                  if tg:
+                      body.append(f"  {tf_label[tf]}: {_fmt_list(tg)}")
+
+          if page_url:
+              body += ["", f'<a href="{page_url}">📰 HTML rapor</a>']
+          body += ["", "⚠️ Descriptive scanner · v0.3 ATR-relative containment · trade-edge iddiası YOK"]
+          msg = "\n".join(body)
+
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": msg[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:")
+              print(msg)
+          PYEOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triangle-break-${{ steps.resolve_date.outputs.asof }}-${{ github.run_number }}
+          path: |
+            triangle_break_scan.txt
+            triangle_break_html.txt
+            output/triangle_break_tr_*.parquet
+            output/triangle_break_*.html
+          if-no-files-found: warn
+          retention-days: 14

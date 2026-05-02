@@ -1,0 +1,233 @@
+name: Horizontal Base — Daily Refresh + Scan
+
+# Tek-shot günlük zincir (BIST iş günü, 18:00 TR kapanışı sonrası):
+#   1. extfeed master cache restore → delta_pull (son 4 gün, 17:00 bar dahil)
+#   2. tools/horizontal_base_scan_live.py — V1.4.0/FEATURE 1.3.0
+#      horizontal_base events (trigger ∪ retest_bounce ∪ extended) +
+#      derived tier (A/B/C) + tradeable flags. 607 universe daily resample.
+#   3. tools/horizontal_base_html.py → output/horizontal_base_scan_latest.html
+#      (3-tier briefing, JSON marker for Telegram parse)
+#   4. HTML → GitHub Pages (horizontal_base_scan.html)
+#   5. Telegram bildirimi (tradeable_a / tradeable_ab tickers per tier)
+#
+# Cron: 18:30 TR (15:30 UTC) hafta içi — BIST kapanış + buffer.
+# Concurrency group + idempotent push duplicate fires'ı emer.
+#
+# NOTE: descriptive scanner. Pre-registered ML lines v1 + v1_2 REJECTED —
+# bu çıktı trade-edge iddiası TAŞIMAZ. Tier ve tradeable bayrak'lar event
+# quality diagnostic PF tag'lerinden türetildi (in-sample). Trader tier+
+# context kullanarak karar verir; rules-based ranker backtest in-sample
+# reference olarak `output/horizontal_base_rules_v1_backtest.md`.
+
+on:
+  schedule:
+    - cron: '30 15 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      asof:
+        description: 'As-of date YYYY-MM-DD (boş = son bar tarihi).'
+        required: false
+        default: ''
+      full_pull:
+        description: 'extfeed full bulk pull (slow ~40 dk, genelde false).'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: horizontal-base-daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve as-of date
+        id: resolve_date
+        run: |
+          if [ -n "${{ github.event.inputs.asof }}" ]; then
+            DATE="${{ github.event.inputs.asof }}"
+          else
+            DATE=$(TZ='Europe/Istanbul' date +%Y-%m-%d)
+          fi
+          echo "asof=$DATE" >> $GITHUB_OUTPUT
+          echo "As-of date: $DATE"
+
+      - name: Restore extfeed master cache
+        uses: actions/cache@v4
+        with:
+          path: output/extfeed_intraday_1h_3y_master.parquet
+          key: extfeed-master-1h-${{ steps.resolve_date.outputs.asof }}
+          restore-keys: |
+            extfeed-master-1h-
+
+      - name: Optional full bulk pull
+        if: ${{ github.event.inputs.full_pull == 'true' }}
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -o pipefail
+          python tools/extfeed_phase1_bulk.py --force 2>&1 | tail -200
+
+      - name: Delta-pull last 4 days (incremental)
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -o pipefail
+          python tools/extfeed_delta_pull.py 2>&1 | tail -100
+
+      - name: Run horizontal_base live scanner
+        run: |
+          set -o pipefail
+          python -m tools.horizontal_base_scan_live \
+            --asof "${{ steps.resolve_date.outputs.asof }}" \
+            2>&1 | tee horizontal_base_scan.txt | tail -80
+
+      - name: Build HTML report
+        run: |
+          set -o pipefail
+          python -m tools.horizontal_base_html \
+            --asof "${{ steps.resolve_date.outputs.asof }}" \
+            --also-latest \
+            2>&1 | tee horizontal_base_html.txt
+
+      - name: Push HTML to GitHub Pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "  ⚠ GH_TOKEN / GH_PAGES_REPO yok — Pages push atlandı"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, pathlib, sys
+          sys.path.insert(0, os.getcwd())
+          from core.reports import push_html_to_github
+          html = pathlib.Path("output/horizontal_base_scan_latest.html").read_text(encoding="utf-8")
+          url = push_html_to_github(html, "horizontal_base_scan.html", "horizontal-base-latest")
+          print(f"  ✓ published: {url}")
+          PYEOF
+
+      - name: Telegram notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          python - <<'PYEOF'
+          import os, json, sys, pathlib, re, html as h, requests
+
+          asof = "${{ steps.resolve_date.outputs.asof }}"
+          repo = os.environ.get("GH_PAGES_REPO", "")
+          page_url = ""
+          if repo:
+              owner, name = repo.split("/")
+              page_url = f"https://{owner}.github.io/{name}/horizontal_base_scan.html"
+
+          html_path = pathlib.Path("output/horizontal_base_scan_latest.html")
+          data = {}
+          if html_path.exists():
+              raw = html_path.read_text(encoding="utf-8")
+              m = re.search(r'<script id="horizontal-base-live-data"[^>]*>(.*?)</script>', raw, re.S)
+              if m:
+                  try:
+                      data = json.loads(m.group(1))
+                  except Exception:
+                      data = {}
+
+          tier_summaries = data.get("tier_summaries", {})
+          n_total = data.get("n_total", 0)
+          n_trd_a = data.get("n_tradeable_a", 0)
+          n_trd_ab = data.get("n_tradeable_ab", 0)
+          n_trig = data.get("n_trigger", 0)
+          n_ret = data.get("n_retest_bounce", 0)
+          n_ext = data.get("n_extended", 0)
+
+          def _fmt_list(tickers, cap=10):
+              if not tickers:
+                  return "—"
+              shown = tickers[:cap]
+              extra = len(tickers) - len(shown)
+              s = ", ".join(h.escape(t) for t in shown)
+              if extra > 0:
+                  s += f" <i>(+{extra})</i>"
+              return s
+
+          body = [
+              f"📐 <b>Horizontal Base · LIVE</b> · {asof}",
+              "",
+              f"N <b>{n_total}</b> · trigger <b>{n_trig}</b> · retest <b>{n_ret}</b> · extended <b>{n_ext}</b>",
+              f"Tradeable A <b>{n_trd_a}</b> · AB <b>{n_trd_ab}</b>",
+          ]
+          for tier in ["A", "B", "C"]:
+              s = tier_summaries.get(tier, {})
+              if not s:
+                  continue
+              n_t = s.get("n_total", 0)
+              n_a = s.get("n_tradeable_a", 0)
+              n_ab = s.get("n_tradeable_ab", 0)
+              body += ["", f"<b>Tier {tier}</b> · N <b>{n_t}</b> · "
+                       f"tradeable A <b>{n_a}</b> / AB <b>{n_ab}</b>"]
+              a_t = s.get("tradeable_a_tickers", [])
+              ab_t = s.get("tradeable_ab_tickers", [])
+              if a_t:
+                  body.append(f"  🟢 A: {_fmt_list(a_t)}")
+              if ab_t:
+                  body.append(f"  🔵 AB: {_fmt_list(ab_t)}")
+              if not a_t and not ab_t and n_t > 0:
+                  body.append("  <i>(tradeable yok — extended/age>5/regime≠long|neutral)</i>")
+          if page_url:
+              body += ["", f'<a href="{page_url}">📰 HTML rapor</a>']
+          body += ["", "⚠️ Descriptive scanner · ML v1+v1_2 REJECTED · trade-edge iddiası YOK"]
+          msg = "\n".join(body)
+
+          token = os.environ.get("TG_BOT_TOKEN", "")
+          chat_id = os.environ.get("TG_CHAT_ID", "")
+          if token and chat_id:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": msg[:4096],
+                        "parse_mode": "HTML", "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:")
+              print(msg)
+          PYEOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizontal-base-${{ steps.resolve_date.outputs.asof }}-${{ github.run_number }}
+          path: |
+            horizontal_base_scan.txt
+            horizontal_base_html.txt
+            output/horizontal_base_live_*.csv
+            output/horizontal_base_live_*.parquet
+            output/horizontal_base_scan_*.html
+          if-no-files-found: warn
+          retention-days: 14
