@@ -1,0 +1,218 @@
+{
+  "run_started_utc": "2026-05-03T23:07:22.274053+00:00",
+  "asof": "2026-05-04",
+  "spec_path": "memory/portfolio_merge_paper_spec.md",
+  "spec_status": "LOCKED 2026-05-04, ONAY 2026-05-04",
+  "purpose": "reporting-only merge of two LOCKED paper/shadow lines (Line E + Line TR)",
+  "live_trade_gate": "CLOSED",
+  "promotion_claim_in_outputs": false,
+  "source_files": {
+    "line_e_trades": "/Users/alpkarakasli/Projects/nox_project/output/paper_execution_v0_trades.parquet",
+    "line_e_trades_sha256": "b5e427d4fc4c3647cb128bf80fa11faf0b31b396a523aa316f8cf52fe3051873",
+    "line_e_manifest": "/Users/alpkarakasli/Projects/nox_project/output/paper_execution_v0_manifest.json",
+    "line_tr_trades": "/Users/alpkarakasli/Projects/nox_project/output/paper_execution_v0_trigger_retest_trades.parquet",
+    "line_tr_trades_sha256": "ccaaca6a6c0afc649de984c3994f8a2ff39c3dda580059b0333551622d0e0a7a",
+    "line_tr_manifest": "/Users/alpkarakasli/Projects/nox_project/output/paper_execution_v0_trigger_retest_manifest.json"
+  },
+  "source_manifest_refs": {
+    "line_e": {
+      "spec_status": "LOCKED 2026-05-03, ONAY 2026-05-04",
+      "hb_event_parquet_sha256": "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818",
+      "ohlcv_master_sha256": "c93fdb06ca8161cbcf9c1a6259f350d165b49a785a639f8b741a56eff0646716",
+      "trade_log_rows": 8374
+    },
+    "line_tr": {
+      "spec_status": "LOCKED 2026-05-04, ONAY 2026-05-04",
+      "hb_event_parquet_sha256": "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818",
+      "ohlcv_master_sha256": "c93fdb06ca8161cbcf9c1a6259f350d165b49a785a639f8b741a56eff0646716",
+      "trade_log_rows": 1956
+    }
+  },
+  "locked_constants": {
+    "max_new_positions_per_day_capped": 5,
+    "dedup_priority": [
+      "TRIGGER_RETEST",
+      "EXTENDED"
+    ],
+    "capped_selection_rule": "line priority then ascending alphabetical ticker",
+    "raw_view_rule": "union of both lines' raw_all_candidates; no cap; no dedup beyond exact dupes",
+    "promotion_forward_months_min": 6,
+    "promotion_forward_closed_min": 50
+  },
+  "drawdown_field_separation": {
+    "max_drawdown_R": "additive cumulative R curve (sum of realized_R_paper)",
+    "max_drawdown_pct_gross": "equal-notional cumulative gross_return_pct curve",
+    "max_drawdown_pct_net": "equal-notional cumulative net_return_pct curve"
+  },
+  "trade_log_rows": 10330,
+  "view_counts": {
+    "raw_all_candidates": 4720,
+    "dedup_same_ticker_day": 4720,
+    "capped_portfolio": 2662
+  },
+  "conflict_count": 0,
+  "metrics_by_slice": {
+    "line_e_only": {
+      "slice": "line_e_only",
+      "n_total_rows": 8374,
+      "n_closed": 4009,
+      "n_open": 95,
+      "n_skipped": 4270,
+      "avg_R_paper": 0.31617312645846757,
+      "median_R_paper": 0.14210135137144447,
+      "avg_gross_return_pct": 0.03734952337845154,
+      "median_gross_return_pct": 0.0185185185185186,
+      "avg_net_return_pct": 0.03534952337845155,
+      "median_net_return_pct": 0.0165185185185186,
+      "win_rate": 0.5702170117236218,
+      "profit_factor": 2.161237198434319,
+      "max_drawdown_R": -74.5907721065405,
+      "max_drawdown_pct_gross": -10.089862224638168,
+      "max_drawdown_pct_net": -10.855862224638116,
+      "pct_from_extended": 1.0,
+      "pct_from_trigger_retest": 0.0,
+      "forward_closed_trades": 0,
+      "forward_open_trades": 0,
+      "backfill_closed_trades": 4009,
+      "backfill_open_trades": 95
+    },
+    "line_tr_only": {
+      "slice": "line_tr_only",
+      "n_total_rows": 1956,
+      "n_closed": 601,
+      "n_open": 15,
+      "n_skipped": 1340,
+      "avg_R_paper": 0.322920296867276,
+      "median_R_paper": 0.12968432185770834,
+      "avg_gross_return_pct": 0.04345782218140483,
+      "median_gross_return_pct": 0.019230769230769162,
+      "avg_net_return_pct": 0.04145782218140483,
+      "median_net_return_pct": 0.01723076923076916,
+      "win_rate": 0.6006655574043261,
+      "profit_factor": 2.534729624925422,
+      "max_drawdown_R": -11.05184944226562,
+      "max_drawdown_pct_gross": -1.5419033743714436,
+      "max_drawdown_pct_net": -1.5779033743714308,
+      "pct_from_extended": 0.0,
+      "pct_from_trigger_retest": 1.0,
+      "forward_closed_trades": 0,
+      "forward_open_trades": 0,
+      "backfill_closed_trades": 601,
+      "backfill_open_trades": 15
+    },
+    "merged_raw_all_candidates": {
+      "slice": "merged_raw_all_candidates",
+      "n_total_rows": 4720,
+      "n_closed": 4610,
+      "n_open": 110,
+      "n_skipped": 0,
+      "avg_R_paper": 0.31705274672217565,
+      "median_R_paper": 0.1399932179027176,
+      "avg_gross_return_pct": 0.03814585474083222,
+      "median_gross_return_pct": 0.01869604046896134,
+      "avg_net_return_pct": 0.03614585474083221,
+      "median_net_return_pct": 0.016696040468961337,
+      "win_rate": 0.5741865509761388,
+      "profit_factor": 2.204783688624946,
+      "max_drawdown_R": -73.86727950558372,
+      "max_drawdown_pct_gross": -9.6075405565158,
+      "max_drawdown_pct_net": -10.45954055651572,
+      "pct_from_extended": 0.8696312364425163,
+      "pct_from_trigger_retest": 0.13036876355748372,
+      "forward_closed_trades": 0,
+      "forward_open_trades": 0,
+      "backfill_closed_trades": 4610,
+      "backfill_open_trades": 110
+    },
+    "merged_dedup_same_ticker_day": {
+      "slice": "merged_dedup_same_ticker_day",
+      "n_total_rows": 4720,
+      "n_closed": 4610,
+      "n_open": 110,
+      "n_skipped": 0,
+      "avg_R_paper": 0.31705274672217565,
+      "median_R_paper": 0.1399932179027176,
+      "avg_gross_return_pct": 0.03814585474083222,
+      "median_gross_return_pct": 0.01869604046896134,
+      "avg_net_return_pct": 0.03614585474083221,
+      "median_net_return_pct": 0.016696040468961337,
+      "win_rate": 0.5741865509761388,
+      "profit_factor": 2.204783688624946,
+      "max_drawdown_R": -73.86727950558372,
+      "max_drawdown_pct_gross": -9.6075405565158,
+      "max_drawdown_pct_net": -10.45954055651572,
+      "pct_from_extended": 0.8696312364425163,
+      "pct_from_trigger_retest": 0.13036876355748372,
+      "forward_closed_trades": 0,
+      "forward_open_trades": 0,
+      "backfill_closed_trades": 4610,
+      "backfill_open_trades": 110
+    },
+    "merged_capped_portfolio": {
+      "slice": "merged_capped_portfolio",
+      "n_total_rows": 2662,
+      "n_closed": 2627,
+      "n_open": 35,
+      "n_skipped": 0,
+      "avg_R_paper": 0.29693098227661635,
+      "median_R_paper": 0.1276275574495383,
+      "avg_gross_return_pct": 0.03768499015700843,
+      "median_gross_return_pct": 0.017964071856287456,
+      "avg_net_return_pct": 0.03568499015700843,
+      "median_net_return_pct": 0.015964071856287454,
+      "win_rate": 0.5744194899124476,
+      "profit_factor": 2.115961013844271,
+      "max_drawdown_R": -44.81112114551115,
+      "max_drawdown_pct_gross": -4.8554863492214935,
+      "max_drawdown_pct_net": -4.975486349221526,
+      "pct_from_extended": 0.7742672249714503,
+      "pct_from_trigger_retest": 0.2257327750285497,
+      "forward_closed_trades": 0,
+      "forward_open_trades": 0,
+      "backfill_closed_trades": 2627,
+      "backfill_open_trades": 35
+    }
+  },
+  "promotion_floor_status": {
+    "EXTENDED": {
+      "forward_closed": 0,
+      "forward_open": 0,
+      "forward_months_elapsed": 0.0,
+      "status": "NOT_MET"
+    },
+    "TRIGGER_RETEST": {
+      "forward_closed": 0,
+      "forward_open": 0,
+      "forward_months_elapsed": 0.0,
+      "status": "NOT_MET"
+    },
+    "MERGED": {
+      "forward_closed": 0,
+      "forward_open": 0,
+      "forward_months_elapsed": 0.0,
+      "status": "NOT_MET"
+    }
+  },
+  "prerun_checklist": {
+    "1_line_e_trades_exist": "PASS",
+    "2_line_tr_trades_exist": "PASS",
+    "3_both_manifests_load": "PASS",
+    "4_no_source_file_write_attempt": "PASS",
+    "5_line_column_preserved": "PASS",
+    "6_outputs_only_portfolio_merge_paper": "PASS",
+    "7_skipped_excluded_from_performance": "PASS",
+    "8_open_excluded_from_return_metrics": "PASS",
+    "9_raw_view_no_cap_no_dedup": "PASS",
+    "10_dedup_conflict_report_emitted": "PASS",
+    "11_capped_view_marked_operational": "PASS",
+    "12_no_live_promotion_claim": "PASS"
+  },
+  "outputs": {
+    "portfolio_merge_paper_trades.parquet": "/Users/alpkarakasli/Projects/nox_project/output/portfolio_merge_paper_trades.parquet",
+    "portfolio_merge_paper_trades.csv": "/Users/alpkarakasli/Projects/nox_project/output/portfolio_merge_paper_trades.csv",
+    "portfolio_merge_paper_daily_summary.csv": "/Users/alpkarakasli/Projects/nox_project/output/portfolio_merge_paper_daily_summary.csv",
+    "portfolio_merge_paper_conflicts.csv": "/Users/alpkarakasli/Projects/nox_project/output/portfolio_merge_paper_conflicts.csv",
+    "portfolio_merge_paper_summary.md": "/Users/alpkarakasli/Projects/nox_project/output/portfolio_merge_paper_summary.md",
+    "portfolio_merge_paper_manifest.json": "/Users/alpkarakasli/Projects/nox_project/output/portfolio_merge_paper_manifest.json"
+  }
+}
