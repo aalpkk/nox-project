@@ -1,6 +1,6 @@
 {
   "schema_version": "v1-5d-intraday_v1",
-  "built_at": "2026-05-05T13:50:46Z",
+  "built_at": "2026-05-05T16:04:48Z",
   "dataset_source": "nox_intraday_v1",
   "rows": 1255,
   "tickers": 436,
