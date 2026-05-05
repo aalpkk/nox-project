@@ -15,6 +15,7 @@ on:
           - phase1
           - daily_recon
           - xu100_pull
+          - delta_pull
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -75,6 +76,8 @@ jobs:
             python tools/extfeed_daily_recon.py
           elif [ "${{ github.event.inputs.mode }}" = "xu100_pull" ]; then
             python tools/extfeed_pull_xu100.py
+          elif [ "${{ github.event.inputs.mode }}" = "delta_pull" ]; then
+            python tools/extfeed_delta_pull.py
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
@@ -123,3 +126,13 @@ jobs:
             output/extfeed_daily_recon_summary.csv
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Upload delta_pull artifacts
+        if: ${{ github.event.inputs.mode == 'delta_pull' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-delta-pull
+          path: |
+            output/extfeed_intraday_1h_3y_master.parquet
+          if-no-files-found: error
+          retention-days: 30
