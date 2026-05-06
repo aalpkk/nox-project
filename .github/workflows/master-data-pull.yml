@@ -1,0 +1,77 @@
+name: master data pull
+
+concurrency:
+  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || 'scheduled' }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Pull mode: intraday_1700 (extfeed only) | close (extfeed + fintables)'
+        required: true
+        type: choice
+        options:
+          - intraday_1700
+          - close
+      target_date:
+        description: 'Operational target date (YYYY-MM-DD). Leave blank to use Europe/Istanbul today (weekend pulls back to Friday).'
+        required: false
+        default: ''
+
+jobs:
+  master-data-pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run orchestrator
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          set -euo pipefail
+          MODE='${{ github.event.inputs.mode }}'
+          TARGET='${{ github.event.inputs.target_date }}'
+          if [ -n "$TARGET" ]; then
+            python tools/master_data_pull_orchestrator.py --mode "$MODE" --target-date "$TARGET"
+          else
+            python tools/master_data_pull_orchestrator.py --mode "$MODE"
+          fi
+
+      - name: Upload manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-data-manifest
+          path: output/master_data_manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload extfeed master
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-extfeed-intraday-1h
+          path: output/extfeed_intraday_1h_3y_master.parquet
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload fintables master
+        if: ${{ always() && github.event.inputs.mode == 'close' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-ohlcv-fintables
+          path: output/ohlcv_10y_fintables_master.parquet
+          if-no-files-found: warn
+          retention-days: 30
