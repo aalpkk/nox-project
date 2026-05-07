@@ -126,8 +126,11 @@ def inspect_extfeed(path: Path) -> ParquetMeta:
 def inspect_fintables(path: Path) -> ParquetMeta:
     if not path.exists():
         return ParquetMeta(path=str(path), exists=False)
-    df = pd.read_parquet(path, columns=["Date"]) if "Date" in pd.read_parquet(path).columns else pd.read_parquet(path)
-    if "Date" in df.columns:
+    df = pd.read_parquet(path)
+    # Canonical fintables master stores Date as parquet index, not column.
+    if isinstance(df.index, pd.DatetimeIndex) and len(df.index) > 0:
+        max_d = df.index.max()
+    elif "Date" in df.columns:
         max_d = pd.to_datetime(df["Date"]).max()
     elif "date" in df.columns:
         max_d = pd.to_datetime(df["date"]).max()
