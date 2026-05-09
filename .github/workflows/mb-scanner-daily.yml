@@ -60,7 +60,7 @@ jobs:
           if [ -n "${{ github.event.inputs.asof }}" ]; then
             DATE="${{ github.event.inputs.asof }}"
           else
-            DATE=$(TZ='Europe/Istanbul' date +%Y-%m-%d)
+            DATE=$(python -c "from tools.master_data_pull_orchestrator import compute_operational_target_date; print(compute_operational_target_date().isoformat())")
           fi
           echo "asof=$DATE" >> $GITHUB_OUTPUT
           echo "As-of date: $DATE"
