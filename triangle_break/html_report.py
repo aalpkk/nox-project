@@ -371,6 +371,22 @@ def _fmt_date(v):
     return pd.Timestamp(v).strftime("%Y-%m-%d")
 
 
+def _fmt_bar_date(v, tf: str | None = None) -> str:
+    """TV-aligned bar date label.
+
+    1w: parquet stores W-FRI (Friday week-end). TV / human convention
+    labels weekly bars with week-start (Monday). Subtract 4 days to
+    align display. Bayram/holiday weeks where Monday is closed will
+    display Monday anyway — minor cosmetic, not a data error.
+    """
+    if v is None or pd.isna(v):
+        return "—"
+    ts = pd.Timestamp(v)
+    if tf == "1w":
+        ts = ts - pd.Timedelta(days=4)
+    return ts.strftime("%Y-%m-%d")
+
+
 def _state_pill(state: str) -> str:
     label = STATE_LABEL.get(state, state.upper())
     klass = STATE_CLASS.get(state, "st-ext")
@@ -405,18 +421,18 @@ def _ticker_link(ticker: str, tooltip: str = "") -> str:
     return f'<a href="{TV_BASE}{safe_t}" target="_blank" rel="noopener">{safe_t}</a>'
 
 
-def _row_tooltip(row: pd.Series) -> str:
+def _row_tooltip(row: pd.Series, tf: str | None = None) -> str:
     parts = [
-        f"First pivot: {_fmt_date(row.get('first_pivot_bar_date'))}",
-        f"Last pivot: {_fmt_date(row.get('last_pivot_bar_date'))}",
-        f"Apex: {_fmt_date(row.get('apex_bar_date'))} ({int(row.get('bars_to_apex') or 0)} bar)",
+        f"First pivot: {_fmt_bar_date(row.get('first_pivot_bar_date'), tf)}",
+        f"Last pivot: {_fmt_bar_date(row.get('last_pivot_bar_date'), tf)}",
+        f"Apex: {_fmt_bar_date(row.get('apex_bar_date'), tf)} ({int(row.get('bars_to_apex') or 0)} bar)",
         f"H/L pivots: {int(row.get('n_pivots_upper') or 0)}/{int(row.get('n_pivots_lower') or 0)}",
         f"Upper@asof: {_fmt_num(row.get('upper_at_asof'), 2)}",
         f"Lower@asof: {_fmt_num(row.get('lower_at_asof'), 2)}",
         f"Parallelism: {_fmt_num(row.get('parallelism'), 2)}",
     ]
     if pd.notna(row.get("breakout_bar_date")):
-        parts.append(f"Break: {_fmt_date(row.get('breakout_bar_date'))}")
+        parts.append(f"Break: {_fmt_bar_date(row.get('breakout_bar_date'), tf)}")
     return " | ".join(parts)
 
 
@@ -460,7 +476,7 @@ def _rank_triangles(df: pd.DataFrame) -> pd.DataFrame:
 
 # ---------------------------------------------------------------- table
 
-def _triangle_table(df: pd.DataFrame, *, top: int = 30) -> str:
+def _triangle_table(df: pd.DataFrame, *, top: int = 30, tf: str | None = None) -> str:
     if df is None or df.empty:
         return '<div class="cb-empty">aktif üçgen yok</div>'
     df = df.head(top).reset_index(drop=True)
@@ -468,7 +484,7 @@ def _triangle_table(df: pd.DataFrame, *, top: int = 30) -> str:
     for i in range(len(df)):
         r = df.iloc[i]
         ticker = str(r["ticker"])
-        tip = _row_tooltip(r)
+        tip = _row_tooltip(r, tf=tf)
         rows.append(
             "<tr>"
             f"<td class='muted'>{i+1}</td>"
@@ -751,7 +767,7 @@ def build_tf_html(
     <div class="cb-card">
       <div class="card-title">TRIANGLE · <b>tr_{html.escape(tf)}</b><span class="n">N={n}</span></div>
       {_subtype_chips(df)}
-      {_triangle_table(df, top=top)}
+      {_triangle_table(df, top=top, tf=tf)}
     </div>
   </div>
 """
