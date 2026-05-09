@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Pull mode: intraday_1700 (extfeed only) | close (extfeed + fintables)'
+        description: 'Pull mode: intraday_1700 (extfeed only) | close (extfeed + fintables + xu100)'
         required: true
         type: choice
         options:
@@ -74,4 +74,13 @@ jobs:
           name: master-ohlcv-fintables
           path: output/ohlcv_10y_fintables_master.parquet
           if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload xu100 daily
+        if: ${{ always() && github.event.inputs.mode == 'close' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-xu100-extfeed-daily
+          path: output/xu100_extfeed_daily.parquet
+          if-no-files-found: error
           retention-days: 30
