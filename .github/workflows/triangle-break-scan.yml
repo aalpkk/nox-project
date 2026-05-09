@@ -196,9 +196,28 @@ jobs:
           import os, pathlib, sys
           sys.path.insert(0, os.getcwd())
           from core.reports import push_html_to_github
-          html = pathlib.Path("output/triangle_break_scan_latest.html").read_text(encoding="utf-8")
-          url = push_html_to_github(html, "triangle_break_scan.html", "triangle-break-latest")
-          print(f"  ✓ published: {url}")
+
+          # Index links to per-TF pages by `triangle_break_<tf>_latest.html`
+          # and per-TF back-links use `triangle_break_scan_latest.html` —
+          # publish with the same filenames the HTML already references
+          # so cross-navigation works on Pages. Index also published as
+          # `triangle_break_scan.html` for backward-compatible bookmark.
+          targets = [
+              ("output/triangle_break_5h_latest.html",   "triangle_break_5h_latest.html"),
+              ("output/triangle_break_1d_latest.html",   "triangle_break_1d_latest.html"),
+              ("output/triangle_break_1w_latest.html",   "triangle_break_1w_latest.html"),
+              ("output/triangle_break_1mo_latest.html",  "triangle_break_1mo_latest.html"),
+              ("output/triangle_break_scan_latest.html", "triangle_break_scan_latest.html"),
+              ("output/triangle_break_scan_latest.html", "triangle_break_scan.html"),
+          ]
+          for src, dst in targets:
+              p = pathlib.Path(src)
+              if not p.exists():
+                  print(f"  ⚠ skip {src} (yok)")
+                  continue
+              html = p.read_text(encoding="utf-8")
+              url = push_html_to_github(html, dst, "triangle-break-latest")
+              print(f"  ✓ {dst}: {url}")
           PYEOF
 
       - name: Telegram notification
