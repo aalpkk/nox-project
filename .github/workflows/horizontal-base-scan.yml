@@ -88,7 +88,17 @@ jobs:
           path: output/
           if_no_artifact_found: fail
 
-      - name: Verify master-data-pull manifest + extfeed integrity (fail-fast, no fallback)
+      - name: Restore master-data-pull xu100 daily parquet (latest successful close run on main)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: master-data-pull.yml
+          branch: main
+          workflow_conclusion: success
+          name: master-xu100-extfeed-daily
+          path: output/
+          if_no_artifact_found: fail
+
+      - name: Verify master-data-pull manifest + extfeed + xu100 integrity (fail-fast, no fallback)
         env:
           ASOF: ${{ steps.resolve_date.outputs.asof }}
         run: |
@@ -107,11 +117,14 @@ jobs:
           ROOT = pathlib.Path("output")
           MANIFEST = ROOT / "master_data_manifest.json"
           EXTFEED = ROOT / "extfeed_intraday_1h_3y_master.parquet"
+          XU100 = ROOT / "xu100_extfeed_daily.parquet"
 
           if not MANIFEST.exists():
               sys.exit("FAIL: master_data_manifest.json missing after restore")
           if not EXTFEED.exists():
               sys.exit("FAIL: extfeed_intraday_1h_3y_master.parquet missing after restore")
+          if not XU100.exists():
+              sys.exit("FAIL: xu100_extfeed_daily.parquet missing after restore")
 
           m = json.loads(MANIFEST.read_text())
 
@@ -126,6 +139,10 @@ jobs:
           ext_post = (m.get("extfeed") or {}).get("post") or {}
           if not ext_post.get("exists"):
               sys.exit("FAIL: manifest extfeed.post.exists=false")
+
+          xu_post = (m.get("xu100") or {}).get("post") or {}
+          if not xu_post.get("exists"):
+              sys.exit("FAIL: manifest xu100.post.exists=false")
 
           # sha256 integrity (recompute on downloaded file)
           h = hashlib.sha256()
@@ -163,11 +180,53 @@ jobs:
           if mts < cutoff:
               sys.exit(f"FAIL: extfeed max_ts_utc={mts.isoformat()} < asof close cutoff {cutoff.isoformat()}")
 
+          # XU100 sha256 integrity (recompute on downloaded file)
+          h2 = hashlib.sha256()
+          with XU100.open("rb") as f:
+              for chunk in iter(lambda: f.read(1 << 20), b""):
+                  h2.update(chunk)
+          xu_got_sha = h2.hexdigest()
+          xu_want_sha = xu_post.get("sha256")
+          if xu_got_sha != xu_want_sha:
+              sys.exit(f"FAIL: xu100 sha mismatch (downloaded={xu_got_sha} manifest={xu_want_sha})")
+
+          # XU100 row_count match
+          xu_got_rows = pq.read_metadata(XU100).num_rows
+          xu_want_rows = xu_post.get("row_count")
+          if xu_got_rows != xu_want_rows:
+              sys.exit(f"FAIL: xu100 row_count mismatch (downloaded={xu_got_rows} manifest={xu_want_rows})")
+
+          # XU100 max_date == ASOF (manifest side)
+          xu_md_str = xu_post.get("max_date")
+          if not xu_md_str:
+              sys.exit("FAIL: manifest xu100.post.max_date missing")
+          xu_md = dt.date.fromisoformat(xu_md_str)
+          if xu_md != asof:
+              sys.exit(f"FAIL: manifest xu100.post.max_date={xu_md} != asof={asof}")
+
+          # XU100 max_date == ASOF (downloaded parquet side)
+          xu_df = pd.read_parquet(XU100)
+          if isinstance(xu_df.index, pd.DatetimeIndex) and len(xu_df.index) > 0:
+              xu_dl_max = xu_df.index.max()
+          elif "Date" in xu_df.columns:
+              xu_dl_max = pd.to_datetime(xu_df["Date"]).max()
+          elif "date" in xu_df.columns:
+              xu_dl_max = pd.to_datetime(xu_df["date"]).max()
+          else:
+              sys.exit("FAIL: xu100 parquet has no DatetimeIndex / Date / date column")
+          if pd.isna(xu_dl_max):
+              sys.exit("FAIL: xu100 parquet max_date is NaT")
+          xu_dl_md = pd.Timestamp(xu_dl_max).date()
+          if xu_dl_md != asof:
+              sys.exit(f"FAIL: xu100 parquet max_date={xu_dl_md} != asof={asof}")
+
           print("  master-data restore OK:")
           print(f"    mode={m['mode']} verdict={m['verdict']} freshness={m['freshness_status']}")
           print(f"    operational_target_date={op} asof={asof}")
           print(f"    extfeed rows={got_rows:,} max_ts_utc={mts.isoformat()}")
           print(f"    extfeed sha256={got_sha[:16]}…")
+          print(f"    xu100   rows={xu_got_rows:,} max_date={xu_dl_md}")
+          print(f"    xu100   sha256={xu_got_sha[:16]}…")
           PYEOF
 
       - name: Run horizontal_base live scanner
