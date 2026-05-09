@@ -8,10 +8,12 @@ the artifact + manifest; consumer migration is PR-2.
 Modes:
     intraday_1700  refresh extfeed_intraday_1h_3y_master.parquet
     close          refresh extfeed master + ohlcv_10y_fintables_master.parquet
+                   + xu100_extfeed_daily.parquet
 
 Outputs:
     output/extfeed_intraday_1h_3y_master.parquet (always rewritten)
     output/ohlcv_10y_fintables_master.parquet     (mode=close only)
+    output/xu100_extfeed_daily.parquet            (mode=close only)
     output/master_data_manifest.json              (always written, even on FAIL)
 
 Exit code: 0 PASS, 1 FAIL (any required step or freshness check failed).
@@ -38,6 +40,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXTFEED_MASTER = REPO_ROOT / "output" / "extfeed_intraday_1h_3y_master.parquet"
 FINTABLES_MASTER = REPO_ROOT / "output" / "ohlcv_10y_fintables_master.parquet"
+XU100_DAILY = REPO_ROOT / "output" / "xu100_extfeed_daily.parquet"
 MANIFEST_PATH = REPO_ROOT / "output" / "master_data_manifest.json"
 
 EXTFEED_REQUIRED_SECRETS = ("INTRADAY_SID", "INTRADAY_SIGN", "INTRADAY_HOST", "INTRADAY_WS_URL")
@@ -56,6 +59,7 @@ class ParquetMeta:
     row_count: int | None = None
     max_ts_utc: str | None = None
     max_date: str | None = None
+    bytes: int | None = None
 
 
 @dataclass
@@ -75,6 +79,8 @@ class OrchestratorResult:
     extfeed_post: ParquetMeta
     fintables_pre: ParquetMeta
     fintables_post: ParquetMeta
+    xu100_pre: ParquetMeta
+    xu100_post: ParquetMeta
     freshness_status: str
     verdict: str
     failures: list[str] = field(default_factory=list)
@@ -120,6 +126,7 @@ def inspect_extfeed(path: Path) -> ParquetMeta:
         sha256=_sha256(path),
         row_count=int(len(df)),
         max_ts_utc=max_ts_str,
+        bytes=path.stat().st_size,
     )
 
 
@@ -143,6 +150,30 @@ def inspect_fintables(path: Path) -> ParquetMeta:
         sha256=_sha256(path),
         row_count=int(len(df)),
         max_date=max_d_str,
+        bytes=path.stat().st_size,
+    )
+
+
+def inspect_xu100(path: Path) -> ParquetMeta:
+    if not path.exists():
+        return ParquetMeta(path=str(path), exists=False)
+    df = pd.read_parquet(path)
+    if isinstance(df.index, pd.DatetimeIndex) and len(df.index) > 0:
+        max_d = df.index.max()
+    elif "Date" in df.columns:
+        max_d = pd.to_datetime(df["Date"]).max()
+    elif "date" in df.columns:
+        max_d = pd.to_datetime(df["date"]).max()
+    else:
+        max_d = None
+    max_d_str = None if max_d is None or pd.isna(max_d) else pd.Timestamp(max_d).date().isoformat()
+    return ParquetMeta(
+        path=str(path),
+        exists=True,
+        sha256=_sha256(path),
+        row_count=int(len(df)),
+        max_date=max_d_str,
+        bytes=path.stat().st_size,
     )
 
 
@@ -177,6 +208,7 @@ def freshness_check(
     target: date,
     extfeed: ParquetMeta,
     fintables: ParquetMeta,
+    xu100: ParquetMeta,
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
 
@@ -209,6 +241,15 @@ def freshness_check(
                     f"fintables stale: max_date={fmax} < target={target}"
                 )
 
+        if not xu100.exists or xu100.max_date is None:
+            failures.append("xu100 master missing or unreadable")
+        else:
+            xmax = date.fromisoformat(xu100.max_date)
+            if xmax != target:
+                failures.append(
+                    f"xu100 stale: max_date={xmax} != target={target}"
+                )
+
     return ("PASS" if not failures else "FAIL"), failures
 
 
@@ -233,6 +274,7 @@ def _meta_to_dict(meta: ParquetMeta) -> dict[str, Any]:
         "row_count": meta.row_count,
         "max_ts_utc": meta.max_ts_utc,
         "max_date": meta.max_date,
+        "bytes": meta.bytes,
     }
 
 
@@ -254,6 +296,14 @@ def write_manifest(result: OrchestratorResult) -> None:
             "max_date": result.fintables_post.max_date,
             "sha256": result.fintables_post.sha256,
             "row_count": result.fintables_post.row_count,
+        },
+        "xu100": {
+            "pre": _meta_to_dict(result.xu100_pre),
+            "post": _meta_to_dict(result.xu100_post),
+            "max_date": result.xu100_post.max_date,
+            "sha256": result.xu100_post.sha256,
+            "row_count": result.xu100_post.row_count,
+            "bytes": result.xu100_post.bytes,
         },
         "freshness_status": result.freshness_status,
         "verdict": result.verdict,
@@ -297,6 +347,9 @@ def main() -> int:
     fintables_pre = inspect_fintables(FINTABLES_MASTER) if args.mode == "close" else ParquetMeta(
         path=str(FINTABLES_MASTER), exists=False
     )
+    xu100_pre = inspect_xu100(XU100_DAILY) if args.mode == "close" else ParquetMeta(
+        path=str(XU100_DAILY), exists=False
+    )
     print(
         f"[pre] extfeed exists={extfeed_pre.exists} "
         f"rows={extfeed_pre.row_count} max_ts={extfeed_pre.max_ts_utc}",
@@ -306,6 +359,11 @@ def main() -> int:
         print(
             f"[pre] fintables exists={fintables_pre.exists} "
             f"rows={fintables_pre.row_count} max_date={fintables_pre.max_date}",
+            flush=True,
+        )
+        print(
+            f"[pre] xu100 exists={xu100_pre.exists} "
+            f"rows={xu100_pre.row_count} max_date={xu100_pre.max_date}",
             flush=True,
         )
 
@@ -333,9 +391,21 @@ def main() -> int:
             if not fin_step.ok:
                 failures.append(f"rebuild_dataset_delta failed: {fin_step.detail}")
 
+        if args.mode == "close" and not failures:
+            xu_step = run_subprocess(
+                [sys.executable, "tools/extfeed_pull_xu100.py"],
+                step_name="extfeed_pull_xu100",
+            )
+            steps.append(xu_step)
+            if not xu_step.ok:
+                failures.append(f"extfeed_pull_xu100 failed: {xu_step.detail}")
+
     extfeed_post = inspect_extfeed(EXTFEED_MASTER)
     fintables_post = inspect_fintables(FINTABLES_MASTER) if args.mode == "close" else ParquetMeta(
         path=str(FINTABLES_MASTER), exists=False
+    )
+    xu100_post = inspect_xu100(XU100_DAILY) if args.mode == "close" else ParquetMeta(
+        path=str(XU100_DAILY), exists=False
     )
     print(
         f"[post] extfeed exists={extfeed_post.exists} "
@@ -348,6 +418,11 @@ def main() -> int:
             f"rows={fintables_post.row_count} max_date={fintables_post.max_date}",
             flush=True,
         )
+        print(
+            f"[post] xu100 exists={xu100_post.exists} "
+            f"rows={xu100_post.row_count} max_date={xu100_post.max_date}",
+            flush=True,
+        )
 
     collapse = row_collapse_check(extfeed_pre, extfeed_post, "extfeed")
     if collapse:
@@ -356,9 +431,12 @@ def main() -> int:
         collapse_f = row_collapse_check(fintables_pre, fintables_post, "fintables")
         if collapse_f:
             failures.append(collapse_f)
+        collapse_x = row_collapse_check(xu100_pre, xu100_post, "xu100")
+        if collapse_x:
+            failures.append(collapse_x)
 
     freshness_status, freshness_failures = freshness_check(
-        args.mode, target, extfeed_post, fintables_post
+        args.mode, target, extfeed_post, fintables_post, xu100_post
     )
     failures.extend(freshness_failures)
 
@@ -371,6 +449,8 @@ def main() -> int:
         extfeed_post=extfeed_post,
         fintables_pre=fintables_pre,
         fintables_post=fintables_post,
+        xu100_pre=xu100_pre,
+        xu100_post=xu100_post,
         freshness_status=freshness_status,
         verdict=verdict,
         failures=failures,
