@@ -5,6 +5,16 @@ concurrency:
   cancel-in-progress: false
 
 on:
+  # Scheduled intraday_1700 producer fires for SBT-1700 consumer (PR-2e
+  # prerequisite). Three TR-evening slots after BIST 16:00–17:00 hourly bar
+  # closes at 17:00 TR, giving the 1h extfeed enough time to publish the
+  # 14:00 UTC bar before the orchestrator pulls. Multiple fires absorb
+  # GitHub Actions cron skew/skips. Concurrency group serializes them and
+  # delta_pull is idempotent, so duplicate fires are harmless.
+  schedule:
+    - cron: '10 14 * * 1-5'   # 17:10 TR
+    - cron: '20 14 * * 1-5'   # 17:20 TR
+    - cron: '30 14 * * 1-5'   # 17:30 TR
   workflow_dispatch:
     inputs:
       mode:
@@ -42,6 +52,10 @@ jobs:
         run: |
           set -euo pipefail
           MODE='${{ github.event.inputs.mode }}'
+          # Scheduled fires (cron) have no workflow_dispatch inputs, so MODE
+          # is empty — default scheduled runs to intraday_1700. Manual close-
+          # mode dispatch still flows through as before.
+          MODE="${MODE:-intraday_1700}"
           TARGET='${{ github.event.inputs.target_date }}'
           if [ -n "$TARGET" ]; then
             python tools/master_data_pull_orchestrator.py --mode "$MODE" --target-date "$TARGET"
