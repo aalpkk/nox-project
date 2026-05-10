@@ -230,6 +230,15 @@ def freshness_check(
                     f"extfeed pre-close: max_ts_utc={max_ts.isoformat()} "
                     f"< {close_threshold.isoformat()} (BIST 17:00 TR)"
                 )
+        if mode == "intraday_1700":
+            # SBT-1700 consumer needs the 16:00–17:00 TR hourly bar present.
+            # That bar's ts_utc = target T14:00:00Z (1h before BIST close).
+            intraday_threshold = pd.Timestamp(f"{target.isoformat()}T14:00:00Z")
+            if max_ts < intraday_threshold:
+                failures.append(
+                    f"extfeed pre-1700: max_ts_utc={max_ts.isoformat()} "
+                    f"< {intraday_threshold.isoformat()} (BIST 17:00 TR)"
+                )
 
     if mode == "close":
         if not fintables.exists or fintables.max_date is None:
