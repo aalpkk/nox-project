@@ -72,22 +72,67 @@ jobs:
           echo "tfs=$TFS" >> $GITHUB_OUTPUT
           echo "As-of date: $DATE  TFs: $TFS"
 
-      - name: Restore master-data-pull manifest (latest successful close run on main)
+      - name: Select latest close-mode master-data-pull run on main
+        id: select_master_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Walk back through recent successful master-data-pull runs on main
+          # and pick the first whose manifest reports mode=close, verdict=PASS,
+          # freshness_status=PASS. Blocks PR-1c-era regression where the
+          # downloader returned the latest *any-mode* successful run
+          # (intraday_1700 after 2026-05-11), making the mode==close verifier
+          # hard-FAIL on scheduled producer fires.
+          candidates=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow=master-data-pull.yml \
+            --branch=main \
+            --status=success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[].databaseId')
+          if [ -z "$candidates" ]; then
+            echo "::error::no successful master-data-pull runs on main"; exit 1
+          fi
+          selected=""
+          for run_id in $candidates; do
+            tmp=$(mktemp -d)
+            if gh run download "$run_id" --repo "${{ github.repository }}" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+              mf="$tmp/master_data_manifest.json"
+              if [ -f "$mf" ]; then
+                ok=$(python -c "import json; m=json.load(open('$mf')); print('yes' if (m.get('mode')=='close' and m.get('verdict')=='PASS' and m.get('freshness_status')=='PASS') else 'no')")
+                if [ "$ok" = "yes" ]; then
+                  selected="$run_id"
+                  rm -rf "$tmp"
+                  break
+                fi
+                echo "  skip run $run_id (mode/verdict/freshness mismatch)"
+              fi
+            else
+              echo "  skip run $run_id (manifest artifact missing or expired)"
+            fi
+            rm -rf "$tmp"
+          done
+          if [ -z "$selected" ]; then
+            echo "::error::no close-mode master-data-pull run with PASS verdict in last 30 successful runs"
+            exit 1
+          fi
+          echo "selected close-mode master-data-pull run: $selected"
+          echo "run_id=$selected" >> "$GITHUB_OUTPUT"
+
+      - name: Restore master-data-pull manifest (selected close run)
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: master-data-pull.yml
-          branch: main
-          workflow_conclusion: success
+          run_id: ${{ steps.select_master_run.outputs.run_id }}
           name: master-data-manifest
           path: output/
           if_no_artifact_found: fail
 
-      - name: Restore master-data-pull extfeed parquet (latest successful close run on main)
+      - name: Restore master-data-pull extfeed parquet (selected close run)
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: master-data-pull.yml
-          branch: main
-          workflow_conclusion: success
+          run_id: ${{ steps.select_master_run.outputs.run_id }}
           name: master-extfeed-intraday-1h
           path: output/
           if_no_artifact_found: fail
