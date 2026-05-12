@@ -1,24 +1,27 @@
 name: SBT-1700 — Daily Refresh + Scan
 
-# Tek-shot günlük zincir (mevsimsel BIST iş günü):
-#   1. extfeed master cache restore → delta_pull (son 4 gün, dedupe)
+# Tek-shot günlük zincir (mevsimsel BIST iş günü, 17:00 TR kapanışı sonrası):
+#   1. master-data-pull intraday_1700/close artifact restore (manifest +
+#      extfeed master); fail-fast verifier — local extfeed pull YOK
 #   2. sbt1700.build_dataset_5d → output/sbt_1700_dataset_5d_intraday_v1.parquet
 #   3. sbt1700.scan_live (frozen 5D ranker + frozen E04_C01)
 #   4. HTML → GitHub Pages publish
 #   5. Telegram bildirimi
 #   6. Commit edilmiş dataset (.parquet + .meta.json) repo'ya push
 #
-# Cron: 17:01 TR (14:01 UTC) hafta içi — BIST 16:00–17:00 saatlik bar kapandıktan
-# 1 dk sonra. Manual dispatch ile gerek date / full_pull override edilebilir.
+# Veri kaynağı: master-data-pull.yml — SBT-1700 17:00 TR consumer'ı olduğu
+# için intraday_1700 ve close iki manifest modunu da kabul eder (selector
+# önce intraday_1700 / fallback close). Post-close consumer'lar (mb / HB /
+# triangle / hw-obos) bu broadening'i ALMAZ — PR-2x'te mode==close
+# kapalı kaldı. Restore başarısızsa fail-fast; fallback local pull YOK.
 
 on:
   # GitHub Actions cron is best-effort: free public repos can have a
   # scheduled fire silently delayed or skipped during peak load. We
-  # trigger 3 times (17:01 / 17:15 / 17:30 TR) so any single skip is
-  # absorbed. The concurrency group + idempotent dataset commit
+  # trigger 2 times (17:15 / 17:30 TR) so any single skip is absorbed.
+  # The concurrency group + idempotent dataset commit
   # (`git diff --cached --quiet`) make duplicate fires harmless.
   schedule:
-    - cron: '1 14 * * 1-5'
     - cron: '15 14 * * 1-5'
     - cron: '30 14 * * 1-5'
   workflow_dispatch:
@@ -27,15 +30,10 @@ on:
         description: 'Signal-date (YYYY-MM-DD). Boş = bugün TR.'
         required: false
         default: ''
-      full_pull:
-        description: 'extfeed full bulk pull (slow, ~40 min). Genelde false.'
-        required: false
-        default: 'false'
-        type: choice
-        options: ['true', 'false']
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: sbt1700-daily
@@ -61,40 +59,193 @@ jobs:
           if [ -n "${{ github.event.inputs.date }}" ]; then
             DATE="${{ github.event.inputs.date }}"
           else
-            DATE=$(TZ='Europe/Istanbul' date +%Y-%m-%d)
+            DATE=$(python -c "from tools.master_data_pull_orchestrator import compute_operational_target_date; print(compute_operational_target_date().isoformat())")
           fi
           echo "signal_date=$DATE" >> $GITHUB_OUTPUT
           echo "Signal date: $DATE"
 
-      - name: Restore extfeed master cache
-        id: cache_master
-        uses: actions/cache@v4
+      - name: Select latest usable master-data-pull run on main (prefer intraday_1700, fallback close)
+        id: select_master_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASOF: ${{ steps.resolve_date.outputs.signal_date }}
+        run: |
+          set -euo pipefail
+          # Walk back through recent successful master-data-pull runs on main.
+          # SBT-1700 is the 17:00 TR consumer — it may use either intraday_1700
+          # or close-mode artifacts as long as both reference the same ASOF.
+          # Two-pass: first prefer mode==intraday_1700 for ASOF, then fall
+          # back to mode==close for ASOF. All candidates must satisfy
+          #   verdict==PASS
+          #   freshness_status==PASS
+          #   operational_target_date==ASOF
+          #   extfeed.post.max_ts_utc >= ASOF T14:00:00Z
+          # Post-close consumers (mb/HB/triangle/hw-obos) intentionally stay
+          # close-only (PR-2x); this broadened contract is SBT-only (PR-2e).
+          cat > "$RUNNER_TEMP/check_manifest.py" <<'PYEOF'
+          import json, sys
+          import pandas as pd
+          m = json.load(open(sys.argv[1]))
+          want = sys.argv[2]
+          asof = sys.argv[3]
+          cutoff = pd.Timestamp(f"{asof}T14:00:00Z")
+          mts_raw = ((m.get("extfeed") or {}).get("post") or {}).get("max_ts_utc")
+          if not mts_raw:
+              print("no"); raise SystemExit
+          mts = pd.Timestamp(mts_raw)
+          if mts.tzinfo is None:
+              mts = mts.tz_localize("UTC")
+          cond = (
+              m.get("mode") == want
+              and m.get("verdict") == "PASS"
+              and m.get("freshness_status") == "PASS"
+              and m.get("operational_target_date") == asof
+              and mts >= cutoff
+          )
+          print("yes" if cond else "no")
+          PYEOF
+          candidates=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow=master-data-pull.yml \
+            --branch=main \
+            --status=success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[].databaseId')
+          if [ -z "$candidates" ]; then
+            echo "::error::no successful master-data-pull runs on main"; exit 1
+          fi
+          selected=""
+          selected_mode=""
+          for want_mode in intraday_1700 close; do
+            for run_id in $candidates; do
+              tmp=$(mktemp -d)
+              if gh run download "$run_id" --repo "${{ github.repository }}" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+                mf="$tmp/master_data_manifest.json"
+                if [ -f "$mf" ]; then
+                  ok=$(python "$RUNNER_TEMP/check_manifest.py" "$mf" "$want_mode" "$ASOF")
+                  if [ "$ok" = "yes" ]; then
+                    selected="$run_id"
+                    selected_mode="$want_mode"
+                    rm -rf "$tmp"
+                    break 2
+                  fi
+                  echo "  skip run $run_id (mode/asof/freshness mismatch vs want=$want_mode asof=$ASOF)"
+                fi
+              else
+                echo "  skip run $run_id (manifest artifact missing or expired)"
+              fi
+              rm -rf "$tmp"
+            done
+          done
+          if [ -z "$selected" ]; then
+            echo "::error::no usable master-data-pull run (intraday_1700 or close) for ASOF=$ASOF in last 30 successful runs"
+            exit 1
+          fi
+          echo "selected master-data-pull run: $selected (mode=$selected_mode)"
+          echo "run_id=$selected" >> "$GITHUB_OUTPUT"
+          echo "selected_mode=$selected_mode" >> "$GITHUB_OUTPUT"
+
+      - name: Restore master-data-pull manifest (selected run)
+        uses: dawidd6/action-download-artifact@v6
         with:
-          path: output/extfeed_intraday_1h_3y_master.parquet
-          key: extfeed-master-1h-${{ steps.resolve_date.outputs.signal_date }}
-          restore-keys: |
-            extfeed-master-1h-
+          run_id: ${{ steps.select_master_run.outputs.run_id }}
+          name: master-data-manifest
+          path: output/
+          if_no_artifact_found: fail
 
-      - name: Optional full bulk pull
-        if: ${{ github.event.inputs.full_pull == 'true' }}
+      - name: Restore master-data-pull extfeed parquet (selected run)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.select_master_run.outputs.run_id }}
+          name: master-extfeed-intraday-1h
+          path: output/
+          if_no_artifact_found: fail
+
+      - name: Verify master-data-pull manifest + extfeed integrity (fail-fast, no fallback)
         env:
-          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
-          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
-          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
-          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+          ASOF: ${{ steps.resolve_date.outputs.signal_date }}
         run: |
           set -o pipefail
-          python tools/extfeed_phase1_bulk.py --force 2>&1 | tail -200
+          python - <<'PYEOF'
+          import datetime as dt
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import sys
 
-      - name: Delta-pull last 4 days (incremental)
-        env:
-          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
-          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
-          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
-          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
-        run: |
-          set -o pipefail
-          python tools/extfeed_delta_pull.py 2>&1 | tail -100
+          import pandas as pd
+          import pyarrow.parquet as pq
+
+          ROOT = pathlib.Path("output")
+          MANIFEST = ROOT / "master_data_manifest.json"
+          EXTFEED = ROOT / "extfeed_intraday_1h_3y_master.parquet"
+
+          if not MANIFEST.exists():
+              sys.exit("FAIL: master_data_manifest.json missing after restore")
+          if not EXTFEED.exists():
+              sys.exit("FAIL: extfeed_intraday_1h_3y_master.parquet missing after restore")
+
+          m = json.loads(MANIFEST.read_text())
+
+          # mode in {intraday_1700, close} — SBT-1700 broadened contract
+          allowed_modes = {"intraday_1700", "close"}
+          if m.get("mode") not in allowed_modes:
+              sys.exit(f"FAIL: manifest mode={m.get('mode')} not in {sorted(allowed_modes)}")
+
+          # Verdict + freshness gates
+          if m.get("verdict") != "PASS":
+              sys.exit(f"FAIL: manifest verdict={m.get('verdict')} failures={m.get('failures')}")
+          if m.get("freshness_status") != "PASS":
+              sys.exit(f"FAIL: manifest freshness_status={m.get('freshness_status')}")
+
+          ext_post = (m.get("extfeed") or {}).get("post") or {}
+          if not ext_post.get("exists"):
+              sys.exit("FAIL: manifest extfeed.post.exists=false")
+
+          # sha256 integrity (recompute on downloaded file)
+          h = hashlib.sha256()
+          with EXTFEED.open("rb") as f:
+              for chunk in iter(lambda: f.read(1 << 20), b""):
+                  h.update(chunk)
+          got_sha = h.hexdigest()
+          want_sha = ext_post.get("sha256")
+          if got_sha != want_sha:
+              sys.exit(f"FAIL: extfeed sha mismatch (downloaded={got_sha} manifest={want_sha})")
+
+          # row_count match
+          got_rows = pq.read_metadata(EXTFEED).num_rows
+          want_rows = ext_post.get("row_count")
+          if got_rows != want_rows:
+              sys.exit(f"FAIL: extfeed row_count mismatch (downloaded={got_rows} manifest={want_rows})")
+
+          # operational_target_date == consumer asof
+          asof = dt.date.fromisoformat(os.environ["ASOF"])
+          op_str = m.get("operational_target_date")
+          if not op_str:
+              sys.exit("FAIL: manifest missing operational_target_date")
+          op = dt.date.fromisoformat(op_str)
+          if op != asof:
+              sys.exit(f"FAIL: manifest operational_target_date={op} != consumer asof={asof}")
+
+          # Freshness: extfeed.post.max_ts_utc >= ASOF T14:00:00Z (BIST 17:00 TR floor)
+          mts_str = ext_post.get("max_ts_utc")
+          if not mts_str:
+              sys.exit("FAIL: manifest extfeed.post.max_ts_utc missing")
+          mts = pd.Timestamp(mts_str)
+          if mts.tzinfo is None:
+              mts = mts.tz_localize("UTC")
+          cutoff = pd.Timestamp(f"{asof.isoformat()}T14:00:00Z")
+          if mts < cutoff:
+              sys.exit(f"FAIL: extfeed max_ts_utc={mts.isoformat()} < asof close cutoff {cutoff.isoformat()}")
+
+          print("  master-data restore OK:")
+          print(f"    mode={m['mode']} verdict={m['verdict']} freshness={m['freshness_status']}")
+          print(f"    operational_target_date={op} asof={asof}")
+          print(f"    extfeed rows={got_rows:,} max_ts_utc={mts.isoformat()}")
+          print(f"    extfeed sha256={got_sha[:16]}…")
+          PYEOF
 
       - name: Build SBT-1700 5d dataset
         run: |
