@@ -1,0 +1,51 @@
+name: Fintables Token Probe
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install requests
+
+      - name: Probe Fintables MCP token
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+        run: |
+          python - <<'PYEOF'
+          import os, sys, requests
+
+          token = os.environ.get("FINTABLES_MCP_TOKEN", "")
+          if not token:
+              print("FAIL: FINTABLES_MCP_TOKEN secret unset on this repo")
+              sys.exit(2)
+
+          payload = {
+              "jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "nox-token-probe", "version": "1.0"}},
+          }
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json",
+              "Accept": "application/json, text/event-stream",
+          }
+          r = requests.post("https://evo.fintables.com/mcp",
+                            json=payload, headers=headers, timeout=15)
+
+          print(f"status: {r.status_code}")
+          print(f"body[:300]: {r.text[:300]}")
+
+          if r.status_code in (401, 403):
+              print("FAIL: token expired / unauthorized — rotate via /mcp on Mac")
+              sys.exit(1)
+          if not r.ok:
+              print(f"FAIL: unexpected non-2xx ({r.status_code})")
+              sys.exit(1)
+          print("OK: Fintables MCP token accepted")
+          PYEOF
