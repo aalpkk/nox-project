@@ -224,6 +224,36 @@ jobs:
       - name: Stage 2 — scanner_v1_event_quality
         run: python tools/scanner_v1_event_quality.py
 
+      - name: Seed operational HB from baseline-lock (Stage 3 archive dep)
+        run: |
+          set -euo pipefail
+          OP_HB="output/horizontal_base_event_v1.parquet"
+          if [ -f "$OP_HB" ]; then
+            echo "[de-v1] operational HB already present; skipping seed"
+            exit 0
+          fi
+          LOCKED_PATH=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_hb_archive']['path'])" || true)
+          LOCKED_SHA=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_hb_archive']['sha256'])" || true)
+          if [ -z "$LOCKED_PATH" ] || [ -z "$LOCKED_SHA" ]; then
+            echo "::error::pin_baselines.toml [locked_hb_archive] path/sha256 unresolved"
+            exit 1
+          fi
+          if [ ! -f "$LOCKED_PATH" ]; then
+            echo "::error::baseline-lock HB source missing: $LOCKED_PATH"
+            exit 1
+          fi
+          ACTUAL_SHA=$(sha256sum "$LOCKED_PATH" | awk '{print $1}')
+          if [ "$ACTUAL_SHA" != "$LOCKED_SHA" ]; then
+            echo "::error::baseline-lock HB sha256 mismatch: actual=$ACTUAL_SHA pinned=$LOCKED_SHA"
+            exit 1
+          fi
+          cp "$LOCKED_PATH" "$OP_HB"
+          if [ ! -f "$OP_HB" ]; then
+            echo "::error::operational HB missing after seed copy"
+            exit 1
+          fi
+          echo "[de-v1] seeded operational HB from baseline-lock: $LOCKED_PATH -> $OP_HB (sha256=$ACTUAL_SHA)"
+
       - name: Stage 3 — decision_engine_v1_upstream_scanner_refresh
         run: python tools/decision_engine_v1_upstream_scanner_refresh.py
 
