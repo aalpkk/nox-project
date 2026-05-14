@@ -1,0 +1,43 @@
+{
+  "phase0_run_date": "2026-05-02T22:20:16Z",
+  "spec": "memory/ema_context_phase0_spec.md",
+  "data_source_used": "extfeed_intraday_1h_3y_master.parquet [via intraday_1h.daily_resample]",
+  "source_priority_hit": 1,
+  "ema_periods": [
+    8,
+    21,
+    50
+  ],
+  "universe_attempted": 607,
+  "universe_covered": 607,
+  "n_rows": 451475,
+  "n_rows_postwarm": 421256,
+  "tag_breakpoints": {
+    "version": "v0.0",
+    "compression_tight_max": 0.8787228553934567,
+    "compression_percentile": 0.33,
+    "overextended_min_abs": 2.4711652428152044,
+    "extension_percentile": 0.9,
+    "reclaim_window_bars": 3
+  },
+  "warmup_bars": 50,
+  "acceptance": {
+    "nan_threshold": 0.02,
+    "pair_corr_abort_threshold": 0.95,
+    "nan_rates": {
+      "ema_stack_width_atr": 0.0,
+      "ema_stack_width_pct": 0.0,
+      "ema_distance_21_atr": 0.0,
+      "ema_distance_21_pct": 0.0,
+      "ema21_slope_5": 0.0,
+      "ema50_slope_10": 0.0
+    },
+    "atr_nonatr_pair_corr": {
+      "ema_stack_width_atr__ema_stack_width_pct": 0.7735812298422883,
+      "ema_distance_21_atr__ema_distance_21_pct": 0.8563956771374848
+    },
+    "nan_violations": [],
+    "pair_corr_violations": [],
+    "all_pass": true
+  }
+}

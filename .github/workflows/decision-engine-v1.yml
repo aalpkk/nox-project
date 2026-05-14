@@ -1,0 +1,403 @@
+name: decision engine v1
+
+# PR-DE-3 v0 — manual dispatch only.
+#
+# Composes the DE v1 chain (Stages 1–9) on top of a pre-existing
+# successful master-data-pull run. NEVER pulls master data inline.
+#
+# v0 inputs:
+#   run_mode = close          → full chain after master-data close
+#   run_mode = intraday_manual → scaffold-only; emits
+#                                STOP_INTRADAY_UNSUPPORTED advisory
+#                                and fails the job until validated.
+#
+# Data-condition FAIL (e.g. HB on asof has zero trigger/retest_bounce
+# → Stage 6 signal_asof_floor → Stage 8 source_asof_mismatch) is NOT a
+# bug; the workflow emits a NO_DE_DAY advisory artifact and concludes
+# success. Bug-FAIL (any other stage failure) hard-fails the job.
+#
+# Schedule: deferred. v0 validation is manual dispatch only. Once a
+# close-mode dispatch is end-to-end green, a follow-up may add an
+# after-master-data-pull-close weekday cron (e.g. ~19:00 TR).
+
+concurrency:
+  group: decision-engine-v1-${{ github.ref }}-${{ github.event.inputs.run_mode || 'close' }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'Run mode: close (full chain after master-data close) | intraday_manual (scaffold; STOP_INTRADAY_UNSUPPORTED until validated)'
+        required: true
+        type: choice
+        options:
+          - close
+          - intraday_manual
+        default: close
+      target_date:
+        description: 'Operational target date (YYYY-MM-DD). Leave blank for Europe/Istanbul today.'
+        required: false
+        default: ''
+
+jobs:
+  decision-engine-v1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resolve inputs (mode, asof)
+        id: resolve
+        run: |
+          set -euo pipefail
+          MODE='${{ github.event.inputs.run_mode }}'
+          if [ -z "$MODE" ]; then
+            MODE=close
+          fi
+          ASOF='${{ github.event.inputs.target_date }}'
+          if [ -z "$ASOF" ]; then
+            ASOF=$(TZ=Europe/Istanbul date +%Y-%m-%d)
+          fi
+          # ISO-date format guard
+          if ! echo "$ASOF" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+            echo "::error::target_date must be YYYY-MM-DD, got '$ASOF'"
+            exit 1
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "asof=$ASOF" >> "$GITHUB_OUTPUT"
+          echo "[de-v1] resolved mode=$MODE asof=$ASOF"
+
+      - name: Guard intraday_manual (scaffold-only in v0)
+        if: steps.resolve.outputs.mode == 'intraday_manual'
+        run: |
+          set -euo pipefail
+          ASOF='${{ steps.resolve.outputs.asof }}'
+          mkdir -p output
+          cat > "output/decision_engine_v1_intraday_unsupported_${ASOF}.json" <<EOF
+          {
+            "verdict": "STOP_INTRADAY_UNSUPPORTED",
+            "reason": "intraday_manual mode is scaffolded but not validated in PR-DE-3 v0. Use run_mode=close after master-data-pull close-mode artifacts are available.",
+            "mode": "intraday_manual",
+            "asof": "${ASOF}",
+            "provisional": true,
+            "run_id": "${{ github.run_id }}"
+          }
+          EOF
+          echo "[de-v1] STOP_INTRADAY_UNSUPPORTED — mode=intraday_manual not yet validated; failing job"
+          exit 1
+
+      - name: Verify baseline-lock archives present + sha256 match
+        run: |
+          set -euo pipefail
+          PARQUET_PATH=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_hb_archive']['path'])")
+          PARQUET_SHA=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_hb_archive']['sha256'])")
+          META_PATH=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['research_frozen_metadata_archive']['path'])")
+          if [ ! -f "$PARQUET_PATH" ]; then
+            echo "::error::baseline-lock parquet missing: $PARQUET_PATH"
+            exit 1
+          fi
+          if [ ! -f "$META_PATH" ]; then
+            echo "::error::baseline-lock metadata missing: $META_PATH"
+            exit 1
+          fi
+          ACTUAL_SHA=$(sha256sum "$PARQUET_PATH" | awk '{print $1}')
+          if [ "$ACTUAL_SHA" != "$PARQUET_SHA" ]; then
+            echo "::error::baseline-lock parquet sha256 mismatch: actual=$ACTUAL_SHA pinned=$PARQUET_SHA"
+            exit 1
+          fi
+          echo "[de-v1] baseline-lock archives verified:"
+          echo "  $PARQUET_PATH  sha256=$ACTUAL_SHA OK"
+          echo "  $META_PATH  present OK"
+
+      - name: Select master-data-pull source run
+        id: select_md
+        run: |
+          set -euo pipefail
+          ASOF='${{ steps.resolve.outputs.asof }}'
+          MODE='${{ steps.resolve.outputs.mode }}'
+          mkdir -p /tmp/md_check
+          SELECTED=""
+          for RUN_ID in $(gh run list --workflow=master-data-pull.yml --status=success --limit=30 --json databaseId --jq '.[].databaseId'); do
+            rm -rf /tmp/md_check/*
+            if ! gh run download "$RUN_ID" -n master-data-manifest -D /tmp/md_check 2>/dev/null; then
+              continue
+            fi
+            if [ ! -f /tmp/md_check/master_data_manifest.json ]; then
+              continue
+            fi
+            M_MODE=$(jq -r '.mode // empty' /tmp/md_check/master_data_manifest.json)
+            M_DATE=$(jq -r '.operational_target_date // empty' /tmp/md_check/master_data_manifest.json)
+            M_VERDICT=$(jq -r '.verdict // empty' /tmp/md_check/master_data_manifest.json)
+            M_FRESH=$(jq -r '.freshness_status // empty' /tmp/md_check/master_data_manifest.json)
+            echo "  candidate run_id=$RUN_ID mode=$M_MODE asof=$M_DATE verdict=$M_VERDICT freshness=$M_FRESH"
+            if [ "$M_MODE" = "$MODE" ] && [ "$M_DATE" = "$ASOF" ] && [ "$M_VERDICT" = "PASS" ] && [ "$M_FRESH" = "PASS" ]; then
+              SELECTED="$RUN_ID"
+              break
+            fi
+          done
+          if [ -z "$SELECTED" ]; then
+            echo "::error::no matching master-data-pull run for mode=$MODE asof=$ASOF (verdict=PASS freshness=PASS) in last 30 successful runs"
+            exit 1
+          fi
+          echo "run_id=$SELECTED" >> "$GITHUB_OUTPUT"
+          echo "[de-v1] selected master-data-pull run: $SELECTED"
+
+      - name: Download master-data artifacts
+        run: |
+          set -euo pipefail
+          RUN_ID='${{ steps.select_md.outputs.run_id }}'
+          MODE='${{ steps.resolve.outputs.mode }}'
+          mkdir -p output
+          gh run download "$RUN_ID" -n master-data-manifest -D output
+          gh run download "$RUN_ID" -n master-extfeed-intraday-1h -D output
+          if [ "$MODE" = "close" ]; then
+            gh run download "$RUN_ID" -n master-ohlcv-fintables -D output
+            gh run download "$RUN_ID" -n master-xu100-extfeed-daily -D output
+          fi
+          echo "[de-v1] downloaded master-data artifacts from run $RUN_ID"
+          ls -la output/master_data_manifest.json output/extfeed_intraday_1h_3y_master.parquet 2>&1 || true
+          if [ "$MODE" = "close" ]; then
+            ls -la output/ohlcv_10y_fintables_master.parquet output/xu100_extfeed_daily.parquet 2>&1 || true
+          fi
+
+      - name: Validate master-data manifest consistency
+        run: |
+          set -euo pipefail
+          ASOF='${{ steps.resolve.outputs.asof }}'
+          MODE='${{ steps.resolve.outputs.mode }}'
+          M_MODE=$(jq -r '.mode // empty' output/master_data_manifest.json)
+          M_DATE=$(jq -r '.operational_target_date // empty' output/master_data_manifest.json)
+          M_VERDICT=$(jq -r '.verdict // empty' output/master_data_manifest.json)
+          M_FRESH=$(jq -r '.freshness_status // empty' output/master_data_manifest.json)
+          fail=0
+          [ "$M_MODE" = "$MODE" ]   || { echo "::error::manifest.mode=$M_MODE != $MODE"; fail=1; }
+          [ "$M_DATE" = "$ASOF" ]   || { echo "::error::manifest.operational_target_date=$M_DATE != $ASOF"; fail=1; }
+          [ "$M_VERDICT" = "PASS" ] || { echo "::error::manifest.verdict=$M_VERDICT != PASS"; fail=1; }
+          [ "$M_FRESH" = "PASS" ]   || { echo "::error::manifest.freshness_status=$M_FRESH != PASS"; fail=1; }
+          [ -f output/extfeed_intraday_1h_3y_master.parquet ] || { echo "::error::extfeed parquet missing"; fail=1; }
+          if [ "$MODE" = "close" ]; then
+            [ -f output/ohlcv_10y_fintables_master.parquet ] || { echo "::error::fintables parquet missing"; fail=1; }
+            [ -f output/xu100_extfeed_daily.parquet ]         || { echo "::error::xu100 parquet missing"; fail=1; }
+          fi
+          [ $fail -eq 0 ] || exit 1
+          echo "[de-v1] manifest consistency PASS"
+
+      - name: Stage 1 — mb_scanner_events_run
+        run: python tools/mb_scanner_events_run.py
+
+      - name: Stage 2 — scanner_v1_event_quality
+        run: python tools/scanner_v1_event_quality.py
+
+      - name: Stage 3 — decision_engine_v1_upstream_scanner_refresh
+        run: python tools/decision_engine_v1_upstream_scanner_refresh.py
+
+      - name: Stage 4 — ema_context_run
+        run: python tools/ema_context_run.py
+
+      - name: Stage 5 — decision_engine_v1_ema_forward_alignment
+        run: python tools/decision_engine_v1_ema_forward_alignment.py --lctd-required ${{ steps.resolve.outputs.asof }}
+
+      - name: Stage 6 — paper_execution_v0_forward_run (may FAIL on data condition)
+        id: stage6
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/paper_execution_v0_forward_run.py 2>&1 | tee /tmp/stage6.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Stage 6 verdict check
+        id: stage6_verdict
+        run: |
+          set -euo pipefail
+          OUTCOME='${{ steps.stage6.outcome }}'
+          DATA_CONDITION="false"
+          REASON=""
+          if [ "$OUTCOME" = "failure" ]; then
+            MANIFEST="output/paper_execution_v0_forward_run_manifest.json"
+            if [ -f "$MANIFEST" ]; then
+              V=$(jq -r '.verdict // empty' "$MANIFEST")
+              REASON=$(jq -r '.failure_reason // .reason // .fail_reason // empty' "$MANIFEST")
+            fi
+            if [ -z "$REASON" ] && [ -f /tmp/stage6.log ]; then
+              REASON=$(grep -oE '(signal_asof_floor[^"]*|no_tr_signals_today[^"]*|source_asof_mismatch[^"]*)' /tmp/stage6.log | head -1 || true)
+            fi
+            if echo "$REASON" | grep -qiE '(signal_asof_floor|no_tr_signals_today)'; then
+              DATA_CONDITION="true"
+              echo "[de-v1] Stage 6 data-condition FAIL: $REASON"
+            else
+              echo "::error::Stage 6 hard FAIL (bug): reason=${REASON:-<unknown>}"
+              if [ -f /tmp/stage6.log ]; then
+                echo "--- tail of stage6.log ---" >&2
+                tail -80 /tmp/stage6.log >&2 || true
+              fi
+              exit 1
+            fi
+          fi
+          echo "data_condition=$DATA_CONDITION" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+      - name: Stage 7 — decision_engine_v1_panel_refresh
+        run: python tools/decision_engine_v1_panel_refresh.py
+
+      - name: Stage 8 — decision_engine_v1_run (Tier 2)
+        if: steps.stage6_verdict.outputs.data_condition == 'false'
+        id: stage8
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/decision_engine_v1_run.py --asof-date ${{ steps.resolve.outputs.asof }} 2>&1 | tee /tmp/stage8.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Stage 8 verdict check
+        if: steps.stage6_verdict.outputs.data_condition == 'false'
+        id: stage8_verdict
+        run: |
+          set -euo pipefail
+          OUTCOME='${{ steps.stage8.outcome }}'
+          DATA_CONDITION="false"
+          REASON=""
+          if [ "$OUTCOME" = "failure" ]; then
+            if [ -f /tmp/stage8.log ]; then
+              REASON=$(grep -oE '(source_asof_mismatch[^"]*|no_tr_signals_today[^"]*|signal_asof_floor[^"]*)' /tmp/stage8.log | head -1 || true)
+            fi
+            if echo "$REASON" | grep -qiE '(source_asof_mismatch|no_tr_signals_today)'; then
+              DATA_CONDITION="true"
+              echo "[de-v1] Stage 8 data-condition FAIL: $REASON"
+            else
+              echo "::error::Stage 8 hard FAIL (bug): reason=${REASON:-<unknown>}"
+              if [ -f /tmp/stage8.log ]; then
+                echo "--- tail of stage8.log ---" >&2
+                tail -80 /tmp/stage8.log >&2 || true
+              fi
+              exit 1
+            fi
+          fi
+          echo "data_condition=$DATA_CONDITION" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+      - name: Stage 9 — decision_engine_v1_watchlist_generator
+        if: ${{ steps.stage6_verdict.outputs.data_condition == 'false' && steps.stage8_verdict.outputs.data_condition == 'false' }}
+        run: python tools/decision_engine_v1_watchlist_generator.py --asof-date ${{ steps.resolve.outputs.asof }}
+
+      - name: Build NO_DE_DAY advisory manifest
+        if: ${{ steps.stage6_verdict.outputs.data_condition == 'true' || steps.stage8_verdict.outputs.data_condition == 'true' }}
+        run: |
+          set -euo pipefail
+          ASOF='${{ steps.resolve.outputs.asof }}'
+          MODE='${{ steps.resolve.outputs.mode }}'
+          R6='${{ steps.stage6_verdict.outputs.reason }}'
+          R8='${{ steps.stage8_verdict.outputs.reason }}'
+          CAUSE=""
+          if [ "${{ steps.stage6_verdict.outputs.data_condition }}" = "true" ]; then
+            CAUSE="stage6:${R6}"
+          fi
+          if [ "${{ steps.stage8_verdict.outputs.data_condition }}" = "true" ]; then
+            if [ -n "$CAUSE" ]; then CAUSE="${CAUSE};stage8:${R8}"; else CAUSE="stage8:${R8}"; fi
+          fi
+          python - <<PY
+          import json, os
+          payload = {
+              "verdict": "NO_DE_DAY",
+              "mode": os.environ["MODE"],
+              "asof": os.environ["ASOF"],
+              "cause": os.environ["CAUSE"],
+              "reason_human": (
+                  "Data-condition FAIL in Stage 6 (paper-exec forward) and/or "
+                  "Stage 8 (DE Tier 2). Common cause: HB on asof has no "
+                  "trigger/retest_bounce signals (only extended), so the "
+                  "Line TR cohort is empty and DE has no source. This is NOT "
+                  "a bug — the workflow concludes success with this advisory."
+              ),
+              "no_final_watchlist": True,
+              "live_gate": "CLOSED",
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "workflow_ref": os.environ.get("GITHUB_REF", ""),
+          }
+          out = f"output/decision_engine_v1_no_de_day_advisory_{payload['asof']}.json"
+          with open(out, "w") as f:
+              json.dump(payload, f, indent=2)
+          print(f"[de-v1] NO_DE_DAY advisory written: {out}")
+          PY
+        env:
+          ASOF: ${{ steps.resolve.outputs.asof }}
+          MODE: ${{ steps.resolve.outputs.mode }}
+          CAUSE: ''
+
+      - name: Upload manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-manifests-${{ steps.resolve.outputs.asof }}
+          path: |
+            output/master_data_manifest.json
+            output/decision_v1_upstream_scanner_refresh_manifest.json
+            output/decision_v1_ema_forward_alignment_manifest.json
+            output/paper_execution_v0_forward_run_manifest.json
+            output/decision_v1_panel_refresh_manifest.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload events parquet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-events-${{ steps.resolve.outputs.asof }}
+          path: output/decision_engine_v1_events.parquet
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload watchlist
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-watchlist-${{ steps.resolve.outputs.asof }}
+          path: |
+            output/decision_engine_v1_tomorrow_watchlist_post_class_b_${{ steps.resolve.outputs.asof }}.md
+            output/decision_engine_v1_tomorrow_watchlist_post_class_b_${{ steps.resolve.outputs.asof }}.csv
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload NO_DE_DAY advisory
+        if: ${{ always() && (steps.stage6_verdict.outputs.data_condition == 'true' || steps.stage8_verdict.outputs.data_condition == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-no-de-day-${{ steps.resolve.outputs.asof }}
+          path: output/decision_engine_v1_no_de_day_advisory_${{ steps.resolve.outputs.asof }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Final status summary
+        if: always()
+        run: |
+          set +e
+          ASOF='${{ steps.resolve.outputs.asof }}'
+          MODE='${{ steps.resolve.outputs.mode }}'
+          DC6='${{ steps.stage6_verdict.outputs.data_condition }}'
+          DC8='${{ steps.stage8_verdict.outputs.data_condition }}'
+          MD_RUN='${{ steps.select_md.outputs.run_id }}'
+          echo "=================================================================="
+          echo "  DE v1 dispatch summary"
+          echo "  mode=$MODE  asof=$ASOF"
+          echo "  master-data-pull source run: $MD_RUN"
+          echo "  stage6_data_condition=$DC6  stage8_data_condition=$DC8"
+          if [ "$DC6" = "true" ] || [ "$DC8" = "true" ]; then
+            echo "  outcome: NO_DE_DAY (advisory artifact uploaded)"
+            echo "  live gate: CLOSED"
+          else
+            echo "  outcome: WATCHLIST_PRODUCED (CSV+MD artifacts uploaded)"
+            echo "  live gate: CLOSED"
+          fi
+          echo "=================================================================="
