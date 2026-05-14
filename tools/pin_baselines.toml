@@ -1,0 +1,27 @@
+# DE v1 — baseline-lock archive pin manifest (PR-DE-2a).
+#
+# Externalized from compile-time constants in:
+#   tools/decision_engine_v1_ema_forward_alignment.py
+#       (LOCKED_HB_ARCHIVE, LOCKED_HB_ARCHIVE_SHA,
+#        RESEARCH_FROZEN_METADATA_ARCHIVE)
+#   tools/paper_execution_v0_forward_run.py
+#       (LOCKED_HB_ARCHIVE, LOCKED_HB_ARCHIVE_SHA)
+#
+# These are "since when has the forward-EMA chain been continuous?" anchors —
+# they do NOT change across daily runs. Edits to this file MUST go through a
+# tracked PR with explicit ONAY (any change is a baseline-lock rotation).
+#
+# Paths are relative to repo root (Path(__file__).resolve().parent.parent
+# from any consumer in tools/).
+#
+# Reader: tomllib (Python 3.11+ stdlib). Missing file or missing required
+# key is a hard FAIL in consumer scripts — no fallback, no auto-derive.
+
+[locked_hb_archive]
+path = "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-04-29__sha256_2eb8a9a5.parquet"
+sha256 = "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818"
+asof_date = "2026-04-29"
+
+[research_frozen_metadata_archive]
+path = "output/_archive/ema_context_daily_metadata__pre_ema_cascade__asof_2026-05-05__sha256_5aa1936b.json"
+asof_date = "2026-05-05"
