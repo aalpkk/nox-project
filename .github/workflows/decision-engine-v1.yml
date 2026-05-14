@@ -201,6 +201,23 @@ jobs:
           [ $fail -eq 0 ] || exit 1
           echo "[de-v1] manifest consistency PASS"
 
+      - name: Producer — RDP regime labels (Stage 3 dep)
+        run: |
+          set -euo pipefail
+          ASOF='${{ steps.resolve.outputs.asof }}'
+          python tools/build_rdp_regime_labels.py
+          if [ ! -f output/regime_labels_daily_rdp_v1.csv ]; then
+            echo "::error::regime_labels_daily_rdp_v1.csv missing after producer step"
+            exit 1
+          fi
+          MAX_DATE=$(python -c "import pandas as pd;print(pd.read_csv('output/regime_labels_daily_rdp_v1.csv')['date'].max())")
+          echo "[de-v1] regime_labels_daily_rdp_v1.csv max_date=$MAX_DATE vs lctd=$ASOF"
+          if [[ "$MAX_DATE" < "$ASOF" ]]; then
+            echo "::error::regime_labels_daily_rdp_v1 stale: max_date=$MAX_DATE < lctd=$ASOF"
+            exit 1
+          fi
+          echo "[de-v1] RDP regime labels freshness PASS"
+
       - name: Stage 1 — mb_scanner_events_run
         run: python tools/mb_scanner_events_run.py
 
