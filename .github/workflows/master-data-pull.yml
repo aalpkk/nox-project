@@ -1,20 +1,32 @@
 name: master data pull
 
 concurrency:
-  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || 'scheduled' }}
+  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || (github.event.schedule == '30 15 * * 1-5' && 'close' || 'intraday_1700') }}
   cancel-in-progress: false
 
 on:
-  # Scheduled intraday_1700 producer fires for SBT-1700 consumer (PR-2e
-  # prerequisite). Three TR-evening slots after BIST 16:00–17:00 hourly bar
-  # closes at 17:00 TR, giving the 1h extfeed enough time to publish the
-  # 14:00 UTC bar before the orchestrator pulls. Multiple fires absorb
-  # GitHub Actions cron skew/skips. Concurrency group serializes them and
-  # delta_pull is idempotent, so duplicate fires are harmless.
+  # Scheduled producer fires. Two schedules in one workflow:
+  #
+  # intraday_1700 (three slots 17:10/17:20/17:30 TR) — SBT-1700 consumer
+  # prerequisite. Fires after BIST 16:00–17:00 hourly bar closes at 17:00
+  # TR, giving the 1h extfeed enough time to publish the 14:00 UTC bar
+  # before the orchestrator pulls. Multiple slots absorb GitHub Actions
+  # cron skew/skips.
+  #
+  # close (single slot 18:30 TR) — DE v1 close-consumer prerequisite
+  # (PR-DE-0). Fires after BIST 18:00 daily close so fintables + xu100
+  # daily closes are published. Single slot today; if cron skew proves
+  # disruptive, additional slots (40/50 15) can be added in a follow-up.
+  #
+  # Concurrency group serializes fires within each mode (close-cron,
+  # close-dispatch, intraday-cron, intraday-dispatch each share a group).
+  # Modes run in parallel. delta_pull is idempotent, so duplicate fires
+  # within a mode are harmless.
   schedule:
-    - cron: '10 14 * * 1-5'   # 17:10 TR
-    - cron: '20 14 * * 1-5'   # 17:20 TR
-    - cron: '30 14 * * 1-5'   # 17:30 TR
+    - cron: '10 14 * * 1-5'   # 17:10 TR  intraday_1700
+    - cron: '20 14 * * 1-5'   # 17:20 TR  intraday_1700
+    - cron: '30 14 * * 1-5'   # 17:30 TR  intraday_1700
+    - cron: '30 15 * * 1-5'   # 18:30 TR  close (PR-DE-0)
   workflow_dispatch:
     inputs:
       mode:
@@ -44,6 +56,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run orchestrator
+        id: run
         env:
           INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
           INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
@@ -52,10 +65,20 @@ jobs:
         run: |
           set -euo pipefail
           MODE='${{ github.event.inputs.mode }}'
-          # Scheduled fires (cron) have no workflow_dispatch inputs, so MODE
-          # is empty — default scheduled runs to intraday_1700. Manual close-
-          # mode dispatch still flows through as before.
-          MODE="${MODE:-intraday_1700}"
+          # workflow_dispatch sets MODE; cron fires leave it empty.
+          # On cron, resolve from the schedule cron string: '30 15 * * 1-5'
+          # → close, all others (10/20/30 14) → intraday_1700.
+          if [ -z "$MODE" ]; then
+            case '${{ github.event.schedule }}' in
+              '30 15 * * 1-5')
+                MODE=close
+                ;;
+              *)
+                MODE=intraday_1700
+                ;;
+            esac
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           TARGET='${{ github.event.inputs.target_date }}'
           if [ -n "$TARGET" ]; then
             python tools/master_data_pull_orchestrator.py --mode "$MODE" --target-date "$TARGET"
@@ -82,7 +105,7 @@ jobs:
           retention-days: 30
 
       - name: Upload fintables master
-        if: ${{ always() && github.event.inputs.mode == 'close' }}
+        if: ${{ always() && steps.run.outputs.mode == 'close' }}
         uses: actions/upload-artifact@v4
         with:
           name: master-ohlcv-fintables
@@ -91,7 +114,7 @@ jobs:
           retention-days: 30
 
       - name: Upload xu100 daily
-        if: ${{ always() && github.event.inputs.mode == 'close' }}
+        if: ${{ always() && steps.run.outputs.mode == 'close' }}
         uses: actions/upload-artifact@v4
         with:
           name: master-xu100-extfeed-daily
