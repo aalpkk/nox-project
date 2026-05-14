@@ -295,6 +295,38 @@ jobs:
       - name: Stage 5 — decision_engine_v1_ema_forward_alignment
         run: python tools/decision_engine_v1_ema_forward_alignment.py --lctd-required ${{ steps.resolve.outputs.asof }}
 
+      - name: Seed locked pilot7 research CSVs from baseline-lock (Stage 6 archive dep)
+        run: |
+          set -euo pipefail
+          for KEY in pilot7_gates_main pilot7_drop_diagnostic_census; do
+            OP_CSV="output/ema_context_${KEY}.csv"
+            if [ -f "$OP_CSV" ]; then
+              echo "[de-v1] locked ${KEY} already present; skipping seed"
+              continue
+            fi
+            LOCKED_PATH=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_${KEY}']['path'])" || true)
+            LOCKED_SHA=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_${KEY}']['sha256'])" || true)
+            if [ -z "$LOCKED_PATH" ] || [ -z "$LOCKED_SHA" ]; then
+              echo "::error::pin_baselines.toml [locked_${KEY}] path/sha256 unresolved"
+              exit 1
+            fi
+            if [ ! -f "$LOCKED_PATH" ]; then
+              echo "::error::baseline-lock ${KEY} source missing: $LOCKED_PATH"
+              exit 1
+            fi
+            ACTUAL_SHA=$(sha256sum "$LOCKED_PATH" | awk '{print $1}')
+            if [ "$ACTUAL_SHA" != "$LOCKED_SHA" ]; then
+              echo "::error::baseline-lock ${KEY} sha256 mismatch: actual=$ACTUAL_SHA pinned=$LOCKED_SHA"
+              exit 1
+            fi
+            cp "$LOCKED_PATH" "$OP_CSV"
+            if [ ! -f "$OP_CSV" ]; then
+              echo "::error::operational ${KEY} missing after seed copy"
+              exit 1
+            fi
+            echo "[de-v1] seeded locked ${KEY}: $LOCKED_PATH -> $OP_CSV (sha256=$ACTUAL_SHA)"
+          done
+
       - name: Stage 6 — paper_execution_v0_forward_run (may FAIL on data condition)
         id: stage6
         continue-on-error: true
