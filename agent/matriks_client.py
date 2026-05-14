@@ -94,6 +94,7 @@ class MatriksClient:
 
         headers = {
             "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
             "X-Client-ID": self.client_id,
             "X-API-Key": self.api_key,
         }
@@ -138,6 +139,18 @@ class MatriksClient:
                   f"body[:200]={body_preview!r}")
 
         if resp.status_code == 204:
+            return None
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+        if "text/event-stream" in content_type:
+            for line in (resp.text or "").splitlines():
+                if line.startswith("data:"):
+                    payload = line[5:].strip()
+                    if not payload:
+                        continue
+                    try:
+                        return json.loads(payload)
+                    except Exception:
+                        continue
             return None
         try:
             return resp.json()
