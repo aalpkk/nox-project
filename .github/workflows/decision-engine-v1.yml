@@ -161,6 +161,11 @@ jobs:
           RUN_ID='${{ steps.select_md.outputs.run_id }}'
           MODE='${{ steps.resolve.outputs.mode }}'
           mkdir -p output
+          rm -f \
+            output/master_data_manifest.json \
+            output/extfeed_intraday_1h_3y_master.parquet \
+            output/ohlcv_10y_fintables_master.parquet \
+            output/xu100_extfeed_daily.parquet
           gh run download "$RUN_ID" -n master-data-manifest -D output
           gh run download "$RUN_ID" -n master-extfeed-intraday-1h -D output
           if [ "$MODE" = "close" ]; then
