@@ -35,6 +35,7 @@ fallback, synthetic event injection.
 """
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import hashlib
 import json
@@ -43,6 +44,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pandas as pd
@@ -52,23 +54,25 @@ OUT = ROOT / "output"
 ARCHIVE = OUT / "_archive"
 MANIFEST_PATH = OUT / "decision_v1_ema_forward_alignment_manifest.json"
 
-LCTD_REQUIRED = dt.date(2026, 5, 12)
+# PR-DE-2a: pin/date refactor — runtime-resolved, no source patching.
+#   LCTD_REQUIRED: CLI `--lctd-required` (wins) → upstream manifest `lctd`.
+#   LOCKED_HB_ARCHIVE / SHA / RESEARCH_FROZEN_METADATA_ARCHIVE: tools/pin_baselines.toml.
+# All four are populated by main() before any consumer reads them; pre-main
+# defaults are None so misuse fails loudly rather than silently.
+PIN_BASELINES_PATH = ROOT / "tools" / "pin_baselines.toml"
+UPSTREAM_REFRESH_MANIFEST = OUT / "decision_v1_upstream_scanner_refresh_manifest.json"
+
+LCTD_REQUIRED: dt.date | None = None
 MAX_OFFSET_WINDOW = 10  # Pilot 3's offset upper bound (§6.1)
 
 HB_PATH = OUT / "horizontal_base_event_v1.parquet"
 RESEARCH_BASELINE_HB_ROWS = 10470
-LOCKED_HB_ARCHIVE_SHA = "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818"
-LOCKED_HB_ARCHIVE = (
-    ARCHIVE
-    / "horizontal_base_event_v1__pre_refresh__asof_2026-04-29__sha256_2eb8a9a5.parquet"
-)
+LOCKED_HB_ARCHIVE_SHA: str | None = None
+LOCKED_HB_ARCHIVE: Path | None = None
 
 # Source for one-shot research_frozen sidecar — archived ema_context_daily_metadata.json
 # captured at sha 5aa1936b before the EMA cascade refresh wrote the current breakpoints.
-RESEARCH_FROZEN_METADATA_ARCHIVE = (
-    ARCHIVE
-    / "ema_context_daily_metadata__pre_ema_cascade__asof_2026-05-05__sha256_5aa1936b.json"
-)
+RESEARCH_FROZEN_METADATA_ARCHIVE: Path | None = None
 RESEARCH_FROZEN_SIDECAR = OUT / "ema_context_breakpoints_research_frozen.json"
 
 # Q8 ceilings (§3.2 + §6.4)
@@ -211,6 +215,92 @@ PROTECTED_NON_TARGET = [
 def _fail(reason: str) -> None:
     print(f"\n[ema_forward_alignment] FAIL: {reason}", flush=True)
     raise SystemExit(reason)
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=(
+            "Decision Engine v1 — EMA forward-alignment orchestrator. "
+            "LCTD resolves from --lctd-required (explicit wins) else from "
+            "the upstream refresh manifest's `lctd` field. Baseline-lock "
+            "archive paths/shas read from tools/pin_baselines.toml. No "
+            "fallbacks: missing input is a hard FAIL."
+        )
+    )
+    p.add_argument(
+        "--lctd-required",
+        type=lambda s: dt.date.fromisoformat(s),
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Operational target date (LCTD). If omitted, read from "
+            "output/decision_v1_upstream_scanner_refresh_manifest.json."
+        ),
+    )
+    return p.parse_args()
+
+
+def _load_pin_baselines() -> dict:
+    if not PIN_BASELINES_PATH.exists():
+        _fail(
+            f"pin_baselines_missing: {PIN_BASELINES_PATH.relative_to(ROOT)} "
+            f"(required for LOCKED_HB_ARCHIVE / RESEARCH_FROZEN_METADATA_ARCHIVE)"
+        )
+    with PIN_BASELINES_PATH.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def _resolve_lctd_required(args: argparse.Namespace) -> dt.date:
+    if args.lctd_required is not None:
+        return args.lctd_required
+    if not UPSTREAM_REFRESH_MANIFEST.exists():
+        _fail(
+            f"lctd_unresolvable: no --lctd-required provided and upstream "
+            f"manifest {UPSTREAM_REFRESH_MANIFEST.relative_to(ROOT)} missing"
+        )
+    try:
+        m = json.loads(UPSTREAM_REFRESH_MANIFEST.read_text())
+    except Exception as exc:
+        _fail(
+            f"lctd_unresolvable: upstream manifest "
+            f"{UPSTREAM_REFRESH_MANIFEST.relative_to(ROOT)} unparseable ({exc!r})"
+        )
+    lctd_str = m.get("lctd")
+    if not lctd_str:
+        _fail(
+            f"lctd_unresolvable: upstream manifest "
+            f"{UPSTREAM_REFRESH_MANIFEST.relative_to(ROOT)} missing top-level `lctd`"
+        )
+    try:
+        return dt.date.fromisoformat(lctd_str)
+    except Exception as exc:
+        _fail(
+            f"lctd_unresolvable: upstream manifest `lctd`={lctd_str!r} "
+            f"not ISO date ({exc!r})"
+        )
+
+
+def _apply_pin_baselines(pin_baselines: dict) -> None:
+    """Populate module-level baseline-lock constants from pin_baselines.toml.
+
+    Hard FAILs on any missing section/key (no fallback per PR-DE-2a contract).
+    """
+    global LOCKED_HB_ARCHIVE, LOCKED_HB_ARCHIVE_SHA, RESEARCH_FROZEN_METADATA_ARCHIVE
+    hb = pin_baselines.get("locked_hb_archive")
+    if not isinstance(hb, dict):
+        _fail("pin_baselines: missing [locked_hb_archive] table")
+    for k in ("path", "sha256"):
+        if not hb.get(k):
+            _fail(f"pin_baselines: [locked_hb_archive].{k} missing or empty")
+    LOCKED_HB_ARCHIVE = ROOT / hb["path"]
+    LOCKED_HB_ARCHIVE_SHA = hb["sha256"]
+
+    rfm = pin_baselines.get("research_frozen_metadata_archive")
+    if not isinstance(rfm, dict):
+        _fail("pin_baselines: missing [research_frozen_metadata_archive] table")
+    if not rfm.get("path"):
+        _fail("pin_baselines: [research_frozen_metadata_archive].path missing or empty")
+    RESEARCH_FROZEN_METADATA_ARCHIVE = ROOT / rfm["path"]
 
 
 def _sha256(path: Path) -> str:
@@ -386,6 +476,12 @@ def _emit_manifest(manifest: dict) -> None:
 
 
 def main() -> None:
+    global LCTD_REQUIRED
+    args = _parse_args()
+    pin_baselines = _load_pin_baselines()
+    _apply_pin_baselines(pin_baselines)
+    LCTD_REQUIRED = _resolve_lctd_required(args)
+
     run_started = dt.datetime.now(tz=dt.timezone.utc).isoformat()
     asof_tag = LCTD_REQUIRED.isoformat()
 

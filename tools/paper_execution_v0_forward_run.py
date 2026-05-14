@@ -23,6 +23,7 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 import pandas as pd
@@ -55,21 +56,29 @@ HORIZON_TRADING_DAYS = 10
 # Calendar tolerance for closed_outcome_lag (Q-B): +2 trading days.
 CLOSED_OUTCOME_LAG_TOLERANCE = 2
 
-# Forward EMA artifact sha256 pins (from decision_v1_ema_forward_alignment_manifest.json post-state).
-FORWARD_EMA_SHA_PINS = {
-    "output/ema_context_pilot4_earliness_per_event_forward.parquet":
-        "6837ee2057ac11218535688dc140cd431f315cdcbd94633b3c95377531912117",
-    "output/ema_context_pilot5_panel_forward.parquet":
-        "81ab43be15615073bf848447911654b97f4e3e8360e87bd48f7cf888e5d05bdd",
-    "output/ema_context_pilot6_panel_forward.parquet":
-        "5497b8dbf5ea58af9a2d5207e0d4318833f928f7a7060b498709e7caa5c3880f",
-    "output/ema_context_pilot7_panel_forward.parquet":
-        "1c80db58c5afb6acea3168a6605fd51f55fe992441cb50dcaf291dd2e795fea3",
-}
+# PR-DE-2a: pin/date refactor — runtime-resolved, no source patching.
+#   FORWARD_EMA_SHA_PINS: read from EMA forward-alignment manifest (Stage 5 output).
+#   HB_POST_ROW_COUNT: read from upstream refresh manifest (Stage 3 output).
+#   LOCKED_HB_ARCHIVE / SHA: read from tools/pin_baselines.toml.
+# Populated by main() before preflight(); pre-main defaults are None so any
+# accidental import-time consumer fails loudly.
+PIN_BASELINES_PATH = ROOT / "tools" / "pin_baselines.toml"
+UPSTREAM_REFRESH_MANIFEST = ROOT / "output/decision_v1_upstream_scanner_refresh_manifest.json"
 EMA_FORWARD_MANIFEST = ROOT / "output/decision_v1_ema_forward_alignment_manifest.json"
 
-LOCKED_HB_ARCHIVE = ROOT / "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-04-29__sha256_2eb8a9a5.parquet"
-LOCKED_HB_ARCHIVE_SHA = "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818"
+# Stable identifiers for the 4 forward-EMA pilot artifacts whose sha256 pins
+# must match the Stage 5 manifest's post-state at preflight time.
+FORWARD_EMA_PILOT_TARGETS = (
+    "output/ema_context_pilot4_earliness_per_event_forward.parquet",
+    "output/ema_context_pilot5_panel_forward.parquet",
+    "output/ema_context_pilot6_panel_forward.parquet",
+    "output/ema_context_pilot7_panel_forward.parquet",
+)
+
+FORWARD_EMA_SHA_PINS: dict[str, str] | None = None
+HB_POST_ROW_COUNT: int | None = None
+LOCKED_HB_ARCHIVE: Path | None = None
+LOCKED_HB_ARCHIVE_SHA: str | None = None
 
 HB_PARQUET = ROOT / "output/horizontal_base_event_v1.parquet"
 EMA_CONTEXT_DAILY = ROOT / "output/ema_context_daily.parquet"
@@ -257,6 +266,113 @@ def _assert_collision_guard(producer_path: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# PR-DE-2a: runtime pin resolution (hard FAIL on any missing input)
+
+def _fail_init(reason: str) -> None:
+    print(f"[paper_execution_v0_forward_run] FAIL: {reason}", flush=True)
+    sys.exit(1)
+
+
+def _load_pin_baselines() -> dict:
+    if not PIN_BASELINES_PATH.exists():
+        _fail_init(
+            f"pin_baselines_missing: {PIN_BASELINES_PATH.relative_to(ROOT)} "
+            f"(required for LOCKED_HB_ARCHIVE)"
+        )
+    with PIN_BASELINES_PATH.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def _resolve_locked_hb_archive(pin_baselines: dict) -> tuple[Path, str]:
+    hb = pin_baselines.get("locked_hb_archive")
+    if not isinstance(hb, dict):
+        _fail_init("pin_baselines: missing [locked_hb_archive] table")
+    path = hb.get("path")
+    sha = hb.get("sha256")
+    if not path:
+        _fail_init("pin_baselines: [locked_hb_archive].path missing or empty")
+    if not sha:
+        _fail_init("pin_baselines: [locked_hb_archive].sha256 missing or empty")
+    return ROOT / path, sha
+
+
+def _load_forward_ema_sha_pins() -> dict[str, str]:
+    """Read 4 pilot sha256 pins from Stage 5 manifest's D_validate.forward_targets_post."""
+    if not EMA_FORWARD_MANIFEST.exists():
+        _fail_init(
+            f"ema_forward_manifest_missing: "
+            f"{EMA_FORWARD_MANIFEST.relative_to(ROOT)} (Stage 5 must run first)"
+        )
+    try:
+        m = json.loads(EMA_FORWARD_MANIFEST.read_text())
+    except Exception as exc:
+        _fail_init(
+            f"ema_forward_manifest_unparseable: "
+            f"{EMA_FORWARD_MANIFEST.relative_to(ROOT)} ({exc!r})"
+        )
+    try:
+        forward_post = m["phases"]["D_validate"]["forward_targets_post"]
+    except (KeyError, TypeError) as exc:
+        _fail_init(
+            f"ema_forward_manifest_shape: missing "
+            f"phases.D_validate.forward_targets_post ({exc!r})"
+        )
+    pins: dict[str, str] = {}
+    for path_str in FORWARD_EMA_PILOT_TARGETS:
+        entry = forward_post.get(path_str)
+        if not isinstance(entry, dict) or not entry.get("sha256"):
+            _fail_init(
+                f"ema_forward_manifest_pin: {path_str} missing sha256 in "
+                f"forward_targets_post"
+            )
+        pins[path_str] = entry["sha256"]
+    return pins
+
+
+def _load_hb_post_row_count() -> int:
+    """Read horizontal_base.post_row_count from upstream refresh manifest."""
+    if not UPSTREAM_REFRESH_MANIFEST.exists():
+        _fail_init(
+            f"upstream_refresh_manifest_missing: "
+            f"{UPSTREAM_REFRESH_MANIFEST.relative_to(ROOT)} (Stage 3 must run first)"
+        )
+    try:
+        m = json.loads(UPSTREAM_REFRESH_MANIFEST.read_text())
+    except Exception as exc:
+        _fail_init(
+            f"upstream_refresh_manifest_unparseable: "
+            f"{UPSTREAM_REFRESH_MANIFEST.relative_to(ROOT)} ({exc!r})"
+        )
+    try:
+        n = m["horizontal_base"]["post_row_count"]
+    except (KeyError, TypeError) as exc:
+        _fail_init(
+            f"upstream_refresh_manifest_shape: missing "
+            f"horizontal_base.post_row_count ({exc!r})"
+        )
+    if not isinstance(n, int) or n <= 0:
+        _fail_init(
+            f"upstream_refresh_manifest_value: "
+            f"horizontal_base.post_row_count={n!r} not a positive int"
+        )
+    return n
+
+
+def _resolve_runtime_pins() -> None:
+    """Populate module-level pin globals from manifests + pin_baselines.toml.
+
+    Called once at top of main() before preflight. Hard FAIL on any missing
+    input (no fallback per PR-DE-2a contract).
+    """
+    global FORWARD_EMA_SHA_PINS, HB_POST_ROW_COUNT
+    global LOCKED_HB_ARCHIVE, LOCKED_HB_ARCHIVE_SHA
+    pin_baselines = _load_pin_baselines()
+    LOCKED_HB_ARCHIVE, LOCKED_HB_ARCHIVE_SHA = _resolve_locked_hb_archive(pin_baselines)
+    FORWARD_EMA_SHA_PINS = _load_forward_ema_sha_pins()
+    HB_POST_ROW_COUNT = _load_hb_post_row_count()
+
+
+# ---------------------------------------------------------------------------
 # pre-flight (§5)
 
 def preflight() -> tuple[dict, list[str]]:
@@ -303,12 +419,18 @@ def preflight() -> tuple[dict, list[str]]:
         row_check[path_str] = n
     info["checks"]["row_counts"] = row_check
     expected_rows = row_check.get(HB_PARQUET.relative_to(ROOT).as_posix())
-    if expected_rows != 10726:
-        fails.append(f"pre_flight_row_count: HB rows={expected_rows}, expected 10726")
+    if expected_rows != HB_POST_ROW_COUNT:
+        fails.append(
+            f"pre_flight_row_count: HB rows={expected_rows}, "
+            f"expected {HB_POST_ROW_COUNT}"
+        )
     for path_str in FORWARD_EMA_SHA_PINS:
         n = row_check.get(path_str)
-        if n != 10726:
-            fails.append(f"pre_flight_row_count: {path_str} rows={n}, expected 10726")
+        if n != HB_POST_ROW_COUNT:
+            fails.append(
+                f"pre_flight_row_count: {path_str} rows={n}, "
+                f"expected {HB_POST_ROW_COUNT}"
+            )
 
     # 5. freshness floors (max date >= 2026-05-05)
     freshness: dict = {}
@@ -893,6 +1015,13 @@ def _extract_producer_manifest(path: Path) -> dict:
 
 def main() -> int:
     print(f"[paper_execution_v0_forward_run] start {UTC_NOW_ISO}")
+    _resolve_runtime_pins()
+    print(
+        f"[paper_execution_v0_forward_run] runtime pins resolved: "
+        f"HB_POST_ROW_COUNT={HB_POST_ROW_COUNT} "
+        f"FORWARD_EMA_SHA_PINS=4 pilots "
+        f"LOCKED_HB_ARCHIVE={LOCKED_HB_ARCHIVE.relative_to(ROOT)}"
+    )
     overall_fails: list[str] = []
 
     print("[paper_execution_v0_forward_run] preflight (§5)...")
