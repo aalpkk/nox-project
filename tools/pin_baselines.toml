@@ -51,3 +51,22 @@ sha256 = "4a362677220ffb7c88502787916645e36c12ad1f5f272be1b96596a17fca677e"
 [locked_pilot7_panel]
 path = "output/_archive/ema_context_pilot7_panel__locked__sha256_688513e0.parquet"
 sha256 = "688513e0b00b25756a3e58f5195707e8c4d446f590790958e521a7d4e77e5329"
+
+# ── Locked pilot7 research CSVs (PR-DE-3.9) ─────────────────────────────────
+# Statistical baseline outputs consumed by Stage 6 Line TR producer
+# (tools/paper_execution_v0_trigger_retest.py boot_integrity, spec §6.3):
+#   pilot7_gates_main = hypothesis-test gate matrix (G1/G2/G6/G7) used to
+#     validate forward-EMA panel labels.
+#   pilot7_drop_diagnostic_census = drop-diagnostic rollup census
+#     (trigger / retest_bounce / all) used as a sanity reference.
+# These are locked-research outputs — they MUST NOT change during normal DE
+# runs. Rotation requires a dedicated PR with new archive(s), updated full
+# sha256, and validation evidence.
+
+[locked_pilot7_gates_main]
+path = "output/_archive/ema_context_pilot7_gates_main__locked__sha256_49d0fdcc.csv"
+sha256 = "49d0fdccd22e060f9d77715c3d1168cc6fc4aa2249856b54d13b3f092ad69db7"
+
+[locked_pilot7_drop_diagnostic_census]
+path = "output/_archive/ema_context_pilot7_drop_diagnostic_census__locked__sha256_ff802f6c.csv"
+sha256 = "ff802f6c4f3b73a971605c13d72910a66a5d4f090f4b5ddb165c137be26594b9"
