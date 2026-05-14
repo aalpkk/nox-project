@@ -49,6 +49,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
 
