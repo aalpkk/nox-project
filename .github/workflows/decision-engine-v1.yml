@@ -260,6 +260,38 @@ jobs:
       - name: Stage 4 — ema_context_run
         run: python tools/ema_context_run.py
 
+      - name: Seed locked EMA pilot panels from baseline-lock (Stage 5 archive dep)
+        run: |
+          set -euo pipefail
+          for N in 3 5 6 7; do
+            OP_PANEL="output/ema_context_pilot${N}_panel.parquet"
+            if [ -f "$OP_PANEL" ]; then
+              echo "[de-v1] locked pilot${N} panel already present; skipping seed"
+              continue
+            fi
+            LOCKED_PATH=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_pilot${N}_panel']['path'])" || true)
+            LOCKED_SHA=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_pilot${N}_panel']['sha256'])" || true)
+            if [ -z "$LOCKED_PATH" ] || [ -z "$LOCKED_SHA" ]; then
+              echo "::error::pin_baselines.toml [locked_pilot${N}_panel] path/sha256 unresolved"
+              exit 1
+            fi
+            if [ ! -f "$LOCKED_PATH" ]; then
+              echo "::error::baseline-lock pilot${N} source missing: $LOCKED_PATH"
+              exit 1
+            fi
+            ACTUAL_SHA=$(sha256sum "$LOCKED_PATH" | awk '{print $1}')
+            if [ "$ACTUAL_SHA" != "$LOCKED_SHA" ]; then
+              echo "::error::baseline-lock pilot${N} sha256 mismatch: actual=$ACTUAL_SHA pinned=$LOCKED_SHA"
+              exit 1
+            fi
+            cp "$LOCKED_PATH" "$OP_PANEL"
+            if [ ! -f "$OP_PANEL" ]; then
+              echo "::error::operational pilot${N} panel missing after seed copy"
+              exit 1
+            fi
+            echo "[de-v1] seeded locked pilot${N} panel: $LOCKED_PATH -> $OP_PANEL (sha256=$ACTUAL_SHA)"
+          done
+
       - name: Stage 5 — decision_engine_v1_ema_forward_alignment
         run: python tools/decision_engine_v1_ema_forward_alignment.py --lctd-required ${{ steps.resolve.outputs.asof }}
 

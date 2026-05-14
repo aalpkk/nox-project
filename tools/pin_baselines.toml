@@ -25,3 +25,29 @@ asof_date = "2026-04-29"
 [research_frozen_metadata_archive]
 path = "output/_archive/ema_context_daily_metadata__pre_ema_cascade__asof_2026-05-05__sha256_5aa1936b.json"
 asof_date = "2026-05-05"
+
+# ── Locked EMA pilot panels (PR-DE-3.8) ─────────────────────────────────────
+# Research-frozen baseline panels consumed by Stage 5 forward cascade:
+#   pilot3_forward reads pilot3 locked panel as its anchor input (322,011 rows
+#     / 10,470 unique event_id; row-count + unique-event-id asserted at load).
+#   pilot{5,6,7} locked panels may be reached via tools/ema_context_pilot{N}.py
+#     library imports inside the forward cascade.
+# These are immutable baseline-lock anchors — they MUST NOT change during
+# normal DE runs. Any future rotation requires a dedicated PR with new
+# archive parquet(s), updated full sha256 entries, and validation evidence.
+
+[locked_pilot3_panel]
+path = "output/_archive/ema_context_pilot3_panel__locked__sha256_5809fef4.parquet"
+sha256 = "5809fef4b3fb4f844355e76a78b47b4d2f3a9697b3be54d07fe2a7123074bf46"
+
+[locked_pilot5_panel]
+path = "output/_archive/ema_context_pilot5_panel__locked__sha256_683366dc.parquet"
+sha256 = "683366dcc69a6c180040737bde84395b4302103a23cc71d9adbc51a7f06b2608"
+
+[locked_pilot6_panel]
+path = "output/_archive/ema_context_pilot6_panel__locked__sha256_4a362677.parquet"
+sha256 = "4a362677220ffb7c88502787916645e36c12ad1f5f272be1b96596a17fca677e"
+
+[locked_pilot7_panel]
+path = "output/_archive/ema_context_pilot7_panel__locked__sha256_688513e0.parquet"
+sha256 = "688513e0b00b25756a3e58f5195707e8c4d446f590790958e521a7d4e77e5329"
