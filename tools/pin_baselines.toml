@@ -70,3 +70,49 @@ sha256 = "49d0fdccd22e060f9d77715c3d1168cc6fc4aa2249856b54d13b3f092ad69db7"
 [locked_pilot7_drop_diagnostic_census]
 path = "output/_archive/ema_context_pilot7_drop_diagnostic_census__locked__sha256_ff802f6c.csv"
 sha256 = "ff802f6c4f3b73a971605c13d72910a66a5d4f090f4b5ddb165c137be26594b9"
+
+# ── Locked prior-day DE operational state (PR-DE-3.10) ──────────────────────
+# Baseline for Stage 7 (tools/decision_engine_v1_panel_refresh.py):
+#   PROTECTED_FILES set (events / tier2 distribution / paper_link_integrity /
+#   tier2 summary / tier3 review report) and PANEL_PATH (classification panel).
+# Stage 7 requires these to exist pre-run and stay byte-equal pre/post; the
+# classification panel is read for its max(date) and replaced atomically.
+#
+# Source provenance: local 2026-05-14 Tier 2 PASS state. 5/6 files trace to
+# the same end-to-end Tier 2 run whose internal markers
+#   verdict: PASS · asof_date: 2026-05-14 · panel max date: 2026-05-14
+#   Line E max asof_date: 2026-05-14 · Line TR max asof_date: 2026-05-14
+#   total events processed: 338 · Run timestamp (UTC): 2026-05-14T23:18:20.253504+00:00
+# appear inside decision_engine_v1_tier2_label_table_summary.md.
+# tier3_review_report.md is stale (internal asof=2026-04-01); included as a
+# byte-equality sentinel only — Stage 7 does NOT read its content (verified
+# via tools/decision_engine_v1_panel_refresh.py: the path appears only in
+# the declaration and the PROTECTED_FILES tuple).
+#
+# These are locked baseline-lock anchors — they MUST NOT change during
+# normal DE runs. Any future rotation requires a dedicated PR with new
+# archive(s), updated full sha256, and a fresh PASS provenance receipt.
+
+[locked_de_v1_events]
+path = "output/_archive/decision_engine_v1_events__locked__sha256_c1c5ba39.parquet"
+sha256 = "c1c5ba390e97959d3729a035e5b8d07fd11c8328254b9335b8ed2fc1908324fb"
+
+[locked_de_v1_tier2_label_distribution]
+path = "output/_archive/decision_engine_v1_tier2_label_distribution__locked__sha256_5183da12.csv"
+sha256 = "5183da1233c6d9ecdc5b03f54d0298b2e18806bffb72faf2da21717b2034a2a0"
+
+[locked_de_v1_paper_link_integrity]
+path = "output/_archive/decision_engine_v1_paper_link_integrity__locked__sha256_892d496e.csv"
+sha256 = "892d496eb28451325dc3065cee66ed595fef2dfdc50282c2d18d6fc357704654"
+
+[locked_de_v1_tier2_label_summary]
+path = "output/_archive/decision_engine_v1_tier2_label_table_summary__locked__sha256_47bda8e2.md"
+sha256 = "47bda8e21d2a4c87236309ae1f946f8470818d4c68b9c6fa8ea83c048333b2f3"
+
+[locked_de_v1_tier3_review_report]
+path = "output/_archive/decision_engine_v1_tier3_review_report__locked__sha256_54030072.md"
+sha256 = "540300729a4aaf19110896f8401686ed0d9e41baa30dc0a528075c8d2471a5c1"
+
+[locked_de_v0_classification_panel]
+path = "output/_archive/decision_v0_classification_panel__locked__sha256_0bae7104.parquet"
+sha256 = "0bae7104b358a03da31d8caf7099c53e3dfe6e0ad5c93abbf0da8e5fa5e7fd96"

@@ -1,0 +1,4 @@
+line,paper_link_attempted,paper_link_matched,paper_link_unmatched,paper_link_duplicate_error,paper_link_skipped_source_missing,paper_link_validity_missing
+EXTENDED,20,20,0,0,0,20
+TRIGGER_RETEST,3,3,0,0,0,3
+ALL,23,23,0,0,0,23
