@@ -255,7 +255,7 @@ jobs:
           echo "[de-v1] seeded operational HB from baseline-lock: $LOCKED_PATH -> $OP_HB (sha256=$ACTUAL_SHA)"
 
       - name: Stage 3 — decision_engine_v1_upstream_scanner_refresh
-        run: python tools/decision_engine_v1_upstream_scanner_refresh.py
+        run: python tools/decision_engine_v1_upstream_scanner_refresh.py --lctd-required ${{ steps.resolve.outputs.asof }}
 
       - name: Stage 4 — ema_context_run
         run: python tools/ema_context_run.py
