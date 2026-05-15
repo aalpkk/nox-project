@@ -1,0 +1,30 @@
+name: Takas Batch (17 tickers 2026-05-14)
+on:
+  workflow_dispatch:
+
+jobs:
+  takas-batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Run takas batch
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          PYTHONPATH: .
+        run: python tools/takas_batch_2026_05_14.py
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: takas-batch-2026-05-14
+          path: |
+            output/takas_batch_2026-05-14.csv
+            output/takas_batch_2026-05-14_ice.csv
+            output/takas_batch_2026-05-14.md
+          if-no-files-found: warn
