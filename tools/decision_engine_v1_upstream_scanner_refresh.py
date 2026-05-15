@@ -25,6 +25,7 @@ Invocation:
 """
 from __future__ import annotations
 
+import argparse
 import datetime as _dt
 import hashlib
 import json
@@ -43,6 +44,13 @@ import pandas as pd
 # Variable name `LCTD` retained as a legacy alias bound to the dynamic value
 # so existing manifest field names + downstream string compares stay stable
 # (minimal-rename scope per Q2 ONAY).
+#
+# PR-DE-3.11: added `--lctd-required YYYY-MM-DD` CLI override. When invoked
+# from .github/workflows/decision-engine-v1.yml the workflow's `target_date`
+# input is propagated so Stage 3 LCTD binds to the same date as the
+# selected master-data-pull artifact (close-mode contract). Local-shell
+# invocations omit the flag and retain the runtime-derived behavior.
+# No fallback weakening: extfeed-vs-LCTD and HB-post-vs-LCTD gates unchanged.
 from tools._decision_target_date import (  # noqa: E402
     derive_operational_target,
     assert_freshness_contract,
@@ -50,6 +58,8 @@ from tools._decision_target_date import (  # noqa: E402
 
 _OP_CTX = derive_operational_target()
 LCTD = _OP_CTX.operational_target_date.isoformat()  # legacy alias, dynamic value
+LCTD_RUNTIME_DERIVED = LCTD          # snapshot of runtime-derived value (audit)
+LCTD_SOURCE = "runtime_derived"      # mutated by main() if --lctd-required given
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 
@@ -219,11 +229,53 @@ def _run_subprocess(cmd: list[str]) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=(
+            "Decision Engine v1 — Stage 3 upstream-scanner-refresh orchestrator. "
+            "Operational target (LCTD) resolves from --lctd-required (explicit "
+            "wins) else from tools/_decision_target_date.derive_operational_target(). "
+            "When invoked from .github/workflows/decision-engine-v1.yml the "
+            "workflow's target_date input is propagated as --lctd-required so "
+            "Stage 3 binds to the same date as the selected master-data-pull "
+            "artifact (close-mode contract). No fallback weakening: "
+            "extfeed-vs-LCTD and HB-post-vs-LCTD freshness gates unchanged."
+        )
+    )
+    p.add_argument(
+        "--lctd-required",
+        type=lambda s: _dt.date.fromisoformat(s),
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Operational target date. Explicit value wins over "
+            "derive_operational_target(). When omitted Stage 3 uses the "
+            "runtime-derived value (legacy shell behavior preserved)."
+        ),
+    )
+    return p.parse_args()
+
+
 # ──────────────────────────────────────────────────────────────────────────
 
 
 def main() -> int:
-    print(f"[refresh] LCTD={LCTD}", flush=True)
+    global LCTD, LCTD_SOURCE
+    args = _parse_args()
+    if args.lctd_required is not None:
+        cli_lctd = args.lctd_required.isoformat()
+        if cli_lctd != LCTD_RUNTIME_DERIVED:
+            print(
+                f"[refresh] LCTD override: cli={cli_lctd} "
+                f"runtime_derived={LCTD_RUNTIME_DERIVED} "
+                f"(asof_mode={_OP_CTX.asof_mode}); "
+                f"CLI wins (close-mode workflow contract)",
+                flush=True,
+            )
+        LCTD = cli_lctd
+        LCTD_SOURCE = "cli_override"
+    print(f"[refresh] LCTD={LCTD} (source={LCTD_SOURCE})", flush=True)
+    print(f"[refresh] LCTD_runtime_derived={LCTD_RUNTIME_DERIVED}", flush=True)
     print(f"[refresh] cwd={os.getcwd()}", flush=True)
 
     # ── pre-state capture ─────────────────────────────────────────────────
@@ -470,6 +522,8 @@ def main() -> int:
     payload = {
         "refresh_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "lctd": LCTD,
+        "lctd_source": LCTD_SOURCE,
+        "lctd_runtime_derived": LCTD_RUNTIME_DERIVED,
         "extfeed_max_date": extfeed_max,
         "verdict": verdict,
         "verdict_reason": verdict_reason,
@@ -515,6 +569,8 @@ def _fail_run(
     payload = {
         "refresh_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "lctd": LCTD,
+        "lctd_source": LCTD_SOURCE,
+        "lctd_runtime_derived": LCTD_RUNTIME_DERIVED,
         "extfeed_max_date": extfeed_max,
         "verdict": verdict,
         "verdict_reason": reason,
@@ -549,6 +605,8 @@ def _partial_fail_run(
     payload = {
         "refresh_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "lctd": LCTD,
+        "lctd_source": LCTD_SOURCE,
+        "lctd_runtime_derived": LCTD_RUNTIME_DERIVED,
         "extfeed_max_date": extfeed_max,
         "verdict": "PARTIAL_FAIL",
         "verdict_reason": reason,
