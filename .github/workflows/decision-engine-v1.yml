@@ -366,6 +366,46 @@ jobs:
           echo "data_condition=$DATA_CONDITION" >> "$GITHUB_OUTPUT"
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
 
+      - name: Seed prior-day DE operational state from baseline-lock (Stage 7 archive dep)
+        run: |
+          set -euo pipefail
+          declare -A SEED_MAP=(
+            [de_v1_events]="output/decision_engine_v1_events.parquet"
+            [de_v1_tier2_label_distribution]="output/decision_engine_v1_tier2_label_distribution.csv"
+            [de_v1_paper_link_integrity]="output/decision_engine_v1_paper_link_integrity.csv"
+            [de_v1_tier2_label_summary]="output/decision_engine_v1_tier2_label_table_summary.md"
+            [de_v1_tier3_review_report]="output/decision_engine_v1_tier3_review_report.md"
+            [de_v0_classification_panel]="output/decision_v0_classification_panel.parquet"
+          )
+          for KEY in "${!SEED_MAP[@]}"; do
+            OP_PATH="${SEED_MAP[$KEY]}"
+            if [ -f "$OP_PATH" ]; then
+              echo "[de-v1] locked ${KEY} already present at ${OP_PATH}; skipping seed"
+              continue
+            fi
+            LOCKED_PATH=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_${KEY}']['path'])" || true)
+            LOCKED_SHA=$(python -c "import tomllib;d=tomllib.load(open('tools/pin_baselines.toml','rb'));print(d['locked_${KEY}']['sha256'])" || true)
+            if [ -z "$LOCKED_PATH" ] || [ -z "$LOCKED_SHA" ]; then
+              echo "::error::pin_baselines.toml [locked_${KEY}] path/sha256 unresolved"
+              exit 1
+            fi
+            if [ ! -f "$LOCKED_PATH" ]; then
+              echo "::error::baseline-lock ${KEY} source missing: $LOCKED_PATH"
+              exit 1
+            fi
+            ACTUAL_SHA=$(sha256sum "$LOCKED_PATH" | awk '{print $1}')
+            if [ "$ACTUAL_SHA" != "$LOCKED_SHA" ]; then
+              echo "::error::baseline-lock ${KEY} sha256 mismatch: actual=$ACTUAL_SHA pinned=$LOCKED_SHA"
+              exit 1
+            fi
+            cp "$LOCKED_PATH" "$OP_PATH"
+            if [ ! -f "$OP_PATH" ]; then
+              echo "::error::operational ${KEY} missing after seed copy: $OP_PATH"
+              exit 1
+            fi
+            echo "[de-v1] seeded locked ${KEY}: $LOCKED_PATH -> $OP_PATH (sha256=$ACTUAL_SHA)"
+          done
+
       - name: Stage 7 — decision_engine_v1_panel_refresh
         run: python tools/decision_engine_v1_panel_refresh.py
 
