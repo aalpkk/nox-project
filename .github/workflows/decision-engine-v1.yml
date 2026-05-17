@@ -451,6 +451,16 @@ jobs:
       - name: Stage 7 — decision_engine_v1_panel_refresh
         run: python tools/decision_engine_v1_panel_refresh.py --lctd-required ${{ steps.resolve.outputs.asof }}
 
+      # Stage 7.5 (PR-DE-3.16): refresh Trident structural probe from
+      # mb_scanner_events_*.parquet + extfeed master. Produces
+      # `output/trident_probe_mb_3y.parquet` consumed by Stage 9 watchlist
+      # generator's structural enrichment join. continue-on-error: true so a
+      # probe failure does not block watchlist emission — Stage 9 silently
+      # degrades to zero attachments when the parquet is missing/empty.
+      - name: Stage 7.5 — trident_probe_mb_3y (structural refresh)
+        continue-on-error: true
+        run: python tools/trident_probe_mb_3y.py 2>&1 | tee /tmp/stage7_5.log
+
       - name: Stage 8 — decision_engine_v1_run (Tier 2)
         if: steps.stage6_verdict.outputs.data_condition == 'false'
         id: stage8
@@ -575,6 +585,17 @@ jobs:
         with:
           name: de-v1-events-${{ steps.resolve.outputs.asof }}
           path: output/decision_engine_v1_events.parquet
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload trident probe (Stage 7.5)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-trident-probe-${{ steps.resolve.outputs.asof }}
+          path: |
+            output/trident_probe_mb_3y.parquet
+            output/trident_probe_mb_3y.md
           if-no-files-found: warn
           retention-days: 30
 

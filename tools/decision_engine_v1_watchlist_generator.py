@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "output"
 EVENTS_PATH = OUT_DIR / "decision_engine_v1_events.parquet"
 STAGE6_MANIFEST_PATH = OUT_DIR / "paper_execution_v0_forward_run_manifest.json"
+TRIDENT_PROBE_PATH = OUT_DIR / "trident_probe_mb_3y.parquet"
 
 SECTIONS = ["EXECUTABLE", "SIZE_REDUCED", "WAIT_BETTER_ENTRY", "WAIT_RETEST", "PAPER_ONLY"]
 
@@ -45,7 +46,36 @@ CSV_COLS = [
     "setup_label", "execution_label", "market_context", "reason_codes",
     "entry_ref", "stop_ref", "atr", "fill_assumption", "risk_atr",
     "paper_stream_ref", "notes",
+    "trident_tag", "trident_D_pct", "trident_SIL_pct_below_B",
+    "trident_zone_width_pct", "trident_zone_age_bars",
 ]
+
+ALLOWED_TRIDENT_COLS = frozenset({
+    "ticker", "family", "setup_family", "event_bar_date", "event_ts",
+    "A_price", "B_price", "C_price", "D_target",
+    "D_pct", "D_minus_B_atr", "B_to_D_pct",
+    "atr_at_event", "atr_pct_at_event",
+    "zone_width_pct", "zone_age_bars",
+    "bos_distance_atr_at_event", "vol_ratio_20_at_event",
+    "structural_invalidation_low", "structural_invalidation_pct_below_B",
+})
+FORBIDDEN_TRIDENT_COLS = frozenset({
+    "forward_high_5d", "forward_high_10d", "forward_high_20d", "forward_high_30d",
+    "forward_mfe_pct_5d", "forward_mfe_pct_10d", "forward_mfe_pct_20d", "forward_mfe_pct_30d",
+    "gap_to_D_atr_5d", "gap_to_D_atr_10d", "gap_to_D_atr_20d", "gap_to_D_atr_30d",
+    "D_touched_5d", "D_touched_10d", "D_touched_20d", "D_touched_30d",
+    "days_to_D_strict", "days_to_D_loose",
+    "outcome_strict", "structural_break_day", "forward_bars_available",
+})
+SURFACED_TRIDENT_COLS = (
+    "D_pct",
+    "structural_invalidation_pct_below_B",
+    "zone_width_pct",
+    "zone_age_bars",
+    "bos_distance_atr_at_event",
+)
+TRIDENT_ELIGIBLE_SETUP_KIND = "above_mb_birth"
+TRIDENT_ELIGIBLE_SOURCE = "mb_scanner"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -155,6 +185,129 @@ def _read_degraded_state() -> dict:
     return state
 
 
+def _load_trident_attachments(asof: str) -> dict[tuple[str, str], dict]:
+    """PR-DE-3.16: read trident_probe_mb_3y.parquet and return per-(ticker,
+    family_short) attachment dict for event_bar_date == asof.
+
+    Returns {} silently when the probe parquet is missing (Stage 7.5 may
+    have failed or producer unavailable in local smoke). Hard FAIL when
+    the parquet contains a column outside the ALLOWED ∪ FORBIDDEN universe
+    (unknown column = potentially a new leak channel).
+
+    Leak guard: every column read from the parquet is checked against
+    FORBIDDEN_TRIDENT_COLS; matched columns are dropped before the row dict
+    leaves this function. ALLOWED ∩ FORBIDDEN is asserted disjoint at
+    module level via this function's first sanity check.
+    """
+    assert ALLOWED_TRIDENT_COLS.isdisjoint(FORBIDDEN_TRIDENT_COLS), (
+        "[watchlist_generator] BUG: Trident allowlist overlaps forbidden list"
+    )
+    if not TRIDENT_PROBE_PATH.exists():
+        return {}
+    try:
+        table = pq.read_table(TRIDENT_PROBE_PATH)
+    except Exception as exc:
+        print(
+            f"[watchlist_generator] WARN: trident probe read failed "
+            f"({TRIDENT_PROBE_PATH.relative_to(ROOT)}): {exc} — attachments skipped",
+            flush=True,
+        )
+        return {}
+
+    probe_cols = set(table.column_names)
+    unknown = probe_cols - ALLOWED_TRIDENT_COLS - FORBIDDEN_TRIDENT_COLS
+    if unknown:
+        print(
+            f"[watchlist_generator] FAIL: trident probe contains "
+            f"unrecognized columns {sorted(unknown)} (not in ALLOWED or "
+            f"FORBIDDEN sets) — refusing to attach (potential leak channel)",
+            flush=True,
+        )
+        sys.exit(1)
+
+    keep = [c for c in table.column_names if c in ALLOWED_TRIDENT_COLS]
+    sub = table.select(keep).to_pylist()
+
+    attachments: dict[tuple[str, str], dict] = {}
+    asof_str = str(asof)
+    for r in sub:
+        ed = r.get("event_bar_date")
+        ed_str = str(ed)[:10] if ed is not None else ""
+        if ed_str != asof_str:
+            continue
+        tk = r.get("ticker") or ""
+        fam = r.get("family") or ""
+        key = (tk, fam)
+        attachments[key] = {
+            "D_pct": r.get("D_pct"),
+            "structural_invalidation_pct_below_B": r.get("structural_invalidation_pct_below_B"),
+            "zone_width_pct": r.get("zone_width_pct"),
+            "zone_age_bars": r.get("zone_age_bars"),
+            "bos_distance_atr_at_event": r.get("bos_distance_atr_at_event"),
+        }
+    return attachments
+
+
+def _trident_lookup(
+    attachments: dict[tuple[str, str], dict],
+    source: str,
+    family: str,
+    ticker: str,
+) -> dict:
+    if source != TRIDENT_ELIGIBLE_SOURCE:
+        return {}
+    parts = (family or "").split("__", 1)
+    if len(parts) != 2:
+        return {}
+    family_short, setup_kind = parts[0], parts[1]
+    if setup_kind != TRIDENT_ELIGIBLE_SETUP_KIND:
+        return {}
+    return attachments.get((ticker, family_short), {})
+
+
+def _compute_trident_tag(att: dict) -> str:
+    if not att:
+        return ""
+    tags: list[str] = []
+    d_pct = att.get("D_pct")
+    sil = att.get("structural_invalidation_pct_below_B")
+    try:
+        if d_pct is not None and float(d_pct) >= 30.0:
+            tags.append("D_PCT_30PLUS")
+    except (TypeError, ValueError):
+        pass
+    try:
+        if sil is not None and float(sil) <= -10.0:
+            tags.append("SIL_DEEP")
+    except (TypeError, ValueError):
+        pass
+    return ";".join(tags)
+
+
+def _fmt_trident_pct(v) -> str:
+    if v is None:
+        return ""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if f != f:
+        return ""
+    return f"{f:.2f}"
+
+
+def _fmt_trident_int(v) -> str:
+    if v is None:
+        return ""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if f != f:
+        return ""
+    return f"{int(f)}"
+
+
 def _join_codes(*lists):
     out = []
     seen = set()
@@ -186,12 +339,22 @@ def main():
     asof = _resolve_asof(args.asof_date, events_dates)
     total = len(rows)
     degraded = _read_degraded_state()
+    trident_attachments = _load_trident_attachments(asof)
+    trident_attach_count = 0
 
     out_md = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.md"
     out_csv = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.csv"
 
     records = []
     for r in rows:
+        att = _trident_lookup(
+            trident_attachments,
+            r["source"],
+            r["family"],
+            r["ticker"],
+        )
+        if att:
+            trident_attach_count += 1
         rec = {
             "ticker": r["ticker"],
             "source": r["source"],
@@ -213,6 +376,13 @@ def main():
             "risk_atr": r["risk_atr"],
             "paper_stream_ref": r["paper_stream_ref"] or "",
             "notes": "",
+            "trident_tag": _compute_trident_tag(att),
+            "trident_D_pct": _fmt_trident_pct(att.get("D_pct")),
+            "trident_SIL_pct_below_B": _fmt_trident_pct(
+                att.get("structural_invalidation_pct_below_B")
+            ),
+            "trident_zone_width_pct": _fmt_trident_pct(att.get("zone_width_pct")),
+            "trident_zone_age_bars": _fmt_trident_int(att.get("zone_age_bars")),
         }
         records.append(rec)
 
@@ -270,6 +440,11 @@ def main():
                     "risk_atr": r["risk_atr"] if r["risk_atr"] is not None else "",
                     "paper_stream_ref": r["paper_stream_ref"],
                     "notes": r["notes"],
+                    "trident_tag": r["trident_tag"],
+                    "trident_D_pct": r["trident_D_pct"],
+                    "trident_SIL_pct_below_B": r["trident_SIL_pct_below_B"],
+                    "trident_zone_width_pct": r["trident_zone_width_pct"],
+                    "trident_zone_age_bars": r["trident_zone_age_bars"],
                 }
                 w.writerow(row)
 
@@ -375,9 +550,18 @@ def main():
         if extra_note:
             A(f"_{extra_note}_")
             A("")
-        A("| ticker | source | family | state | tf | setup | exec | regime | risk_atr | entry | stop | atr | fill | paper_ref | reasons |")
-        A("|---|---|---|---|---|---|---|---|---:|---:|---:|---:|---|---|---|")
+        A("| ticker | source | family | state | tf | setup | exec | regime | risk_atr | entry | stop | atr | fill | paper_ref | reasons | trident |")
+        A("|---|---|---|---|---|---|---|---|---:|---:|---:|---:|---|---|---|---|")
         for r in rows:
+            trident_cell = r["trident_tag"]
+            if r["trident_D_pct"] or r["trident_SIL_pct_below_B"]:
+                d_pct = r["trident_D_pct"] or "—"
+                sil = r["trident_SIL_pct_below_B"] or "—"
+                trident_cell = (
+                    f"{r['trident_tag']} (D%={d_pct}, SIL={sil})"
+                    if r["trident_tag"]
+                    else f"(D%={d_pct}, SIL={sil})"
+                )
             A(
                 "| "
                 + " | ".join([
@@ -396,6 +580,7 @@ def main():
                     r["fill_assumption"],
                     r["paper_stream_ref"],
                     r["reason_codes"],
+                    trident_cell,
                 ])
                 + " |"
             )
@@ -431,6 +616,16 @@ def main():
         print(f"  {sec}: {len(sorted_sections[sec])}")
     print(f"  total sectioned: {sec_total}")
     print(f"EXECUTABLE multi-cell tickers: {len(multi_sorted)} ({overlap_rows} rows)")
+    if TRIDENT_PROBE_PATH.exists():
+        print(
+            f"trident attachments: {trident_attach_count}/{total} rows enriched "
+            f"(source=mb_scanner + setup_kind=above_mb_birth eligible cohort)"
+        )
+    else:
+        print(
+            f"trident attachments: 0/{total} (probe parquet absent at "
+            f"{TRIDENT_PROBE_PATH.relative_to(ROOT)} — Stage 7.5 skipped or unavailable)"
+        )
     print(f"OUT_MD: {out_md} bytes={len(md_bytes)} sha256={md_sha}")
     print(f"OUT_CSV: {out_csv} bytes={len(csv_bytes)} sha256={csv_sha}")
 
