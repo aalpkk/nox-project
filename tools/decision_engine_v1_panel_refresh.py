@@ -32,6 +32,7 @@ Discipline:
 
 from __future__ import annotations
 
+import argparse
 import datetime as _dt
 import hashlib
 import json
@@ -505,10 +506,41 @@ def _align_to_extfeed(
     return pd.DataFrame(out_rows), skipped_no_ticker, skipped_no_tdx
 
 
+# ─── CLI ──────────────────────────────────────────────────────────────────
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=(
+            "Decision Engine v1 — Stage 7 classification-panel refresh. "
+            "Stage 7's LCTD is data-driven: lctd = extfeed_max_date "
+            "(per spec §1.1 Q5). When --lctd-required YYYY-MM-DD is supplied "
+            "it acts as an assertion gate: extfeed_max_date MUST equal the "
+            "supplied value, else hard FAIL (no fallback weakening). When "
+            "invoked from .github/workflows/decision-engine-v1.yml the "
+            "workflow's target_date input is propagated as --lctd-required "
+            "so Stage 7 binds to the same date as the selected "
+            "master-data-pull artifact (close-mode contract)."
+        )
+    )
+    p.add_argument(
+        "--lctd-required",
+        type=lambda s: _dt.date.fromisoformat(s),
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Assert that extfeed_max_date equals this date; else hard FAIL. "
+            "When omitted, Stage 7 derives LCTD from extfeed only (legacy)."
+        ),
+    )
+    return p.parse_args()
+
+
 # ─── orchestrator ─────────────────────────────────────────────────────────
 
 
 def main() -> int:
+    args = _parse_args()
     t0 = time.time()
     refresh_utc = _dt.datetime.now(_dt.timezone.utc).isoformat()
     print(f"[panel-refresh] start {refresh_utc}", flush=True)
@@ -558,6 +590,28 @@ def main() -> int:
     # latest_completed_trading_day per Q5: max completed trading date from
     # extfeed, rolled to TR-daily.
     lctd = extfeed_max_date
+    lctd_runtime_derived = lctd
+    lctd_source = "extfeed_derived"
+
+    # PR-DE-3.12: --lctd-required acts as an assertion gate. Stage 7 LCTD is
+    # data-driven (lctd = extfeed_max_date); CLI cannot override the value
+    # without weakening the spec §1.1 Q5 contract. Instead, we require
+    # extfeed_max_date == CLI value; mismatch is a hard FAIL (no fallback).
+    if args.lctd_required is not None:
+        cli_lctd = args.lctd_required.isoformat()
+        if cli_lctd != lctd:
+            _fail(
+                f"lctd_required_assertion: "
+                f"--lctd-required={cli_lctd} != extfeed_max_date={lctd} "
+                f"(close-mode workflow contract: workflow target_date must "
+                f"equal extfeed_max_date)"
+            )
+        lctd_source = "cli_override"
+        print(
+            f"[panel-refresh] LCTD assertion PASS: --lctd-required={cli_lctd} "
+            f"== extfeed_max_date={lctd}",
+            flush=True,
+        )
 
     # ─── 4. load events from all 6 event-history sources ─────────────────
     print("[panel-refresh] loading event-history sources …", flush=True)
@@ -921,6 +975,9 @@ def main() -> int:
         "panel_per_column_null_counts": null_counts,
         "latest_completed_trading_day": lctd,
         "panel_max_date_equals_lctd": (new_panel_max == lctd),
+        "lctd_required": lctd,
+        "lctd_source": lctd_source,
+        "lctd_runtime_derived": lctd_runtime_derived,
         "backup_path": str(backup_path.relative_to(ROOT)),
         "backup_size": backup_meta["size"],
         "backup_sha256": backup_meta["sha256"],
