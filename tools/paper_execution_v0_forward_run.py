@@ -1144,6 +1144,7 @@ def main() -> int:
     print("[paper_execution_v0_forward_run] phase D validate (§8)...")
     validate, validate_fails = phase_d_validate()
     overall_fails.extend(validate_fails)
+    phase_d_fail_count = len(validate_fails)
 
     print("[paper_execution_v0_forward_run] phase E post-state + drift...")
     post_state, post_fails = phase_e_poststate(pre_state)
@@ -1156,17 +1157,92 @@ def main() -> int:
         "line_tr_manifest": _extract_producer_manifest(line_tr_manifest_path),
     }
 
-    verdict = "PASS" if not overall_fails else "FAIL"
-    fail_classes = [_classify(f) for f in overall_fails]
+    # ── PR-DE-3.15: per-line status + degraded contract ─────────────────────
+    # Classify each Phase D fail by (line, kind). Phase D fails are the only
+    # ones the degraded contract considers "line-attributable"; pre-Phase-D
+    # fails (cascade) and Phase E (drift) are always hard.
+    STALE_HEADERS = {"signal_asof_floor", "signal_asof_max_less_than_outcome_max"}
+    per_line_kinds: dict[str, list[str]] = {"line_e": [], "line_tr": []}
+    phase_d_meta: list[dict] = []
+    for f in validate_fails:
+        header = _classify(f)
+        if "Line E" in f:
+            line_key = "line_e"
+        elif "Line TR" in f:
+            line_key = "line_tr"
+        else:
+            line_key = None
+        kind = "degraded_source_stale" if header in STALE_HEADERS else "hard_fail"
+        phase_d_meta.append({"line": line_key, "header": header, "kind": kind, "reason": f})
+        if line_key is not None:
+            per_line_kinds[line_key].append(kind)
+
+    def _line_status(kinds: list[str]) -> str:
+        if not kinds:
+            return "PASS"
+        if all(k == "degraded_source_stale" for k in kinds):
+            return "STALE"
+        return "FAIL"
+
+    line_e_status = _line_status(per_line_kinds["line_e"])
+    line_tr_status = _line_status(per_line_kinds["line_tr"])
+    non_phase_d_hard_count = len(overall_fails) - phase_d_fail_count
+
+    line_statuses = (line_e_status, line_tr_status)
+    if non_phase_d_hard_count > 0 or "FAIL" in line_statuses:
+        verdict_extended = "FAIL_HARD"
+    elif line_e_status == "STALE" and line_tr_status == "STALE":
+        verdict_extended = "FAIL_NO_DE_DAY"
+    elif "STALE" in line_statuses:
+        verdict_extended = "PASS_DEGRADED"
+    else:
+        verdict_extended = "PASS"
+
+    degraded_mode = verdict_extended == "PASS_DEGRADED"
+    degraded_sources: list[str] = []
+    excluded_paper_origins: list[str] = []
+    if degraded_mode:
+        if line_e_status == "STALE":
+            degraded_sources.append("line_e")
+            excluded_paper_origins.append("EXTENDED")
+        if line_tr_status == "STALE":
+            degraded_sources.append("line_tr")
+            excluded_paper_origins.append("TRIGGER_RETEST")
+
+    # High-level fail_classes taxonomy (was: list of low-level headers).
+    fail_classes_set: set[str] = set()
+    for m in phase_d_meta:
+        fail_classes_set.add(m["kind"])
+    if non_phase_d_hard_count > 0:
+        fail_classes_set.add("hard_fail")
+    if verdict_extended == "FAIL_NO_DE_DAY":
+        fail_classes_set.add("no_de_day")
+    fail_classes = sorted(fail_classes_set)
+    fail_class_headers = [_classify(f) for f in overall_fails]
+
+    verdict = "PASS" if verdict_extended in ("PASS", "PASS_DEGRADED") else "FAIL"
+
+    line_e_vd = validate.get("line_e", {})
+    line_tr_vd = validate.get("line_tr", {})
     manifest = {
         "spec_path": "memory/paper_execution_v0_forward_run_spec.md",
         "spec_status": "LOCKED v1 2026-05-06",
+        "contract_revision": "PR-DE-3.15 degraded-contract",
         "run_started_utc": UTC_NOW_ISO,
         "run_date_utc": RUN_DATE_UTC,
         "operation": "Line E + Line TR paper_execution forward emission (single-fire)",
         "verdict": verdict,
+        "verdict_extended": verdict_extended,
         "fail_classes": fail_classes,
+        "fail_class_headers": fail_class_headers,
         "fail_reasons": overall_fails,
+        "degraded_mode": degraded_mode,
+        "degraded_sources": degraded_sources,
+        "excluded_paper_origins": excluded_paper_origins,
+        "line_e_status": line_e_status,
+        "line_tr_status": line_tr_status,
+        "line_e_signal_asof_max": line_e_vd.get("signal_asof_max"),
+        "line_tr_signal_asof_max": line_tr_vd.get("signal_asof_max"),
         "lctd_required": OPERATIONAL_TARGET_DATE.isoformat(),
         "lctd_source": OPERATIONAL_TARGET_SOURCE,
         "lctd_runtime_derived": OPERATIONAL_TARGET_RUNTIME_DERIVED.isoformat(),
@@ -1176,6 +1252,7 @@ def main() -> int:
             "phase_b_archive": archived,
             "phase_c_cascade": cascade,
             "phase_d_validate": validate,
+            "phase_d_fail_meta": phase_d_meta,
             "phase_e_poststate": post_state,
         },
         "producer_manifests_summary": producer_manifests,
@@ -1183,11 +1260,18 @@ def main() -> int:
         "next_surface": "Tier 2 rerun under separate ONAY (PASS only)",
     }
     OUT_MANIFEST.write_text(json.dumps(manifest, indent=2, default=str))
-    print(f"[paper_execution_v0_forward_run] verdict={verdict}; manifest at {OUT_MANIFEST.relative_to(ROOT)}")
+    print(
+        f"[paper_execution_v0_forward_run] verdict={verdict} verdict_extended={verdict_extended} "
+        f"line_e={line_e_status} line_tr={line_tr_status} degraded_mode={degraded_mode}; "
+        f"manifest at {OUT_MANIFEST.relative_to(ROOT)}"
+    )
     if verdict == "FAIL":
         for f in overall_fails:
             print(f"  FAIL: {f}", file=sys.stderr)
         return 1
+    if degraded_mode:
+        for src in degraded_sources:
+            print(f"  DEGRADED: {src} stale — paper_origin(s) {excluded_paper_origins} will be excluded downstream", file=sys.stderr)
     return 0
 
 
