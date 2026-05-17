@@ -415,7 +415,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          python tools/decision_engine_v1_run.py --asof-date ${{ steps.resolve.outputs.asof }} 2>&1 | tee /tmp/stage8.log
+          python tools/decision_engine_v1_run.py --tier 2 --asof-date ${{ steps.resolve.outputs.asof }} 2>&1 | tee /tmp/stage8.log
           exit ${PIPESTATUS[0]}
 
       - name: Stage 8 verdict check
