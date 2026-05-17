@@ -14,6 +14,7 @@ backtest/PF/WR/meanR.
 """
 from __future__ import annotations
 
+import argparse
 import datetime as _dt
 import hashlib
 import json
@@ -46,8 +47,17 @@ RUN_DATE_UTC = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
 
 # Operational target date — dynamic per LOCKED Q-A (signal-vs-outcome
 # semantics fix 2026-05-06). Replaces hardcoded `PAPER_FORWARD_FLOOR`.
+# PR-DE-3.12: `--lctd-required YYYY-MM-DD` (explicit, wins) overrides the
+# runtime-derived value when this script is invoked from
+# `.github/workflows/decision-engine-v1.yml` (close-mode contract: workflow
+# `target_date` input == selected master-data-pull artifact
+# `operational_target_date` == Stage 3/5/6/7 LCTD). Local-shell invocations
+# omit the flag and retain the runtime-derived behavior. No fallback weakening:
+# pre-flight freshness + signal_asof_floor gates unchanged.
 _OP_CTX = derive_operational_target()
 OPERATIONAL_TARGET_DATE: _dt.date = _OP_CTX.operational_target_date
+OPERATIONAL_TARGET_RUNTIME_DERIVED: _dt.date = OPERATIONAL_TARGET_DATE  # audit snapshot
+OPERATIONAL_TARGET_SOURCE: str = "runtime_derived"  # mutated by main() if --lctd-required given
 
 # Producer's exit-window horizon (BIST trading days). Mirrored from
 # `tools/paper_execution_v0.py:HORIZON_TRADING_DAYS`. Used by Phase D
@@ -1011,9 +1021,64 @@ def _extract_producer_manifest(path: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# CLI
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=(
+            "Decision Engine v1 — Stage 6 paper_execution_v0 forward-run "
+            "orchestrator. Operational target (LCTD) resolves from "
+            "--lctd-required (explicit wins) else from "
+            "tools/_decision_target_date.derive_operational_target(). "
+            "When invoked from .github/workflows/decision-engine-v1.yml the "
+            "workflow's target_date input is propagated as --lctd-required so "
+            "Stage 6 binds to the same date as the selected master-data-pull "
+            "artifact (close-mode contract). No fallback weakening: "
+            "pre-flight freshness + signal_asof_floor gates unchanged."
+        )
+    )
+    p.add_argument(
+        "--lctd-required",
+        type=lambda s: _dt.date.fromisoformat(s),
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Operational target date. Explicit value wins over "
+            "derive_operational_target(). When omitted Stage 6 uses the "
+            "runtime-derived value (legacy shell behavior preserved)."
+        ),
+    )
+    return p.parse_args()
+
+
+# ---------------------------------------------------------------------------
 # main
 
 def main() -> int:
+    global OPERATIONAL_TARGET_DATE, OPERATIONAL_TARGET_SOURCE
+    args = _parse_args()
+    if args.lctd_required is not None:
+        cli_lctd = args.lctd_required
+        if cli_lctd != OPERATIONAL_TARGET_RUNTIME_DERIVED:
+            print(
+                f"[paper_execution_v0_forward_run] LCTD override: cli={cli_lctd.isoformat()} "
+                f"runtime_derived={OPERATIONAL_TARGET_RUNTIME_DERIVED.isoformat()} "
+                f"(asof_mode={_OP_CTX.asof_mode}); "
+                f"CLI wins (close-mode workflow contract)",
+                flush=True,
+            )
+        OPERATIONAL_TARGET_DATE = cli_lctd
+        OPERATIONAL_TARGET_SOURCE = "cli_override"
+    print(
+        f"[paper_execution_v0_forward_run] OPERATIONAL_TARGET_DATE="
+        f"{OPERATIONAL_TARGET_DATE.isoformat()} (source={OPERATIONAL_TARGET_SOURCE})",
+        flush=True,
+    )
+    print(
+        f"[paper_execution_v0_forward_run] OPERATIONAL_TARGET_runtime_derived="
+        f"{OPERATIONAL_TARGET_RUNTIME_DERIVED.isoformat()}",
+        flush=True,
+    )
     print(f"[paper_execution_v0_forward_run] start {UTC_NOW_ISO}")
     _resolve_runtime_pins()
     print(
@@ -1036,6 +1101,9 @@ def main() -> int:
             "verdict": "FAIL",
             "fail_classes": [_classify(f) for f in pre_fails],
             "fail_reasons": pre_fails,
+            "lctd_required": OPERATIONAL_TARGET_DATE.isoformat(),
+            "lctd_source": OPERATIONAL_TARGET_SOURCE,
+            "lctd_runtime_derived": OPERATIONAL_TARGET_RUNTIME_DERIVED.isoformat(),
             "phases": {"preflight": pre_info},
         }
         OUT_MANIFEST.write_text(json.dumps(manifest, indent=2, default=str))
@@ -1059,6 +1127,9 @@ def main() -> int:
             "verdict": "FAIL",
             "fail_classes": [_classify(f) for f in cascade_fails],
             "fail_reasons": cascade_fails,
+            "lctd_required": OPERATIONAL_TARGET_DATE.isoformat(),
+            "lctd_source": OPERATIONAL_TARGET_SOURCE,
+            "lctd_runtime_derived": OPERATIONAL_TARGET_RUNTIME_DERIVED.isoformat(),
             "phases": {
                 "preflight": pre_info,
                 "phase_a_prestate": pre_state,
@@ -1096,6 +1167,9 @@ def main() -> int:
         "verdict": verdict,
         "fail_classes": fail_classes,
         "fail_reasons": overall_fails,
+        "lctd_required": OPERATIONAL_TARGET_DATE.isoformat(),
+        "lctd_source": OPERATIONAL_TARGET_SOURCE,
+        "lctd_runtime_derived": OPERATIONAL_TARGET_RUNTIME_DERIVED.isoformat(),
         "phases": {
             "preflight": pre_info,
             "phase_a_prestate": pre_state,
