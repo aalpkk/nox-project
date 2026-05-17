@@ -339,30 +339,72 @@ jobs:
         id: stage6_verdict
         run: |
           set -euo pipefail
+          # PR-DE-3.15: 4-state Stage-6 routing.
+          #   PASS             → continue, normal
+          #   PASS_DEGRADED    → continue, exclude stale paper_origin(s) downstream
+          #   FAIL_NO_DE_DAY   → data-condition: NO_DE_DAY advisory, skip Stage 8/9
+          #   FAIL_HARD / else → bug FAIL: workflow fails
           OUTCOME='${{ steps.stage6.outcome }}'
+          STATE="PASS"
+          EXCLUDE=""
           DATA_CONDITION="false"
           REASON=""
-          if [ "$OUTCOME" = "failure" ]; then
-            MANIFEST="output/paper_execution_v0_forward_run_manifest.json"
-            if [ -f "$MANIFEST" ]; then
-              V=$(jq -r '.verdict // empty' "$MANIFEST")
-              REASON=$(jq -r '.failure_reason // .reason // .fail_reason // .fail_reasons[0] // empty' "$MANIFEST")
-            fi
-            if [ -z "$REASON" ] && [ -f /tmp/stage6.log ]; then
-              REASON=$(grep -oE '(signal_asof_floor[^"]*|no_tr_signals_today[^"]*|source_asof_mismatch[^"]*)' /tmp/stage6.log | head -1 || true)
-            fi
-            if echo "$REASON" | grep -qiE '(signal_asof_floor|no_tr_signals_today)'; then
-              DATA_CONDITION="true"
-              echo "[de-v1] Stage 6 data-condition FAIL: $REASON"
-            else
-              echo "::error::Stage 6 hard FAIL (bug): reason=${REASON:-<unknown>}"
-              if [ -f /tmp/stage6.log ]; then
-                echo "--- tail of stage6.log ---" >&2
-                tail -80 /tmp/stage6.log >&2 || true
-              fi
-              exit 1
-            fi
+          MANIFEST="output/paper_execution_v0_forward_run_manifest.json"
+          if [ -f "$MANIFEST" ]; then
+            STATE=$(jq -r '.verdict_extended // empty' "$MANIFEST")
+            REASON=$(jq -r '.failure_reason // .reason // .fail_reason // .fail_reasons[0] // empty' "$MANIFEST")
+            EXCLUDE=$(jq -r '.excluded_paper_origins // [] | join(",")' "$MANIFEST")
           fi
+          if [ -z "$STATE" ] && [ -f /tmp/stage6.log ]; then
+            # Legacy fallback (pre-PR-DE-3.15 manifest schema): infer from log.
+            REASON_FROM_LOG=$(grep -oE '(signal_asof_floor[^"]*|no_tr_signals_today[^"]*|source_asof_mismatch[^"]*)' /tmp/stage6.log | head -1 || true)
+            if [ -z "$REASON" ]; then REASON="$REASON_FROM_LOG"; fi
+          fi
+          case "$OUTCOME" in
+            success)
+              # Stage 6 exited 0 — must be PASS or PASS_DEGRADED.
+              if [ "$STATE" = "PASS_DEGRADED" ]; then
+                echo "[de-v1] Stage 6 PASS_DEGRADED: excluded paper_origins=$EXCLUDE; reason=$REASON"
+              else
+                STATE="PASS"
+                echo "[de-v1] Stage 6 PASS"
+              fi
+              ;;
+            failure)
+              if [ "$STATE" = "FAIL_NO_DE_DAY" ]; then
+                DATA_CONDITION="true"
+                echo "[de-v1] Stage 6 FAIL_NO_DE_DAY: both paper lines stale; reason=$REASON"
+              elif [ -z "$STATE" ] && echo "$REASON" | grep -qiE '(signal_asof_floor|no_tr_signals_today)'; then
+                # Legacy classifier: pre-PR-DE-3.15 manifest → terminal NO_DE_DAY
+                DATA_CONDITION="true"
+                STATE="FAIL_NO_DE_DAY"
+                echo "[de-v1] Stage 6 legacy data-condition (no verdict_extended): $REASON"
+              else
+                echo "::error::Stage 6 hard FAIL (bug): state=${STATE:-<unset>} reason=${REASON:-<unknown>}"
+                if [ -f /tmp/stage6.log ]; then
+                  echo "--- tail of stage6.log ---" >&2
+                  tail -80 /tmp/stage6.log >&2 || true
+                fi
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Stage 6 unexpected outcome=$OUTCOME state=$STATE reason=$REASON"
+              exit 1
+              ;;
+          esac
+          # Sanity: PASS/PASS_DEGRADED must imply data_condition=false.
+          # PASS_DEGRADED must have a non-empty exclude_sources; PASS must not.
+          if [ "$STATE" = "PASS_DEGRADED" ] && [ -z "$EXCLUDE" ]; then
+            echo "::error::Stage 6 PASS_DEGRADED but excluded_paper_origins is empty — contract violation"
+            exit 1
+          fi
+          if [ "$STATE" = "PASS" ] && [ -n "$EXCLUDE" ]; then
+            echo "::error::Stage 6 PASS but excluded_paper_origins=$EXCLUDE is non-empty — contract violation"
+            exit 1
+          fi
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "exclude_sources=$EXCLUDE" >> "$GITHUB_OUTPUT"
           echo "data_condition=$DATA_CONDITION" >> "$GITHUB_OUTPUT"
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
 
@@ -413,9 +455,19 @@ jobs:
         if: steps.stage6_verdict.outputs.data_condition == 'false'
         id: stage8
         continue-on-error: true
+        env:
+          STAGE6_EXCLUDE: ${{ steps.stage6_verdict.outputs.exclude_sources }}
         run: |
           set -o pipefail
-          python tools/decision_engine_v1_run.py --tier 2 --asof-date ${{ steps.resolve.outputs.asof }} 2>&1 | tee /tmp/stage8.log
+          if [ -n "$STAGE6_EXCLUDE" ]; then
+            echo "[de-v1] Stage 8 degraded mode: --exclude-sources=$STAGE6_EXCLUDE"
+            python tools/decision_engine_v1_run.py --tier 2 \
+              --asof-date ${{ steps.resolve.outputs.asof }} \
+              --exclude-sources "$STAGE6_EXCLUDE" 2>&1 | tee /tmp/stage8.log
+          else
+            python tools/decision_engine_v1_run.py --tier 2 \
+              --asof-date ${{ steps.resolve.outputs.asof }} 2>&1 | tee /tmp/stage8.log
+          fi
           exit ${PIPESTATUS[0]}
 
       - name: Stage 8 verdict check
@@ -428,9 +480,11 @@ jobs:
           REASON=""
           if [ "$OUTCOME" = "failure" ]; then
             if [ -f /tmp/stage8.log ]; then
-              REASON=$(grep -oE '(source_asof_mismatch[^"]*|no_tr_signals_today[^"]*|signal_asof_floor[^"]*)' /tmp/stage8.log | head -1 || true)
+              REASON=$(grep -oE '(source_asof_mismatch[^"]*|no_tr_signals_today[^"]*|signal_asof_floor[^"]*|no_events_post_exclusion[^"]*)' /tmp/stage8.log | head -1 || true)
             fi
-            if echo "$REASON" | grep -qiE '(source_asof_mismatch|no_tr_signals_today)'; then
+            # PR-DE-3.15: `no_events_post_exclusion` is a data-condition
+            # (post-exclusion event set was empty). Treated like NO_DE_DAY.
+            if echo "$REASON" | grep -qiE '(source_asof_mismatch|no_tr_signals_today|no_events_post_exclusion)'; then
               DATA_CONDITION="true"
               echo "[de-v1] Stage 8 data-condition FAIL: $REASON"
             else
@@ -457,6 +511,7 @@ jobs:
           MODE='${{ steps.resolve.outputs.mode }}'
           R6='${{ steps.stage6_verdict.outputs.reason }}'
           R8='${{ steps.stage8_verdict.outputs.reason }}'
+          STATE6='${{ steps.stage6_verdict.outputs.state }}'
           CAUSE=""
           if [ "${{ steps.stage6_verdict.outputs.data_condition }}" = "true" ]; then
             CAUSE="stage6:${R6}"
@@ -464,6 +519,11 @@ jobs:
           if [ "${{ steps.stage8_verdict.outputs.data_condition }}" = "true" ]; then
             if [ -n "$CAUSE" ]; then CAUSE="${CAUSE};stage8:${R8}"; else CAUSE="stage8:${R8}"; fi
           fi
+          # PR-DE-3.15: NO_DE_DAY only happens when (a) BOTH paper lines stale
+          # at Stage 6 (FAIL_NO_DE_DAY), or (b) Stage 8 post-exclusion event
+          # set is empty (`no_events_post_exclusion`), or (c) legacy fallback
+          # (pre-3.15 manifest single-line stale). Partial staleness now flows
+          # through Stage 8 in degraded mode and emits a watchlist instead.
           python - <<PY
           import json, os
           payload = {
@@ -471,12 +531,13 @@ jobs:
               "mode": os.environ["MODE"],
               "asof": os.environ["ASOF"],
               "cause": os.environ["CAUSE"],
+              "stage6_state": os.environ.get("STATE6", ""),
               "reason_human": (
-                  "Data-condition FAIL in Stage 6 (paper-exec forward) and/or "
-                  "Stage 8 (DE Tier 2). Common cause: HB on asof has no "
-                  "trigger/retest_bounce signals (only extended), so the "
-                  "Line TR cohort is empty and DE has no source. This is NOT "
-                  "a bug — the workflow concludes success with this advisory."
+                  "Data-condition FAIL. Either both paper lines are stale at "
+                  "Stage 6 (FAIL_NO_DE_DAY) or Stage 8 produced zero events "
+                  "after applying the degraded-contract exclusion "
+                  "(no_events_post_exclusion). This is NOT a bug — the "
+                  "workflow concludes success with this advisory."
               ),
               "no_final_watchlist": True,
               "live_gate": "CLOSED",
@@ -491,6 +552,7 @@ jobs:
         env:
           ASOF: ${{ steps.resolve.outputs.asof }}
           MODE: ${{ steps.resolve.outputs.mode }}
+          STATE6: ${{ steps.stage6_verdict.outputs.state }}
           CAUSE: ''
 
       - name: Upload manifests
@@ -544,14 +606,22 @@ jobs:
           MODE='${{ steps.resolve.outputs.mode }}'
           DC6='${{ steps.stage6_verdict.outputs.data_condition }}'
           DC8='${{ steps.stage8_verdict.outputs.data_condition }}'
+          STATE6='${{ steps.stage6_verdict.outputs.state }}'
+          EXCLUDE='${{ steps.stage6_verdict.outputs.exclude_sources }}'
           MD_RUN='${{ steps.select_md.outputs.run_id }}'
           echo "=================================================================="
           echo "  DE v1 dispatch summary"
           echo "  mode=$MODE  asof=$ASOF"
           echo "  master-data-pull source run: $MD_RUN"
-          echo "  stage6_data_condition=$DC6  stage8_data_condition=$DC8"
+          echo "  stage6_state=$STATE6  stage6_data_condition=$DC6  stage8_data_condition=$DC8"
+          if [ -n "$EXCLUDE" ]; then
+            echo "  degraded: paper_origins excluded = $EXCLUDE"
+          fi
           if [ "$DC6" = "true" ] || [ "$DC8" = "true" ]; then
             echo "  outcome: NO_DE_DAY (advisory artifact uploaded)"
+            echo "  live gate: CLOSED"
+          elif [ "$STATE6" = "PASS_DEGRADED" ]; then
+            echo "  outcome: WATCHLIST_PRODUCED_DEGRADED (CSV+MD with degraded warning)"
             echo "  live gate: CLOSED"
           else
             echo "  outcome: WATCHLIST_PRODUCED (CSV+MD artifacts uploaded)"

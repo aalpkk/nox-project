@@ -26,6 +26,7 @@ import argparse
 import csv
 import datetime as dt
 import hashlib
+import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -35,6 +36,7 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "output"
 EVENTS_PATH = OUT_DIR / "decision_engine_v1_events.parquet"
+STAGE6_MANIFEST_PATH = OUT_DIR / "paper_execution_v0_forward_run_manifest.json"
 
 SECTIONS = ["EXECUTABLE", "SIZE_REDUCED", "WAIT_BETTER_ENTRY", "WAIT_RETEST", "PAPER_ONLY"]
 
@@ -112,6 +114,47 @@ def _fmt_risk(v):
     return f"{f:.2f}"
 
 
+def _read_degraded_state() -> dict:
+    """PR-DE-3.15: read Stage 6 manifest if present to detect degraded mode.
+
+    Returns a dict with keys:
+      - degraded_mode: bool
+      - degraded_sources: list[str]            (e.g. ["line_tr"])
+      - excluded_paper_origins: list[str]      (e.g. ["TRIGGER_RETEST"])
+      - line_e_status / line_tr_status         (PASS|STALE|FAIL|"unknown")
+      - line_e_signal_asof_max / line_tr_signal_asof_max
+      - manifest_present: bool
+
+    Missing manifest or missing fields → degraded_mode=False (silent
+    backward-compat with pre-PR-DE-3.15 callers).
+    """
+    state = {
+        "degraded_mode": False,
+        "degraded_sources": [],
+        "excluded_paper_origins": [],
+        "line_e_status": "unknown",
+        "line_tr_status": "unknown",
+        "line_e_signal_asof_max": None,
+        "line_tr_signal_asof_max": None,
+        "manifest_present": False,
+    }
+    if not STAGE6_MANIFEST_PATH.exists():
+        return state
+    try:
+        m = json.loads(STAGE6_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return state
+    state["manifest_present"] = True
+    state["degraded_mode"] = bool(m.get("degraded_mode", False))
+    state["degraded_sources"] = list(m.get("degraded_sources") or [])
+    state["excluded_paper_origins"] = list(m.get("excluded_paper_origins") or [])
+    state["line_e_status"] = m.get("line_e_status", "unknown")
+    state["line_tr_status"] = m.get("line_tr_status", "unknown")
+    state["line_e_signal_asof_max"] = m.get("line_e_signal_asof_max")
+    state["line_tr_signal_asof_max"] = m.get("line_tr_signal_asof_max")
+    return state
+
+
 def _join_codes(*lists):
     out = []
     seen = set()
@@ -142,6 +185,7 @@ def main():
     events_dates = {str(r["date"]) for r in rows}
     asof = _resolve_asof(args.asof_date, events_dates)
     total = len(rows)
+    degraded = _read_degraded_state()
 
     out_md = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.md"
     out_csv = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.csv"
@@ -238,7 +282,42 @@ def main():
     A(f"- Source events: `output/decision_engine_v1_events.parquet` (Tier 2 PASS post-Class-B {asof})")
     A(f"- asof_date in events: {asof}")
     A(f"- Total events processed: {total}")
+    if degraded["degraded_mode"]:
+        A(f"- **Run mode: DEGRADED** (paper_origin(s) excluded: "
+          f"{', '.join(degraded['excluded_paper_origins']) or 'none'})")
     A("")
+
+    if degraded["degraded_mode"]:
+        A("## ⚠ Degraded mode")
+        A("")
+        for src in degraded["degraded_sources"]:
+            if src == "line_e":
+                asof_max = degraded["line_e_signal_asof_max"]
+                origin = "EXTENDED"
+                line_label = "Line E"
+            elif src == "line_tr":
+                asof_max = degraded["line_tr_signal_asof_max"]
+                origin = "TRIGGER_RETEST"
+                line_label = "Line TR"
+            else:
+                asof_max = None
+                origin = src.upper()
+                line_label = src
+            A(
+                f"- **{line_label} stale** (signal_asof_max="
+                f"{asof_max or '<unknown>'} < target {asof}). "
+                f"`{origin}` paper_origin events were excluded from this watchlist."
+            )
+        A(
+            "- Watchlist is **partial**: the other paper stream remained fresh "
+            "and produced events; this is NOT a full-coverage day."
+        )
+        A(
+            "- Do **not** infer that excluded-origin events are unfit — they are "
+            "absent because their source did not advance past the prior session."
+        )
+        A("")
+
     A("## Hard warnings")
     A("")
     A("- **NOT live auto-trade.** Manual-review watchlist only.")
@@ -340,6 +419,13 @@ def main():
 
     print(f"=== watchlist post-class-b {asof} ===")
     print(f"asof_date: {asof}")
+    if degraded["degraded_mode"]:
+        print(
+            f"run_mode: DEGRADED degraded_sources={degraded['degraded_sources']} "
+            f"excluded_paper_origins={degraded['excluded_paper_origins']}"
+        )
+    else:
+        print("run_mode: NORMAL")
     print(f"total events processed: {total}")
     for sec in SECTIONS:
         print(f"  {sec}: {len(sorted_sections[sec])}")

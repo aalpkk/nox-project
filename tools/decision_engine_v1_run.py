@@ -221,7 +221,35 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit Tier 1 dry-run summary markdown (LOCK §16.5).",
     )
+    parser.add_argument(
+        "--exclude-sources",
+        type=str,
+        default="",
+        help=(
+            "PR-DE-3.15 degraded contract: comma-separated paper_origin values "
+            "to exclude (subset of {EXTENDED, TRIGGER_RETEST}). Excluded origins "
+            "skip the source_asof_mismatch check AND drop matching PAPER_ONLY "
+            "events from emission. Live-execution rows are unaffected. Stale "
+            "events are NEVER promoted to executable."
+        ),
+    )
     return parser
+
+
+_VALID_EXCLUDE_ORIGINS: Final[frozenset[str]] = frozenset({"EXTENDED", "TRIGGER_RETEST"})
+
+
+def _parse_excluded_origins(raw: str) -> frozenset[str]:
+    if not raw:
+        return frozenset()
+    parts = [p.strip().upper() for p in raw.split(",") if p.strip()]
+    bad = [p for p in parts if p not in _VALID_EXCLUDE_ORIGINS]
+    if bad:
+        raise ValueError(
+            f"--exclude-sources contains invalid values {bad}; "
+            f"valid: {sorted(_VALID_EXCLUDE_ORIGINS)}"
+        )
+    return frozenset(parts)
 
 
 def _market_context_for(event) -> str:
@@ -263,18 +291,25 @@ def _check_source_asof_mismatch(
     asof_date: str,
     line_e_max: str | None,
     line_tr_max: str | None,
+    excluded_origins: frozenset[str] = frozenset(),
 ) -> str | None:
     """Per LOCK §16.1: paper-stream parquets must have max asof_date ≥
     panel-derived asof_date (paper streams must cover the production
     asof). If a paper stream lags, halt fast.
 
+    PR-DE-3.15: paper_origin values listed in `excluded_origins` are skipped
+    here (the degraded contract excludes those origins from emission
+    altogether, so their staleness is no longer terminal).
+
     Returns a string diagnostic on mismatch, or None on match.
     """
     lagging: list[str] = []
-    if line_e_max is not None and line_e_max < asof_date:
-        lagging.append(f"Line E max={line_e_max} < asof_date={asof_date}")
-    if line_tr_max is not None and line_tr_max < asof_date:
-        lagging.append(f"Line TR max={line_tr_max} < asof_date={asof_date}")
+    if "EXTENDED" not in excluded_origins:
+        if line_e_max is not None and line_e_max < asof_date:
+            lagging.append(f"Line E max={line_e_max} < asof_date={asof_date}")
+    if "TRIGGER_RETEST" not in excluded_origins:
+        if line_tr_max is not None and line_tr_max < asof_date:
+            lagging.append(f"Line TR max={line_tr_max} < asof_date={asof_date}")
     if lagging:
         return "; ".join(lagging)
     return None
@@ -368,6 +403,12 @@ def _run_tier1(args) -> int:
     ]
     paper_link_counters_empty: dict = {}
 
+    try:
+        excluded_origins = _parse_excluded_origins(args.exclude_sources)
+    except ValueError as exc:
+        sys.stderr.write(f"FAIL (input coverage): {exc}\n")
+        return 1
+
     # 1. asof_date resolution (LOCK §16.1)
     try:
         asof_date, panel_max, line_e_max, line_tr_max = _resolve_asof_date(
@@ -377,7 +418,9 @@ def _run_tier1(args) -> int:
         sys.stderr.write(f"FAIL (input coverage): {exc}\n")
         return 1
 
-    mismatch = _check_source_asof_mismatch(asof_date, line_e_max, line_tr_max)
+    mismatch = _check_source_asof_mismatch(
+        asof_date, line_e_max, line_tr_max, excluded_origins
+    )
     if mismatch is not None:
         return _emit_fail(
             args=args,
@@ -1036,6 +1079,26 @@ def _run_tier2(args) -> int:
     # 0. sha256 + size capture pre-run (LOCK §12.4)
     paper_pre = _compute_paper_parquet_state()
 
+    try:
+        excluded_origins = _parse_excluded_origins(args.exclude_sources)
+    except ValueError as exc:
+        return _emit_tier2_fail(
+            args=args,
+            fail_category="input coverage",
+            fail_reason=f"exclude-sources: {exc}",
+            asof_date="<unresolved>",
+            panel_max="<unresolved>",
+            line_e_max=None, line_tr_max=None,
+            inputs=inputs,
+            step_1_0_status="not_run (exclude_sources_invalid)",
+            step_5b_status="not_run",
+            event_count=0,
+            execution_label_distribution={},
+            paper_link_counters=paper_link_counters_empty,
+            paper_validity_missing_total=0,
+            paper_pre=paper_pre, paper_post=paper_pre,
+        )
+
     # 1. asof_date resolution (Tier 2 LOCK §12.2 Q6 mirrors Tier 1 §16.1)
     try:
         asof_date, panel_max, line_e_max, line_tr_max = _resolve_asof_date(
@@ -1059,7 +1122,9 @@ def _run_tier2(args) -> int:
             paper_pre=paper_pre, paper_post=paper_pre,
         )
 
-    mismatch = _check_source_asof_mismatch(asof_date, line_e_max, line_tr_max)
+    mismatch = _check_source_asof_mismatch(
+        asof_date, line_e_max, line_tr_max, excluded_origins
+    )
     if mismatch is not None:
         return _emit_tier2_fail(
             args=args,
@@ -1219,8 +1284,18 @@ def _run_tier2(args) -> int:
     execution_label_dist: dict[str, int] = collections.Counter()
     paper_validity_missing_total = 0
     event_rows: list[dict] = []
+    # PR-DE-3.15: track events dropped via --exclude-sources for diagnostics.
+    excluded_event_counts: dict[str, int] = collections.Counter()
 
     for idx, (ev, dec) in enumerate(zip(events, decisions)):
+        att = attachments.get(idx)
+        if (
+            att is not None
+            and att.matched
+            and att.paper_origin in excluded_origins
+        ):
+            excluded_event_counts[att.paper_origin] += 1
+            continue
         market_ctx = _market_context_for(ev)
         execution_label = dec.execution_label
         live_execution_allowed = dec.live_execution_allowed
@@ -1234,7 +1309,6 @@ def _run_tier2(args) -> int:
         paper_expired_flag = None
         paper_validity_metadata_missing = None
 
-        att = attachments.get(idx)
         if att is not None and att.matched:
             execution_label = "PAPER_ONLY"
             live_execution_allowed = False
@@ -1348,6 +1422,34 @@ def _run_tier2(args) -> int:
             )
         )
 
+    # 6b. PR-DE-3.15: under the degraded contract, if --exclude-sources drops
+    # ALL events, fail-fast as a NO_DE_DAY data-condition (recognizable
+    # `no_events_post_exclusion` category) rather than letting the writer
+    # raise a generic WriterNotAuthorizedError on empty rows. Only triggered
+    # when an exclusion was actually requested; an empty event set without
+    # exclusion is a separate condition (no Stage 1 events) handled elsewhere.
+    if excluded_origins and not event_rows:
+        dropped_summary = ",".join(
+            f"{k}={v}" for k, v in sorted(excluded_event_counts.items())
+        ) or "none"
+        return _emit_tier2_fail(
+            args=args,
+            fail_category="input coverage",
+            fail_reason=(
+                f"no_events_post_exclusion: 0 events after excluding "
+                f"paper_origins {sorted(excluded_origins)} "
+                f"(pre-exclusion={len(events)} events; dropped {dropped_summary})"
+            ),
+            asof_date=asof_date, panel_max=panel_max,
+            line_e_max=line_e_max, line_tr_max=line_tr_max,
+            inputs=inputs, step_1_0_status="PASS", step_5b_status="PASS",
+            event_count=0,
+            execution_label_distribution={},
+            paper_link_counters=counters,
+            paper_validity_missing_total=paper_validity_missing_total,
+            paper_pre=paper_pre, paper_post=paper_pre,
+        )
+
     # 7. Reason-code purity (now including derived context codes)
     purity_report = v1_purity.check_reason_code_purity(
         setup_codes=(d.setup_reason_codes for d in decisions),
@@ -1456,7 +1558,10 @@ def _run_tier2(args) -> int:
         "verdict": "PASS",
         "fail_category": None,
         "fail_reason": None,
-        "event_count": len(events),
+        "event_count": len(event_rows),
+        "event_count_pre_exclusion": len(events),
+        "excluded_origins": sorted(excluded_origins),
+        "excluded_event_counts": dict(excluded_event_counts),
         "execution_label_distribution": dict(execution_label_dist),
         "paper_link_counters": counters,
         "paper_validity_missing_total": paper_validity_missing_total,
@@ -1467,13 +1572,20 @@ def _run_tier2(args) -> int:
     v1_write.write_tier2_label_table_summary_markdown(summary)
 
     # Stdout report
+    excluded_msg = (
+        f" (excluded paper_origins {sorted(excluded_origins)} dropped "
+        f"{sum(excluded_event_counts.values())} events: "
+        f"{dict(excluded_event_counts)})"
+        if excluded_origins
+        else ""
+    )
     sys.stdout.write(
         f"Decision Engine v1 — Tier 2 label-table run\n"
         f"asof_date: {asof_date} (panel max={panel_max}, "
         f"Line E max={line_e_max}, Line TR max={line_tr_max})\n"
         f"inputs: {', '.join(inputs)}\n"
         f"step 1.0 live-scope: PASS ({len(cell_counts)} unique cells, "
-        f"{len(events)} events)\n"
+        f"{len(events)} events; {len(event_rows)} emitted{excluded_msg})\n"
     )
     for line_name in ("EXTENDED", "TRIGGER_RETEST", "ALL"):
         c = counters[line_name]
