@@ -735,6 +735,490 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
     is_tavan_lag = _c['is_tavan'].shift(1)
     _c['recent_tavan_10d_lag1'] = is_tavan_lag.rolling(10, min_periods=1).sum()
 
+    # ═══════════════════════════════════════════════════════════
+    # P-AK GROUPS — MARKER BEGIN
+    # T-close konvansiyon: tüm yeni feature'lar ham + otomatik _lag1
+    # ═══════════════════════════════════════════════════════════
+    _keys_before_p_ak = set(_c.keys())
+
+    # ═══════════════════════════════════════
+    # S. VOLATİLİTE REJİM GEÇİŞLERİ
+    # ═══════════════════════════════════════
+    _c['atr_pct_rank_60'] = atr_pct.rolling(60, min_periods=20).rank(pct=True)
+    _c['atr_pct_rank_252'] = atr_pct.rolling(252, min_periods=60).rank(pct=True)
+    log_ret = np.log(c / c.shift(1).replace(0, np.nan))
+    _c['realized_vol_5d'] = log_ret.rolling(5).std() * np.sqrt(252) * 100
+    _c['realized_vol_10d'] = log_ret.rolling(10).std() * np.sqrt(252) * 100
+    _c['realized_vol_20d'] = log_ret.rolling(20).std() * np.sqrt(252) * 100
+    _c['vol_of_vol_20d'] = _c['realized_vol_5d'].rolling(20).std()
+    atr_5_s = _rma(_true_range(df), 5)
+    atr_10_s = _rma(_true_range(df), 10)
+    atr_20_s = _rma(_true_range(df), 20)
+    atr_40_s = _rma(_true_range(df), 40)
+    _c['atr_expansion_ratio_5_20'] = atr_5_s / atr_20_s.replace(0, np.nan)
+    _c['atr_expansion_ratio_10_40'] = atr_10_s / atr_40_s.replace(0, np.nan)
+    _c['bb_width_expansion_5d'] = (bb_width_raw / bb_width_raw.shift(5).replace(0, np.nan)) - 1
+    _c['range_expansion_today'] = (h - l) / atr_val.replace(0, np.nan)
+    _c['range_expansion_5d'] = (h - l).rolling(5).mean() / atr_val.replace(0, np.nan)
+    _atr_rank60_filled = _c['atr_pct_rank_60'].fillna(0.5)
+    _bb_rank60 = bb_width_raw.rolling(60, min_periods=20).rank(pct=True).fillna(0.5)
+    _rng_rank60 = (h - l).rolling(60, min_periods=20).rank(pct=True).fillna(0.5)
+    _c['volatility_compression_score'] = ((1 - _atr_rank60_filled) + (1 - _bb_rank60) + (1 - _rng_rank60)) / 3
+    _prior_compression = _c['volatility_compression_score'].shift(1)
+    _c['volatility_release_score'] = (_prior_compression * _c['range_expansion_today']).fillna(0)
+    _prior_atr_rank = _c['atr_pct_rank_60'].shift(5)
+    _c['volatility_regime_change'] = ((_prior_atr_rank < 0.3) & (_c['atr_pct_rank_60'] > 0.7)).astype(int)
+
+    # ═══════════════════════════════════════
+    # T. GETIRI DAĞILIMI / KUYRUK ŞEKLİ
+    # ═══════════════════════════════════════
+    _ret = daily_ret_pct
+    _c['ret_skew_20d'] = _ret.rolling(20).skew()
+    _c['ret_skew_60d'] = _ret.rolling(60, min_periods=30).skew()
+    _c['ret_kurt_20d'] = _ret.rolling(20).kurt()
+    _c['ret_kurt_60d'] = _ret.rolling(60, min_periods=30).kurt()
+    _c['max_up_day_20d'] = _ret.rolling(20).max()
+    _c['max_down_day_20d'] = _ret.rolling(20).min()
+    _up_vol = _ret.where(_ret > 0).rolling(20, min_periods=5).std()
+    _down_vol = _ret.where(_ret < 0).abs().rolling(20, min_periods=5).std()
+    _c['up_down_vol_ratio_20d'] = _up_vol / _down_vol.replace(0, np.nan)
+    _c['positive_day_ratio_20d'] = (_ret > 0).astype(float).rolling(20).mean()
+    _ret_atr = (c - c.shift(1)) / atr_val.replace(0, np.nan)
+    _c['large_green_count_20d'] = (_ret_atr > 1.5).astype(float).rolling(20).sum()
+    _c['large_red_count_20d'] = (_ret_atr < -1.5).astype(float).rolling(20).sum()
+    _c['tail_risk_score'] = (
+        (-_ret.rolling(20).min().clip(upper=0) / 5).clip(0, 3) +
+        (_c['drawdown_20_pct'].abs() / 10).clip(0, 3) +
+        (atr_pct / 3).clip(0, 3)
+    ) / 9
+    _cum_ret_20 = _ret.rolling(20).sum()
+    _c['lottery_profile_score'] = (_ret.rolling(20).max() / _cum_ret_20.abs().replace(0, np.nan)).clip(-3, 3)
+
+    # ═══════════════════════════════════════
+    # U. LİKİDİTE / TRADABILITY (per-ticker subset)
+    # ═══════════════════════════════════════
+    _tl_vol = c * v
+    _c['tl_volume_5d_avg'] = _tl_vol.rolling(5).mean()
+    _c['tl_volume_60d_avg'] = _tl_vol.rolling(60, min_periods=20).mean()
+    _tl_z_mean = _tl_vol.rolling(20, min_periods=10).mean()
+    _tl_z_std = _tl_vol.rolling(20, min_periods=10).std()
+    _c['tl_volume_z_20'] = (_tl_vol - _tl_z_mean) / _tl_z_std.replace(0, np.nan)
+    _vol_mean20 = v.rolling(20).mean()
+    _vol_std20 = v.rolling(20).std()
+    _c['volume_consistency_20d'] = _vol_mean20 / _vol_std20.replace(0, np.nan)
+    _c['zero_volume_days_60d'] = (v < vol_sma20 * 0.1).astype(float).rolling(60, min_periods=20).sum()
+    _abs_ret = daily_ret_pct.abs()
+    _c['amihud_illiq_20d'] = (_abs_ret / _tl_vol.replace(0, np.nan)).rolling(20).mean() * 1e9
+    _c['amihud_illiq_60d'] = (_abs_ret / _tl_vol.replace(0, np.nan)).rolling(60, min_periods=20).mean() * 1e9
+    _c['spread_proxy'] = (h - l) / c.replace(0, np.nan)
+    _c['impact_cost_proxy'] = atr_pct / np.log1p(_tl_vol).replace(0, np.nan)
+    _c['min_tl_volume_20d'] = _tl_vol.rolling(20).min()
+    _c['liquidity_drop_flag'] = (_c['tl_volume_5d_avg'] < _c['tl_volume_20d_avg'] * 0.5).astype(int)
+    _liq_score = np.log1p(_c['tl_volume_20d_avg']).clip(0, 25) / 25
+    _vol_score = (1 - atr_pct.clip(0, 10) / 10)
+    _c['tradability_score'] = (_liq_score * 0.6 + _vol_score * 0.4)
+
+    # ═══════════════════════════════════════
+    # R. XU100-TÜREVİ (per-ticker; market-breadth ayrı aggregator'da)
+    # ═══════════════════════════════════════
+    if xu_df is not None and 'Close' in xu_df.columns and len(xu_df) >= 65:
+        xu_c = xu_df['Close'].reindex(df.index, method='ffill')
+        xu_h = xu_df['High'].reindex(df.index, method='ffill') if 'High' in xu_df.columns else xu_c
+        xu_l = xu_df['Low'].reindex(df.index, method='ffill') if 'Low' in xu_df.columns else xu_c
+        xu_o = xu_df['Open'].reindex(df.index, method='ffill') if 'Open' in xu_df.columns else xu_c
+        xu_ohlc = pd.DataFrame({'Open': xu_o, 'High': xu_h, 'Low': xu_l, 'Close': xu_c})
+        _c['xu100_return_1d'] = xu_c.pct_change() * 100
+        _c['xu100_return_5d'] = xu_c.pct_change(5) * 100
+        xu_ema21 = _ema(xu_c, 21)
+        xu_ema55 = _ema(xu_c, 55)
+        _c['xu100_above_ema21'] = (xu_c > xu_ema21).astype(int)
+        _c['xu100_above_ema55'] = (xu_c > xu_ema55).astype(int)
+        xu_adx, _, _ = _calc_adx_with_di(xu_ohlc, 14)
+        _c['xu100_adx_14'] = xu_adx
+        xu_bb_mid = _sma(xu_c, 20)
+        xu_bb_std = xu_c.rolling(20).std()
+        _c['xu100_bb_width'] = ((xu_bb_mid + 2 * xu_bb_std) - (xu_bb_mid - 2 * xu_bb_std)) / xu_bb_mid.replace(0, np.nan) * 100
+        xu_atr14 = _calc_atr(xu_ohlc, 14)
+        _c['xu100_atr_pct'] = xu_atr14 / xu_c.replace(0, np.nan) * 100
+        xu_high20 = xu_h.rolling(20).max()
+        _c['xu100_drawdown_20'] = (xu_c - xu_high20) / xu_high20.replace(0, np.nan) * 100
+        xu_adx_slope = (xu_adx - xu_adx.shift(5)) / 5
+        _c['xu100_regime_score'] = (
+            _c['xu100_above_ema21'].astype(float) * 30 +
+            _c['xu100_above_ema55'].astype(float) * 25 +
+            (xu_adx_slope > 0).astype(float) * 20 +
+            (_c['xu100_drawdown_20'] > -5).astype(float) * 25
+        )
+    else:
+        for _k in ['xu100_return_1d', 'xu100_return_5d', 'xu100_above_ema21', 'xu100_above_ema55',
+                   'xu100_adx_14', 'xu100_bb_width', 'xu100_atr_pct', 'xu100_drawdown_20', 'xu100_regime_score']:
+            _c[_k] = pd.Series(np.nan, index=df.index)
+
+    # ═══════════════════════════════════════
+    # V. GAP DAVRANIŞI (daily-derived; intraday alt küme SKIP)
+    # ═══════════════════════════════════════
+    prior_c = c.shift(1)
+    gap_abs = o - prior_c
+    _c['gap_atr'] = gap_abs / atr_val.replace(0, np.nan)
+    _c['gap_direction'] = pd.Series(np.sign(gap_abs.values), index=df.index, dtype=float)
+    _c['gap_after_squeeze'] = ((_c['gap_pct'].abs() > 1.5).astype(int) *
+                               _c['squeeze_on'].shift(1, fill_value=0).astype(int))
+    _vol_dryup_yest = (_c['vol_dryup_ratio'].shift(1) < 0.7).astype(int)
+    _c['gap_after_volume_dryup'] = (_c['gap_pct'].abs() > 1.5).astype(int) * _vol_dryup_yest
+    _c['gap_after_tavan'] = ((_c['is_tavan'].shift(1) == 1) & (_c['gap_pct'] > 0)).astype(int)
+    _c['avg_gap_5d'] = _c['gap_pct'].rolling(5).mean()
+    _c['gap_volatility_20d'] = _c['gap_pct'].rolling(20).std()
+    _c['overnight_return_1d'] = (o / prior_c.replace(0, np.nan) - 1) * 100
+    _c['intraday_return_1d'] = (c / o.replace(0, np.nan) - 1) * 100
+    _on_var = _c['overnight_return_1d'].rolling(20).var()
+    _id_var = _c['intraday_return_1d'].rolling(20).var()
+    _c['overnight_vs_intraday_20d'] = _on_var / (_on_var + _id_var).replace(0, np.nan)
+    _gap_pos_mask = (_c['gap_pct'] > 1)
+    _green_today = (c > o)
+    _n_gap_20 = _gap_pos_mask.astype(float).rolling(20).sum()
+    _n_continue_20 = (_gap_pos_mask & _green_today).astype(float).rolling(20).sum()
+    _c['gap_continuation_rate_20d'] = _n_continue_20 / _n_gap_20.replace(0, np.nan)
+
+    # ═══════════════════════════════════════
+    # W. MUM ANATOMİSİ
+    # ═══════════════════════════════════════
+    body = c - o
+    body_abs = body.abs()
+    co_max = pd.concat([c, o], axis=1).max(axis=1)
+    co_min = pd.concat([c, o], axis=1).min(axis=1)
+    upper_wick_w = h - co_max
+    lower_wick_w = co_min - l
+    rng_w = (h - l).replace(0, np.nan)
+    _c['body_pct_range'] = body_abs / rng_w
+    _c['upper_wick_pct_range'] = upper_wick_w / rng_w
+    _c['lower_wick_pct_range'] = lower_wick_w / rng_w
+    _c['body_atr'] = body_abs / atr_val.replace(0, np.nan)
+    _c['range_atr'] = (h - l) / atr_val.replace(0, np.nan)
+    _c['close_location_value'] = (c - l) / rng_w
+    _c['open_location_value'] = (o - l) / rng_w
+    _yest_red = (c.shift(1) < o.shift(1))
+    _yest_green = (c.shift(1) > o.shift(1))
+    _today_green = (c > o)
+    _today_red = (c < o)
+    _c['bullish_engulfing_flag'] = (_yest_red & _today_green &
+                                    (c >= o.shift(1)) & (o <= c.shift(1))).fillna(False).astype(int)
+    _c['bearish_engulfing_flag'] = (_yest_green & _today_red &
+                                    (c <= o.shift(1)) & (o >= c.shift(1))).fillna(False).astype(int)
+    _c['hammer_flag'] = (
+        (lower_wick_w > 2 * body_abs) &
+        (upper_wick_w < body_abs) &
+        ((c - l) / rng_w > 0.6)
+    ).fillna(False).astype(int)
+    _c['shooting_star_flag'] = (
+        (upper_wick_w > 2 * body_abs) &
+        (lower_wick_w < body_abs) &
+        ((h - c) / rng_w > 0.6)
+    ).fillna(False).astype(int)
+    _c['inside_bar_flag'] = ((h < h.shift(1)) & (l > l.shift(1))).fillna(False).astype(int)
+    _c['outside_bar_flag'] = ((h > h.shift(1)) & (l < l.shift(1))).fillna(False).astype(int)
+    _rng_raw = (h - l)
+    _c['nr7_flag'] = (_rng_raw == _rng_raw.rolling(7).min()).fillna(False).astype(int)
+    _c['nr4_flag'] = (_rng_raw == _rng_raw.rolling(4).min()).fillna(False).astype(int)
+    _c['wide_range_bar_flag'] = (_c['range_atr'] > 2.0).fillna(False).astype(int)
+    _c['close_above_prev_high'] = (c > h.shift(1)).fillna(False).astype(int)
+    _c['close_below_prev_low'] = (c < l.shift(1)).fillna(False).astype(int)
+    _c['reversal_from_low_atr'] = (c - l) / atr_val.replace(0, np.nan)
+    _c['rejection_from_high_atr'] = (h - c) / atr_val.replace(0, np.nan)
+
+    # ═══════════════════════════════════════
+    # X. DESTEK / DİRENÇ / PİVOT GEOMETRİSİ
+    # ═══════════════════════════════════════
+    _c['dist_to_pivot_high_pct'] = (c - last_pivot_high) / last_pivot_high.replace(0, np.nan) * 100
+    _c['dist_to_pivot_low_pct'] = (c - last_pl) / last_pl.replace(0, np.nan) * 100
+    res_20 = h.rolling(20).max()
+    sup_20 = l.rolling(20).min()
+    _c['dist_to_resistance_20d'] = (c - res_20) / res_20.replace(0, np.nan) * 100
+    _c['dist_to_support_20d'] = (c - sup_20) / sup_20.replace(0, np.nan) * 100
+    _touch_res = (h >= res_20 * 0.995).astype(float)
+    _c['resistance_touch_count_20d'] = _touch_res.rolling(20).sum()
+    _touch_sup = (l <= sup_20 * 1.005).astype(float)
+    _c['support_touch_count_20d'] = _touch_sup.rolling(20).sum()
+    prior_res_20 = res_20.shift(1)
+    broke_above = (c > prior_res_20 * 1.005)
+    broke_5_ago = broke_above.shift(5, fill_value=False)
+    prior_res_5_ago = prior_res_20.shift(5)
+    failed_event = (broke_5_ago & (c < prior_res_5_ago))
+    success_event = (broke_5_ago & (c > prior_res_5_ago))
+    _c['failed_breakout_count_60d'] = failed_event.astype(float).rolling(60, min_periods=20).sum()
+    _c['successful_breakout_count_60d'] = success_event.astype(float).rolling(60, min_periods=20).sum()
+    _idx_range = pd.Series(np.arange(n), index=df.index, dtype=float)
+    _ph_mask = pivot_highs.notna()
+    _ph_idx = _idx_range.where(_ph_mask).ffill()
+    _c['pivot_high_age'] = _idx_range - _ph_idx
+    _pl_mask = pivot_lows.notna()
+    _pl_idx = _idx_range.where(_pl_mask).ffill()
+    _c['pivot_low_age'] = _idx_range - _pl_idx
+    range_mid = (high_20d + low_20d) / 2
+    _c['range_mid_dist_pct'] = (c - range_mid) / range_mid.replace(0, np.nan) * 100
+    _c['range_upper_dist_pct'] = (c - high_20d) / high_20d.replace(0, np.nan) * 100
+    _c['range_lower_dist_pct'] = (c - low_20d) / low_20d.replace(0, np.nan) * 100
+    range_pct_20 = (high_20d - low_20d) / c.replace(0, np.nan) * 100
+    base_active = (range_pct_20 < 8)
+    _c['base_duration_bars'] = _consecutive_count(base_active)
+    _c['base_width_pct'] = range_pct_20
+    _c['base_width_atr'] = (high_20d - low_20d) / atr_val.replace(0, np.nan)
+    _c['base_slope'] = _linreg_slope(c, 20)
+    _range_score = (1 - range_pct_20.clip(0, 15) / 15)
+    _slope_score = (1 - _c['base_slope'].abs().clip(0, 0.5) / 0.5)
+    _vol_dry_score = (1 - _c['vol_dryup_ratio'].clip(0.3, 1.5) / 1.5).clip(0, 1)
+    _c['base_quality_score'] = (_range_score * 0.4 + _slope_score * 0.3 + _vol_dry_score * 0.3)
+
+    # ═══════════════════════════════════════
+    # Y. BREAKOUT KALİTESİ
+    # ═══════════════════════════════════════
+    brk_level = h.rolling(20).max().shift(1)
+    _c['breakout_distance_pct'] = (c - brk_level) / brk_level.replace(0, np.nan) * 100
+    _c['breakout_distance_atr'] = (c - brk_level) / atr_val.replace(0, np.nan)
+    _c['breakout_volume_ratio'] = v / vol_sma20.replace(0, np.nan)
+    _c['breakout_close_strength'] = (c - l) / rng_w
+    _c['breakout_body_atr'] = body_abs / atr_val.replace(0, np.nan)
+    _c['breakout_upper_wick_pct'] = upper_wick_w / rng_w
+    _attempts_60 = broke_above.astype(float).rolling(60, min_periods=20).sum()
+    _c['prior_breakout_failure_rate'] = (_c['failed_breakout_count_60d'] / _attempts_60.replace(0, np.nan)).clip(0, 1)
+    _c['breakout_from_squeeze_flag'] = ((c > brk_level) & (_c['squeeze_on'].shift(1) == 1)).fillna(False).astype(int)
+    _c['breakout_from_accumulation_flag'] = ((c > brk_level) & (_c['vol_dryup_ratio'].shift(1) < 0.8)).fillna(False).astype(int)
+    _c['breakout_near_52w_high'] = ((c >= high_52w * 0.95) & (c > brk_level)).fillna(False).astype(int)
+    _c['breakout_above_20d_high'] = (c > brk_level).fillna(False).astype(int)
+    _c['breakout_above_60d_high'] = (c > h.rolling(60).max().shift(1)).fillna(False).astype(int)
+    _c['breakout_above_252d_high'] = (c > h.rolling(252, min_periods=60).max().shift(1)).fillna(False).astype(int)
+    _c['false_breakout_risk_score'] = (
+        (upper_wick_w / rng_w).fillna(0).clip(0, 1) * 0.4 +
+        (vol_sma20.replace(0, np.nan) / v.replace(0, np.nan)).fillna(0).clip(0, 3) / 3 * 0.3 +
+        _c['breakout_distance_pct'].fillna(0).clip(0, 10) / 10 * 0.3
+    )
+
+    # ═══════════════════════════════════════
+    # Z. PULLBACK / RETEST
+    # ═══════════════════════════════════════
+    recent_high = h.rolling(20).max()
+    _c['pullback_depth_atr'] = (recent_high - c) / atr_val.replace(0, np.nan)
+    _c['pullback_depth_pct'] = (c - recent_high) / recent_high.replace(0, np.nan) * 100
+    in_pullback = (c < recent_high * 0.98)
+    _c['pullback_duration'] = _consecutive_count(in_pullback)
+    _pb_vol_ratio = v / vol_sma20.replace(0, np.nan)
+    _pb_vol_during = _pb_vol_ratio.where(in_pullback)
+    _c['pullback_volume_dryup'] = _pb_vol_during.rolling(5, min_periods=1).mean()
+    _pb_wick = lower_wick_w / rng_w
+    _c['pullback_lower_wick_score'] = _pb_wick.where(in_pullback).rolling(5, min_periods=1).mean()
+    _c['pullback_to_ema21_dist'] = (c - ema21) / ema21.replace(0, np.nan) * 100
+    _c['pullback_to_ema55_dist'] = (c - ema55) / ema55.replace(0, np.nan) * 100
+    prior_brk_level = h.rolling(20).max().shift(20)
+    _c['pullback_to_breakout_level_dist'] = (c - prior_brk_level) / prior_brk_level.replace(0, np.nan) * 100
+    _c['retest_hold_flag'] = (
+        (l <= prior_brk_level * 1.02) & (c > prior_brk_level) & (c > o)
+    ).fillna(False).astype(int)
+    _c['retest_break_flag'] = (
+        (c < prior_brk_level) & (c.shift(1) > prior_brk_level)
+    ).fillna(False).astype(int)
+    _brk_event = ((c > prior_brk_level) & (c.shift(1) <= prior_brk_level))
+    _brk_idx = _idx_range.where(_brk_event).ffill()
+    _c['retest_age'] = _idx_range - _brk_idx
+    _c['retest_quality_score'] = (
+        _c['retest_hold_flag'].astype(float).rolling(5).sum() * 0.4 / 5 +
+        (_pb_vol_ratio < 0.7).astype(float).rolling(5).sum() * 0.3 / 5 +
+        _pb_wick.fillna(0).rolling(5).mean() * 0.3
+    )
+    _recent_hl = (last_pl > prev_pl).astype(int)
+    _recent_hl_active = _recent_hl.rolling(10, min_periods=1).max()
+    _c['higher_low_after_breakout'] = ((_recent_hl_active == 1) &
+                                        (_c['retest_age'].fillna(999) < 15)).astype(int)
+    _c['shakeout_flag'] = ((l < sup_20.shift(1)) & (c > sup_20.shift(1))).fillna(False).astype(int)
+
+    # ═══════════════════════════════════════
+    # AA. ORTALAMAYA DÖNÜŞ / TÜKENMİŞLİK
+    # ═══════════════════════════════════════
+    _c['rsi_2_percentile_252'] = _c['rsi_2'].rolling(252, min_periods=60).rank(pct=True)
+    _c['rsi_14_percentile_252'] = rsi14.rolling(252, min_periods=60).rank(pct=True)
+    typ_price = (h + l + c) / 3
+    _tpv_sum = (typ_price * v).rolling(20).sum()
+    _v_sum = v.rolling(20).sum()
+    vwap_proxy_20 = _tpv_sum / _v_sum.replace(0, np.nan)
+    _c['distance_from_vwap_proxy'] = (c - vwap_proxy_20) / vwap_proxy_20.replace(0, np.nan) * 100
+    _c['ema21_overextension_atr'] = (c - ema21) / atr_val.replace(0, np.nan)
+    _c['ema55_overextension_atr'] = (c - ema55) / atr_val.replace(0, np.nan)
+    _c['bb_upper_extension_pct'] = ((c - bb_upper) / bb_upper.replace(0, np.nan) * 100).clip(lower=0)
+    _c['consecutive_up_days'] = _consecutive_count(c > c.shift(1))
+    _c['consecutive_down_days'] = _consecutive_count(c < c.shift(1))
+    _c['climax_volume_flag'] = ((v > vol_sma20 * 2.5) & (daily_ret_pct.abs() > 4)).fillna(False).astype(int)
+    _c['climax_return_flag'] = (daily_ret_pct.abs() > 7).fillna(False).astype(int)
+    _c['exhaustion_gap_flag'] = (
+        (_c['gap_pct'] > 2) & (_c['returns_10d'] > 15) & (rsi14 > 70)
+    ).fillna(False).astype(int)
+    _c['blowoff_top_risk'] = (
+        (rsi14 > 75).astype(float) * 0.3 +
+        (upper_wick_w / rng_w).fillna(0).clip(0, 1) * 0.3 +
+        (v > vol_sma20 * 2).astype(float) * 0.2 +
+        (_c['ema21_overextension_atr'] > 3).astype(float) * 0.2
+    )
+    _c['capitulation_flag'] = (
+        (daily_ret_pct < -5) & (v > vol_sma20 * 2) & ((lower_wick_w / rng_w) > 0.4)
+    ).fillna(False).astype(int)
+    _c['mean_reversion_long_score'] = (
+        (1 - _c['rsi_2_percentile_252'].fillna(0.5)) * 0.4 +
+        (-_c['ema21_overextension_atr'].clip(-3, 0) / 3) * 0.3 +
+        (lower_wick_w / rng_w).fillna(0).clip(0, 1) * 0.3
+    )
+    _c['mean_reversion_short_risk'] = (
+        _c['rsi_14_percentile_252'].fillna(0.5) * 0.3 +
+        _c['ema21_overextension_atr'].clip(0, 5).fillna(0) / 5 * 0.4 +
+        _c['blowoff_top_risk'] * 0.3
+    )
+
+    # ═══════════════════════════════════════
+    # AB. ÇOKLU ZAMAN ÇERÇEVESİ (Weekly + Monthly proxy)
+    # ═══════════════════════════════════════
+    if weekly_df is not None and len(weekly_df) >= 20:
+        w_c = weekly_df['Close']
+        w_h = weekly_df['High']
+        w_l = weekly_df['Low']
+        _c['weekly_return_1w'] = (w_c.pct_change() * 100).reindex(df.index, method='ffill')
+        _c['weekly_return_4w'] = (w_c.pct_change(4) * 100).reindex(df.index, method='ffill')
+        w_rsi14_ab = _calc_rsi(w_c, 14)
+        _c['weekly_rsi_14'] = w_rsi14_ab.reindex(df.index, method='ffill')
+        _, _, w_macd_hist_ab = _calc_macd(w_c)
+        _c['weekly_macd_hist'] = w_macd_hist_ab.reindex(df.index, method='ffill')
+        w_rng_ab = (w_h - w_l).replace(0, np.nan)
+        _c['weekly_close_position'] = ((w_c - w_l) / w_rng_ab).reindex(df.index, method='ffill')
+        w_bb_mid_ab = _sma(w_c, 20)
+        w_bb_std_ab = w_c.rolling(20).std()
+        w_bb_width_ab = ((w_bb_mid_ab + 2 * w_bb_std_ab) - (w_bb_mid_ab - 2 * w_bb_std_ab)) / w_bb_mid_ab.replace(0, np.nan) * 100
+        _c['weekly_bb_width'] = w_bb_width_ab.reindex(df.index, method='ffill')
+        w_atr_ab = _calc_atr(weekly_df, 14)
+        _c['weekly_atr_pct'] = (w_atr_ab / w_c.replace(0, np.nan) * 100).reindex(df.index, method='ffill')
+        w_high52 = w_h.rolling(52, min_periods=20).max()
+        _c['weekly_near_52w_high'] = (w_c >= w_high52 * 0.95).astype(int).reindex(df.index, method='ffill')
+        w_high20_brk = w_h.rolling(20).max().shift(1)
+        _c['weekly_breakout_flag'] = (w_c > w_high20_brk).astype(int).reindex(df.index, method='ffill')
+        w_ema21_ab = _ema(w_c, 21)
+        w_ema55_ab = _ema(w_c, 55)
+        w_adx_ab, _, _ = _calc_adx_with_di(weekly_df, 14)
+        w_reg_ab = ((w_c > w_ema21_ab).astype(float) * 30 +
+                    (w_c > w_ema55_ab).astype(float) * 25 +
+                    (w_adx_ab > 25).astype(float) * 25 +
+                    (w_macd_hist_ab > 0).astype(float) * 20)
+        _c['weekly_regime_score'] = w_reg_ab.reindex(df.index, method='ffill')
+        _daily_trend_up = (c > ema21).astype(int)
+        _weekly_trend_up = (w_c > w_ema21_ab).astype(int).reindex(df.index, method='ffill').fillna(0).astype(int)
+        _c['daily_weekly_alignment'] = (
+            ((_daily_trend_up == 1) & (_weekly_trend_up == 1)).astype(int) -
+            ((_daily_trend_up == 0) & (_weekly_trend_up == 0)).astype(int)
+        )
+    else:
+        for _k in ['weekly_return_1w', 'weekly_return_4w', 'weekly_rsi_14', 'weekly_macd_hist',
+                   'weekly_close_position', 'weekly_bb_width', 'weekly_atr_pct',
+                   'weekly_near_52w_high', 'weekly_breakout_flag', 'weekly_regime_score',
+                   'daily_weekly_alignment']:
+            _c[_k] = pd.Series(np.nan, index=df.index)
+    _c['monthly_return_1m'] = c.pct_change(21) * 100
+    _c['monthly_trend_up'] = (c > _ema(c, 63)).astype(int)
+    _m_h21 = h.rolling(21).max()
+    _m_l21 = l.rolling(21).min()
+    _c['monthly_close_position'] = (c - _m_l21) / (_m_h21 - _m_l21).replace(0, np.nan)
+
+    # ═══════════════════════════════════════
+    # AF. TAKVİM / MEVSİMSELLİK
+    # ═══════════════════════════════════════
+    if isinstance(df.index, pd.DatetimeIndex):
+        dt = df.index
+        _c['day_of_week'] = pd.Series(dt.dayofweek.astype(float), index=df.index)
+        _c['month_of_year'] = pd.Series(dt.month.astype(float), index=df.index)
+        _c['week_of_month'] = pd.Series(((dt.day - 1) // 7 + 1).astype(float), index=df.index)
+        _month_per = pd.Series(dt.to_period('M').astype(str), index=df.index)
+        _c['month_start_flag'] = (_month_per != _month_per.shift(1)).astype(int)
+        _c['month_end_flag'] = (_month_per != _month_per.shift(-1)).astype(int)
+        _quarter_per = pd.Series(dt.to_period('Q').astype(str), index=df.index)
+        _c['quarter_end_flag'] = (_quarter_per != _quarter_per.shift(-1)).astype(int)
+        _df_idx_s = pd.Series(np.arange(n), index=df.index, dtype=float)
+        _grp_codes = _month_per.factorize()[0]
+        _grp_first = _df_idx_s.groupby(_grp_codes).transform('min')
+        _grp_last = _df_idx_s.groupby(_grp_codes).transform('max')
+        _c['days_from_month_start'] = _df_idx_s - _grp_first
+        _c['days_to_month_end'] = _grp_last - _df_idx_s
+        _idx_ts = df.index.to_series()
+        _days_diff = _idx_ts.diff().dt.days.fillna(1).astype(int)
+        _c['post_holiday_flag'] = (_days_diff > 3).astype(int)
+        _days_to_next = (_idx_ts.shift(-1) - _idx_ts).dt.days.fillna(1).astype(int)
+        _c['pre_holiday_flag'] = (_days_to_next > 3).astype(int)
+        _week_per = pd.Series(dt.to_period('W').astype(str), index=df.index)
+        _week_counts = _week_per.groupby(_week_per).transform('count')
+        _c['short_week_flag'] = (_week_counts < 5).astype(int)
+        _c['earnings_season_proxy'] = pd.Series(
+            dt.month.isin([2, 5, 8, 11]).astype(int), index=df.index
+        )
+        _rebal_arr = (dt.month.isin([3, 6, 9, 12]) & (dt.day >= 22)).astype(int)
+        _c['index_rebalance_window'] = pd.Series(_rebal_arr, index=df.index)
+        _taxloss_arr = ((dt.month == 12) & (dt.day >= 15)).astype(int)
+        _c['tax_loss_window_proxy'] = pd.Series(_taxloss_arr, index=df.index)
+    else:
+        for _k in ['day_of_week', 'month_of_year', 'week_of_month', 'month_start_flag', 'month_end_flag',
+                   'quarter_end_flag', 'days_from_month_start', 'days_to_month_end',
+                   'pre_holiday_flag', 'post_holiday_flag', 'short_week_flag',
+                   'earnings_season_proxy', 'index_rebalance_window', 'tax_loss_window_proxy']:
+            _c[_k] = pd.Series(np.nan, index=df.index)
+
+    # ═══════════════════════════════════════
+    # AI. RİSK / STOP / HEDEF GEOMETRİSİ (varsayılan STOP_K=2 ATR, TGT_K=4 ATR)
+    # ═══════════════════════════════════════
+    _STOP_K = 2.0
+    _TGT_K = 4.0
+    _stop_lvl = c - atr_val * _STOP_K
+    _tgt_lvl = c + atr_val * _TGT_K
+    _c['stop_distance_pct'] = (c - _stop_lvl) / c.replace(0, np.nan) * 100
+    _c['stop_distance_atr'] = pd.Series(_STOP_K, index=df.index, dtype=float)
+    _c['target_distance_pct'] = (_tgt_lvl - c) / c.replace(0, np.nan) * 100
+    _c['target_distance_atr'] = pd.Series(_TGT_K, index=df.index, dtype=float)
+    _c['reward_risk_ratio'] = pd.Series(_TGT_K / _STOP_K, index=df.index, dtype=float)
+    _nearest_sup = pd.concat([last_pl, sup_20], axis=1).max(axis=1)
+    _c['nearest_support_stop_dist'] = (c - _nearest_sup) / atr_val.replace(0, np.nan)
+    _nearest_res = pd.concat([last_pivot_high, res_20], axis=1).min(axis=1)
+    _c['nearest_resistance_target_dist'] = (_nearest_res - c) / atr_val.replace(0, np.nan)
+    _c['atr_stop_viability'] = (_c['nearest_support_stop_dist'] / _STOP_K).clip(0, 3)
+    _abs_gap_avg = _c['gap_pct'].abs().rolling(20).mean()
+    _gap_atr_avg = (_abs_gap_avg / 100) * c / atr_val.replace(0, np.nan)
+    _c['gap_stop_risk'] = (_gap_atr_avg / _STOP_K).clip(0, 3)
+    _size_vol = (1 / atr_pct.clip(0.5, 10))
+    _size_liq = np.log1p(_c['tl_volume_20d_avg']).clip(0, 25) / 25
+    _c['position_size_score'] = (_size_vol * 0.5 + _size_liq * 0.5)
+    _c['trail_stop_k_suggested'] = (2.0 + (atr_pct / 5).clip(0, 2)).clip(1.5, 5)
+
+    # ═══════════════════════════════════════
+    # AK. ETKİLEŞİM (sector-bağımlı olanlar SKIP — sector OHLCV yok)
+    # ═══════════════════════════════════════
+    _c['rvol_x_close_position'] = rvol * _c['close_position']
+    _c['rvol_x_breakout_distance'] = rvol * _c['breakout_distance_atr']
+    _c['squeeze_x_volume_surge'] = _c['squeeze_on'].astype(float) * _c['vol_surge_today']
+    _xu_reg = _c.get('xu100_regime_score')
+    if isinstance(_xu_reg, pd.Series) and _xu_reg.notna().any():
+        _c['market_regime_x_signal'] = _c['q_total'] * _xu_reg / 100
+    else:
+        _c['market_regime_x_signal'] = pd.Series(np.nan, index=df.index)
+    _c['atr_x_gap'] = atr_pct * _c['gap_pct'].abs()
+    _c['trend_x_pullback_depth'] = trend_s * _c['pullback_depth_atr'].abs()
+    _c['overextension_x_volume_climax'] = _c['ema21_overextension_atr'].clip(lower=0) * _c['climax_volume_flag'].astype(float)
+    _c['near_high_x_rvol'] = _c['near_52w_high'].astype(float) * rvol
+    _c['tavan_x_recent_tavan'] = _c['is_tavan'].astype(float) * _c['recent_tavan_10d']
+    _c['liquidity_x_volatility'] = _c['tradability_score'] * atr_pct
+
+    # ═══════════════════════════════════════
+    # AUTO-LAG1: P-AK gruplarının her ham feature'ı için _lag1 varyantı
+    # T-close konvansiyon (mevcut O7 pattern uniform uygulanır)
+    # ═══════════════════════════════════════
+    _new_keys_p_ak = sorted(set(_c.keys()) - _keys_before_p_ak)
+    for _k in _new_keys_p_ak:
+        if _k.endswith('_lag1'):
+            continue
+        _v = _c[_k]
+        if isinstance(_v, pd.Series):
+            _c[f'{_k}_lag1'] = _v.shift(1)
+        else:
+            _c[f'{_k}_lag1'] = pd.Series(_v, index=df.index)
+
+
     return pd.DataFrame(_c, index=df.index)
 
 
