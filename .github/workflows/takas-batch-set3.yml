@@ -1,0 +1,30 @@
+name: Takas Batch SET3 (VBTYZ GOKNR TUCLK DAPGM)
+on:
+  workflow_dispatch:
+
+jobs:
+  takas-batch-set3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Run takas batch set3
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          PYTHONPATH: .
+        run: python tools/takas_batch_2026_05_15_set3.py
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: takas-batch-2026-05-15-set3
+          path: |
+            output/takas_batch_2026-05-15_set3.csv
+            output/takas_batch_2026-05-15_set3_ice.csv
+            output/takas_batch_2026-05-15_set3.md
+          if-no-files-found: warn
