@@ -233,18 +233,43 @@ def _find_pivot_highs(high, lb=5):
 # ANA FEATURE HESAPLAMA
 # ═══════════════════════════════════════════
 
+_OHLCV_CANONICAL = {'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}
+
+
+def _normalize_ohlcv_columns(d):
+    """OHLCV kolon adlarını case-insensitive canonical (Title) forma çevir.
+
+    Open/open/OPEN → Open. Diğer kolonları aynı bırakır. None geçirilirse None döner.
+    Idempotent: zaten Title case ise mapping boştur, .rename no-op olur.
+    """
+    if d is None:
+        return None
+    mapping = {}
+    for col in d.columns:
+        cl = str(col).lower()
+        if cl in _OHLCV_CANONICAL:
+            target = _OHLCV_CANONICAL[cl]
+            if col != target:
+                mapping[col] = target
+    return d.rename(columns=mapping) if mapping else d
+
+
 def compute_all_features(df, xu_df=None, weekly_df=None):
     """
     Tek bir hisse için tüm screener primitive feature'ları hesapla.
 
     Args:
-        df: DataFrame — OHLCV, Uppercase kolonlar (Close, High, Low, Open, Volume)
-        xu_df: XU100 DataFrame — relatif güç için
-        weekly_df: Haftalık resample — HTF feature'lar için (opsiyonel)
+        df: DataFrame — OHLCV (Open/High/Low/Close/Volume, case-insensitive)
+        xu_df: XU100 DataFrame — relatif güç için (kolonlar case-insensitive)
+        weekly_df: Haftalık resample — HTF feature'lar için (opsiyonel, case-insensitive)
 
     Returns:
         DataFrame — aynı index, her kolon bir feature
     """
+    df = _normalize_ohlcv_columns(df)
+    xu_df = _normalize_ohlcv_columns(xu_df)
+    weekly_df = _normalize_ohlcv_columns(weekly_df)
+
     n = len(df)
     if n < 80:
         return pd.DataFrame(index=df.index)
