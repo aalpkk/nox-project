@@ -1,12 +1,12 @@
 """
 Feature availability manifest for ml/features.py output.
 
-This module classifies every per-ticker feature emitted by
-`compute_all_features` so downstream model code can answer:
+This module classifies every feature emitted by `compute_all_features` and
+`compute_cross_sectional_features` so downstream model code can answer:
 
-  * Which group does this feature belong to (A..AK)?
-  * When is it known — at T-open, T-close, or derived?
-  * What inputs does it require — XU100 hydration?
+  * Which group does this feature belong to (A..AK, P-CS, R-BRD, Q-SEC, MACRO)?
+  * When is it known — at T-open, T-close, T-close after full panel, or derived?
+  * What inputs does it require — XU100, sector_map.json, full market panel?
   * Is it safe to consume in a T-close model (signal_asof = T close)?
   * Is it safe to consume in a T+1-open model (executable at next open)?
   * Was an automatic _lag1 variant generated for it?
@@ -17,16 +17,10 @@ The classification is rule-based on the feature name (prefix/suffix/explicit
 sets) — there is no runtime introspection of feature semantics. If a feature
 name changes in `features.py`, update the rules here in lock-step.
 
-The cross-sectional aggregator (`compute_cross_sectional_features`) is not yet
-shipped — `cs_rank_*` / `cs_z_*` / `cs_pctile_*` features are still detected by
-prefix here so the framework is ready to absorb them in a follow-up commit
-without a schema break.
-
 Whitelists for tiered model training are also defined here:
   * F0_CORE_EXISTING:    A..O groups that existed before the P-AK expansion
   * F1_CONTEXT_ADDED:    F0 + per-ticker P-AK groups (S/T/U/R/V/W/X/Y/Z/AA/AB/AF/AI/AK)
-  * F2_FULL_EXPERIMENTAL: F1 + every auto-_lag1 sibling (cross-sectional groups
-                          land in a follow-up commit)
+  * F2_FULL_EXPERIMENTAL: F1 + cross-sectional/sector/breadth + auto-_lag1 set
 
   * T_CLOSE_FEATURES:    features known at end of day T (the default model surface)
   * T1_OPEN_FEATURES:    subset usable when scoring at next-day open
@@ -277,6 +271,30 @@ _GROUP_AK = {  # AK. Interaction
     'liquidity_x_volatility',
 }
 
+# Cross-sectional aggregator outputs (compute_cross_sectional_features)
+_GROUP_R_BREADTH = {  # R-breadth. Market-wide breadth (panel aggregate)
+    'market_pct_above_ema21', 'market_pct_above_ema55',
+    'market_pct_new_20d_high', 'market_pct_new_20d_low',
+    'market_adv_dec_ratio', 'market_up_volume_ratio',
+    'market_tavan_count', 'market_taban_count',
+    'market_net_tavan_pressure', 'market_risk_off_flag',
+}
+
+_GROUP_Q_SECTOR = {  # Q. Sector relative
+    'sector', 'sector_return_1d', 'sector_return_5d', 'sector_return_20d',
+    'stock_vs_sector_5d', 'stock_vs_sector_20d',
+    'sector_rs_rank_20d', 'sector_momentum_accel',
+    'sector_breadth_pct_above_ema21', 'sector_breadth_pct_green',
+    'sector_volume_surge', 'sector_leader_flag', 'sector_laggard_flag',
+}
+
+# Macro features (compute_macro_features)
+_GROUP_MACRO = {
+    'vix', 'vix_chg_5d', 'dxy_trend', 'usdtry_chg_1d', 'spy_trend',
+    'macro_risk_score', 'xu100_ret_5d',
+    # xu100_above_ema21 also lives in R-ticker (R group dominates)
+}
+
 
 _ALL_BASE_GROUPS = {
     'A': _GROUP_A, 'B': _GROUP_B, 'C': _GROUP_C, 'D': _GROUP_D, 'E': _GROUP_E,
@@ -285,25 +303,27 @@ _ALL_BASE_GROUPS = {
     'S': _GROUP_S, 'T': _GROUP_T, 'U': _GROUP_U, 'R-ticker': _GROUP_R_TICKER,
     'V': _GROUP_V, 'W': _GROUP_W, 'X': _GROUP_X, 'Y': _GROUP_Y, 'Z': _GROUP_Z,
     'AA': _GROUP_AA, 'AB': _GROUP_AB, 'AF': _GROUP_AF, 'AI': _GROUP_AI, 'AK': _GROUP_AK,
+    'R-breadth': _GROUP_R_BREADTH, 'Q-sector': _GROUP_Q_SECTOR,
+    'MACRO': _GROUP_MACRO,
 }
 
 # Groups that get auto-_lag1 variants by features.py (the P-AK marker range).
-# F0 (A..O) does NOT auto-lag; O7 lag-1 features are hand-rolled.
+# F0 (A..O) and macro do NOT auto-lag; O7 lag-1 features are hand-rolled.
 _AUTO_LAG_GROUPS = {
     'S', 'T', 'U', 'R-ticker', 'V', 'W', 'X', 'Y', 'Z',
     'AA', 'AB', 'AF', 'AI', 'AK',
 }
 
 # Groups that depend on XU100 hydration.
-_REQUIRES_XU100_GROUPS = {'N', 'R-ticker'}
+_REQUIRES_XU100_GROUPS = {'N', 'R-ticker', 'MACRO'}
 # AK depends on XU100 indirectly through market_regime_x_signal — flag that one only.
 _REQUIRES_XU100_EXTRA = {'market_regime_x_signal'}
 
-# Cross-sectional / sector group registration is reserved for a follow-up
-# commit that wires `compute_cross_sectional_features`. The `cs_*` prefix
-# detection below still classifies any panel features that ship before then.
-_REQUIRES_PANEL_GROUPS: set[str] = set()
-_REQUIRES_SECTOR_MAP_GROUPS: set[str] = set()
+# Groups that depend on the cross-sectional panel.
+_REQUIRES_PANEL_GROUPS = {'R-breadth', 'Q-sector'}
+
+# Groups that depend on sector_map.json.
+_REQUIRES_SECTOR_MAP_GROUPS = {'Q-sector'}
 
 # Features known at T-open (computable when the day-T bar is still forming or
 # at the open print). Mostly calendar / overnight / gap-direction.
@@ -354,6 +374,8 @@ _DO_NOT_USE_DIRECT = {
     'target_distance_pct',  # depends on close (raw); also same as target proxy
     'tl_volume_20d_avg',    # raw TL volume — scale heterogeneous; use cs_rank
     'tl_volume_5d_avg', 'tl_volume_60d_avg', 'min_tl_volume_20d',
+    # Sector label is categorical; encode externally
+    'sector',
     # Static configuration constants — _STOP_K / _TGT_K / TGT_K/STOP_K /
     # adaptive-trail-K. Carry no information until dynamic stop/target is wired
     # in; until then they are zero-variance noise for the model.
@@ -491,8 +513,7 @@ def build_feature_manifest(feature_names: Iterable[str]) -> pd.DataFrame:
     ----------
     feature_names : iterable of str
         Names of all feature columns (per-ticker output of
-        compute_all_features; cross-sectional / sector / macro additions
-        land in a follow-up commit).
+        compute_all_features merged with cross-sectional output and macro).
 
     Returns
     -------
@@ -533,8 +554,9 @@ F1_CONTEXT_ADDED: frozenset[str] = frozenset(
     | _GROUP_AA | _GROUP_AB | _GROUP_AF | _GROUP_AI | _GROUP_AK
 )
 
-# F2 adds every auto-_lag1 sibling. Cross-sectional / sector / macro features
-# join F2 in a follow-up commit when the aggregator ships.
+# F2 adds cross-sectional/sector/breadth + every auto-_lag1 sibling. The
+# auto-_lag1 names are reconstructed by appending '_lag1' to every member of
+# the auto-lagged groups (matches the loop in compute_all_features).
 _F2_AUTO_LAG_NAMES: frozenset[str] = frozenset(
     f'{name}_lag1'
     for group in _AUTO_LAG_GROUPS
@@ -543,7 +565,9 @@ _F2_AUTO_LAG_NAMES: frozenset[str] = frozenset(
 
 F2_FULL_EXPERIMENTAL: frozenset[str] = frozenset(
     F1_CONTEXT_ADDED
+    | _GROUP_R_BREADTH | _GROUP_Q_SECTOR
     | _F2_AUTO_LAG_NAMES
+    | _GROUP_MACRO
 )
 
 T_CLOSE_FEATURES: frozenset[str] = frozenset(

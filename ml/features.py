@@ -260,11 +260,15 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
 
     Args:
         df: DataFrame — OHLCV (Open/High/Low/Close/Volume, case-insensitive)
-        xu_df: XU100 DataFrame — relatif güç için (kolonlar case-insensitive)
-        weekly_df: Haftalık resample — HTF feature'lar için (opsiyonel, case-insensitive)
+        xu_df: XU100 DataFrame — relatif güç + R XU100-türev grubu için (opsiyonel)
+        weekly_df: Haftalık resample — HTF + AB grubu için (opsiyonel, yoksa auto-resample)
 
     Returns:
         DataFrame — aynı index, her kolon bir feature
+
+    Notes:
+        - xu_df ve weekly_df'in kolon adları case-insensitive normalize edilir (open→Open vs.)
+        - T-close konvansiyon: P-AK gruplarının her ham feature'ı için _lag1 varyantı üretilir
     """
     df = _normalize_ohlcv_columns(df)
     xu_df = _normalize_ohlcv_columns(xu_df)
@@ -1218,8 +1222,226 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
         else:
             _c[f'{_k}_lag1'] = pd.Series(_v, index=df.index)
 
-
     return pd.DataFrame(_c, index=df.index)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CROSS-SECTIONAL AGGREGATOR (panel-wide; gruplar P / Q / R-breadth)
+# ═══════════════════════════════════════════════════════════════════
+
+_CS_RANK_DEFAULTS = [
+    'returns_1d', 'returns_5d', 'returns_10d',
+    'rsi_14', 'rsi_2',
+    'atr_pct', 'vol_ratio_20', 'bb_width',
+    'rs_10', 'rs_60', 'rs_composite',
+    'tl_volume_20d_avg',
+    'ema21_dist_pct', 'ema55_dist_pct',
+    'q_total', 'rg_score', 'br_score',
+    'breakout_distance_atr', 'pullback_depth_atr',
+    'volatility_compression_score', 'tradability_score',
+    'realized_vol_20d', 'amihud_illiq_20d',
+]
+
+_CS_Z_DEFAULTS = [
+    'returns_5d', 'vol_ratio_20', 'atr_pct',
+    'tl_volume_20d_avg', 'rsi_14', 'q_total',
+    'realized_vol_20d',
+]
+
+
+def compute_cross_sectional_features(
+    panel_df,
+    sector_map_path='tools/sector_map.json',
+    rank_features=None,
+    z_features=None,
+    date_col='date',
+    ticker_col='ticker',
+):
+    """
+    Panel üzerinde cross-sectional + sector-relative + market-breadth feature'ları üretir.
+
+    Çağıran sırası:
+        1) Her ticker için compute_all_features(...) çağır
+        2) Sonuçları long-format panel'de birleştir (kolonlar: ticker, date, + features)
+        3) Bu fonksiyonu çağır → cs_rank_*, cs_z_*, market_*, sector_* eklenir
+
+    Args:
+        panel_df: long-format DataFrame
+            - 'ticker' kolonu (str)
+            - 'date' kolonu (datetime; ya da index DatetimeIndex)
+            - feature kolonları (compute_all_features çıktısı)
+        sector_map_path: tools/sector_map.json yolu. None → sector feature'lar skip.
+        rank_features: cs_rank_* üretilecek liste. None → _CS_RANK_DEFAULTS.
+        z_features: cs_z_* üretilecek liste. None → _CS_Z_DEFAULTS.
+
+    Returns:
+        DataFrame, panel_df'ye eklenmiş:
+            cs_rank_<feat>, cs_z_<feat> (her feature için)
+            cs_pctile_tl_volume
+            market_pct_above_ema21, market_pct_above_ema55,
+            market_pct_new_20d_high, market_pct_new_20d_low,
+            market_adv_dec_ratio, market_up_volume_ratio,
+            market_tavan_count, market_taban_count,
+            market_net_tavan_pressure, market_risk_off_flag
+            sector_return_1d, sector_return_5d, sector_return_20d,
+            stock_vs_sector_5d, stock_vs_sector_20d,
+            sector_rs_rank_20d, sector_momentum_accel,
+            sector_breadth_pct_above_ema21, sector_breadth_pct_green,
+            sector_volume_surge, sector_leader_flag, sector_laggard_flag
+    """
+    import json as _json
+    import os as _os
+
+    df = panel_df.copy()
+    if date_col not in df.columns:
+        if isinstance(df.index, pd.DatetimeIndex):
+            idx_name = df.index.name or 'index'
+            df = df.reset_index().rename(columns={idx_name: date_col})
+        else:
+            raise ValueError(f"panel_df must have '{date_col}' column or DatetimeIndex")
+    if ticker_col not in df.columns:
+        raise ValueError(f"panel_df must have '{ticker_col}' column")
+
+    rank_features = rank_features if rank_features is not None else _CS_RANK_DEFAULTS
+    z_features = z_features if z_features is not None else _CS_Z_DEFAULTS
+
+    # ─── P. Cross-sectional rank / z ────────────────────
+    for feat in rank_features:
+        if feat in df.columns:
+            df[f'cs_rank_{feat}'] = df.groupby(date_col)[feat].rank(pct=True)
+    for feat in z_features:
+        if feat in df.columns:
+            grp = df.groupby(date_col)[feat]
+            mean = grp.transform('mean')
+            std = grp.transform('std').replace(0, np.nan)
+            df[f'cs_z_{feat}'] = (df[feat] - mean) / std
+    if 'tl_volume_20d_avg' in df.columns:
+        df['cs_pctile_tl_volume'] = df.groupby(date_col)['tl_volume_20d_avg'].rank(pct=True)
+
+    # ─── R. Market breadth (panel-wide) ─────────────────
+    def _market_row(g):
+        out = {}
+        out['market_pct_above_ema21'] = (g['ema21_dist_pct'] > 0).mean() if 'ema21_dist_pct' in g else np.nan
+        out['market_pct_above_ema55'] = (g['ema55_dist_pct'] > 0).mean() if 'ema55_dist_pct' in g else np.nan
+        out['market_pct_new_20d_high'] = (
+            (g['close_vs_20d_high_pct'] >= -0.5).mean() if 'close_vs_20d_high_pct' in g else np.nan
+        )
+        out['market_pct_new_20d_low'] = (
+            (g['drawdown_20'] <= -0.5).mean() if 'drawdown_20' in g else np.nan
+        )
+        if 'returns_1d' in g:
+            up = (g['returns_1d'] > 0).sum()
+            dn = (g['returns_1d'] < 0).sum()
+            out['market_adv_dec_ratio'] = up / max(dn, 1)
+        else:
+            out['market_adv_dec_ratio'] = np.nan
+        if 'returns_1d' in g and 'tl_volume_20d_avg' in g:
+            tot = g['tl_volume_20d_avg'].sum()
+            up_vol = g.loc[g['returns_1d'] > 0, 'tl_volume_20d_avg'].sum()
+            out['market_up_volume_ratio'] = up_vol / max(tot, 1e-9)
+        else:
+            out['market_up_volume_ratio'] = np.nan
+        out['market_tavan_count'] = float(g['is_tavan'].sum()) if 'is_tavan' in g else np.nan
+        out['market_taban_count'] = (
+            float((g['returns_1d'] <= -9.5).sum()) if 'returns_1d' in g else np.nan
+        )
+        return pd.Series(out)
+
+    breadth = df.groupby(date_col, group_keys=False).apply(_market_row)
+    breadth['market_net_tavan_pressure'] = breadth['market_tavan_count'] - breadth['market_taban_count']
+    breadth['market_risk_off_flag'] = (
+        (breadth['market_pct_above_ema21'] < 0.4) &
+        (breadth['market_adv_dec_ratio'] < 0.8)
+    ).astype(int)
+    df = df.merge(breadth.reset_index(), on=date_col, how='left')
+
+    # ─── Q. Sector relative (sector_map.json) ───────────
+    sector_lookup = None
+    if sector_map_path and _os.path.exists(sector_map_path):
+        try:
+            with open(sector_map_path) as _f:
+                sm_raw = _json.load(_f)
+            tickers_obj = sm_raw.get('tickers', {})
+            sector_lookup = {
+                t: (info.get('sector_index') if isinstance(info, dict) else None)
+                for t, info in tickers_obj.items()
+            }
+        except (_json.JSONDecodeError, OSError):
+            sector_lookup = None
+
+    sector_cols = [
+        'sector_return_1d', 'sector_return_5d', 'sector_return_20d',
+        'stock_vs_sector_5d', 'stock_vs_sector_20d',
+        'sector_rs_rank_20d', 'sector_momentum_accel',
+        'sector_breadth_pct_above_ema21', 'sector_breadth_pct_green',
+        'sector_volume_surge', 'sector_leader_flag', 'sector_laggard_flag',
+    ]
+
+    if sector_lookup is not None and 'returns_1d' in df.columns:
+        df['sector'] = df[ticker_col].map(sector_lookup)
+        # Sector index does not have its own OHLCV → mean of constituent returns proxy.
+        # returns_5d / returns_10d already exist; returns_20d ise yok → 20-bar cumulative proxy
+        # constituent-mean ile yaklaşık verilir (kompozit endeks değil — mean of ticker returns).
+        agg_map = {}
+        if 'returns_1d' in df.columns:
+            agg_map['returns_1d'] = 'mean'
+        if 'returns_5d' in df.columns:
+            agg_map['returns_5d'] = 'mean'
+        if 'returns_10d' in df.columns:
+            agg_map['returns_10d'] = 'mean'
+        if 'ema21_dist_pct' in df.columns:
+            agg_map['ema21_dist_pct'] = lambda x: (x > 0).mean()
+        if 'vol_ratio_20' in df.columns:
+            agg_map['vol_ratio_20'] = 'mean'
+
+        green_mask_col = None
+        if 'returns_1d' in df.columns:
+            df['_green'] = (df['returns_1d'] > 0).astype(float)
+            agg_map['_green'] = 'mean'
+            green_mask_col = '_green'
+
+        sec_agg = df.groupby([date_col, 'sector']).agg(agg_map).reset_index()
+        rename_map = {
+            'returns_1d': 'sector_return_1d',
+            'returns_5d': 'sector_return_5d',
+            'returns_10d': 'sector_return_20d',  # 10g constituent-mean proxy; etiket "20d" liste uyumu için
+            'ema21_dist_pct': 'sector_breadth_pct_above_ema21',
+            'vol_ratio_20': 'sector_volume_surge',
+            '_green': 'sector_breadth_pct_green',
+        }
+        sec_agg = sec_agg.rename(columns=rename_map)
+        # Sector RS rank: o gün sektörler arasında 20g getiri rank'i
+        if 'sector_return_20d' in sec_agg.columns:
+            sec_agg['sector_rs_rank_20d'] = sec_agg.groupby(date_col)['sector_return_20d'].rank(pct=True)
+        # Momentum acceleration: 5d return - 5d return 5 bars ago (sector-level)
+        # Sector-bazlı time-series için ticker'a benzer hesaplama gerekir; basit proxy: rank delta
+        if 'sector_rs_rank_20d' in sec_agg.columns:
+            sec_agg = sec_agg.sort_values([date_col, 'sector'])
+            sec_agg['sector_momentum_accel'] = (
+                sec_agg.groupby('sector')['sector_rs_rank_20d'].diff(5)
+            )
+
+        df = df.merge(sec_agg, on=[date_col, 'sector'], how='left')
+        if green_mask_col and green_mask_col in df.columns:
+            df = df.drop(columns=[green_mask_col])
+
+        # Stock-vs-sector spreads
+        if 'returns_5d' in df.columns and 'sector_return_5d' in df.columns:
+            df['stock_vs_sector_5d'] = df['returns_5d'] - df['sector_return_5d']
+        if 'returns_10d' in df.columns and 'sector_return_20d' in df.columns:
+            df['stock_vs_sector_20d'] = df['returns_10d'] - df['sector_return_20d']
+        # Leader / laggard within sector by daily return
+        if 'returns_1d' in df.columns:
+            sec_rank = df.groupby([date_col, 'sector'])['returns_1d'].rank(pct=True)
+            df['sector_leader_flag'] = (sec_rank >= 0.90).astype(int)
+            df['sector_laggard_flag'] = (sec_rank <= 0.10).astype(int)
+    else:
+        for _k in sector_cols:
+            df[_k] = np.nan
+        if 'sector' not in df.columns:
+            df['sector'] = np.nan
+
+    return df
 
 
 # ═══════════════════════════════════════════
