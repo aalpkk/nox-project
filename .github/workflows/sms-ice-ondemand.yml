@@ -1,0 +1,46 @@
+name: SMS+ICE on-demand
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: 'Tickers (space or comma separated, uppercase)'
+        required: true
+        default: 'VBTYZ GOKNR TUCLK DAPGM'
+      hist_days:
+        description: 'Daily flow history window (days)'
+        required: false
+        default: '20'
+      asof:
+        description: 'Asof tag for output filename (YYYY-MM-DD)'
+        required: false
+        default: ''
+
+jobs:
+  sms-ice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pandas
+      - name: Run SMS+ICE
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
+          TICKERS: ${{ inputs.tickers }}
+          HIST_DAYS: ${{ inputs.hist_days }}
+          ASOF: ${{ inputs.asof }}
+          PYTHONPATH: .
+        run: python tools/sms_ice_ondemand.py
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sms-ice-ondemand
+          path: |
+            output/sms_ice_*.md
+            output/sms_ice_*.json
+          if-no-files-found: warn
