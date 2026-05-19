@@ -48,6 +48,7 @@ CSV_COLS = [
     "paper_stream_ref", "notes",
     "trident_tag", "trident_D_pct", "trident_SIL_pct_below_B",
     "trident_zone_width_pct", "trident_zone_age_bars",
+    "trident_weekly_family",
 ]
 
 ALLOWED_TRIDENT_COLS = frozenset({
@@ -76,6 +77,16 @@ SURFACED_TRIDENT_COLS = (
 )
 TRIDENT_ELIGIBLE_SETUP_KIND = "above_mb_birth"
 TRIDENT_ELIGIBLE_SOURCE = "mb_scanner"
+
+# PR-DE-3.17: cross-timeframe weekly confluence
+# A fresh mb_scanner above_mb_birth event on a sub-weekly family (mb_5h /
+# mb_1d / bb_5h / bb_1d) is "weekly-confluent" iff the same ticker also has
+# a mb_1w or bb_1w above_mb_birth event whose weekly bar is the LAST FULLY
+# COMPLETED week prior to asof (Friday-anchored, range (prev_Fri, this_Fri]).
+# Strict: only the immediately prior completed week — no wider lookback.
+WEEKLY_CONFLUENCE_WEEKLY_FAMILIES = frozenset({"mb_1w", "bb_1w"})
+WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES = frozenset({"mb_5h", "mb_1d", "bb_5h", "bb_1d"})
+WEEKLY_CONFLUENCE_TAG = "WEEKLY_BIRTH_ACTIVE"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -265,6 +276,91 @@ def _trident_lookup(
     return attachments.get((ticker, family_short), {})
 
 
+def _prior_completed_friday(asof: str) -> str:
+    """PR-DE-3.17: last Friday STRICTLY BEFORE asof (ISO YYYY-MM-DD).
+
+    The weekly bar labeled at this Friday closes the range
+    (prev_Friday, this_Friday] which spans Mon-Fri sessions. mb_1w /
+    bb_1w above_mb_birth events with `event_bar_date == this_Friday`
+    represent structural birth that completed during that week.
+
+    Edge case: when asof itself falls on a Friday (e.g. close-mode run on
+    Fri 2026-05-15), the current Friday's weekly bar has *just closed* and
+    is treated as the CURRENT week; "prior completed" returns the Friday
+    one week earlier.
+    """
+    d = dt.date.fromisoformat(asof)
+    delta = (d.weekday() - 4) % 7
+    if delta == 0:
+        delta = 7
+    return (d - dt.timedelta(days=delta)).isoformat()
+
+
+def _load_weekly_birth_tickers(asof: str) -> dict[str, list[str]]:
+    """PR-DE-3.17: return {ticker: sorted list of weekly families} for any
+    mb_1w / bb_1w above_mb_birth event whose `event_bar_date` matches
+    `_prior_completed_friday(asof)`.
+
+    Reads only ALLOWED columns from the trident probe (ticker, family,
+    event_bar_date) — leak guard preserved. Returns {} silently when the
+    probe is absent.
+    """
+    if not TRIDENT_PROBE_PATH.exists():
+        return {}
+    target = _prior_completed_friday(asof)
+    try:
+        table = pq.read_table(
+            TRIDENT_PROBE_PATH,
+            columns=["ticker", "family", "event_bar_date"],
+        )
+    except Exception as exc:
+        print(
+            f"[watchlist_generator] WARN: trident probe read (weekly) failed "
+            f"({TRIDENT_PROBE_PATH.relative_to(ROOT)}): {exc} — confluence skipped",
+            flush=True,
+        )
+        return {}
+
+    fams_by_ticker: dict[str, set[str]] = defaultdict(set)
+    for r in table.to_pylist():
+        fam = r.get("family") or ""
+        if fam not in WEEKLY_CONFLUENCE_WEEKLY_FAMILIES:
+            continue
+        ed = r.get("event_bar_date")
+        ed_str = str(ed)[:10] if ed is not None else ""
+        if ed_str != target:
+            continue
+        tk = r.get("ticker") or ""
+        if tk:
+            fams_by_ticker[tk].add(fam)
+    return {tk: sorted(fams) for tk, fams in fams_by_ticker.items()}
+
+
+def _weekly_confluence_lookup(
+    weekly_birth_tickers: dict[str, list[str]],
+    source: str,
+    family: str,
+    ticker: str,
+) -> str:
+    """Return ';'-joined weekly family list iff today's event is eligible
+    AND its ticker has a prior-week weekly birth. Empty string otherwise.
+    """
+    if source != TRIDENT_ELIGIBLE_SOURCE:
+        return ""
+    parts = (family or "").split("__", 1)
+    if len(parts) != 2:
+        return ""
+    family_short, setup_kind = parts[0], parts[1]
+    if setup_kind != TRIDENT_ELIGIBLE_SETUP_KIND:
+        return ""
+    if family_short not in WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES:
+        return ""
+    fams = weekly_birth_tickers.get(ticker)
+    if not fams:
+        return ""
+    return ";".join(fams)
+
+
 def _compute_trident_tag(att: dict) -> str:
     if not att:
         return ""
@@ -340,7 +436,10 @@ def main():
     total = len(rows)
     degraded = _read_degraded_state()
     trident_attachments = _load_trident_attachments(asof)
+    weekly_birth_tickers = _load_weekly_birth_tickers(asof)
+    prior_friday = _prior_completed_friday(asof)
     trident_attach_count = 0
+    weekly_confluence_count = 0
 
     out_md = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.md"
     out_csv = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.csv"
@@ -355,6 +454,21 @@ def main():
         )
         if att:
             trident_attach_count += 1
+        weekly_fam = _weekly_confluence_lookup(
+            weekly_birth_tickers,
+            r["source"],
+            r["family"],
+            r["ticker"],
+        )
+        base_tag = _compute_trident_tag(att)
+        if weekly_fam:
+            weekly_confluence_count += 1
+            trident_tag = (
+                f"{base_tag};{WEEKLY_CONFLUENCE_TAG}" if base_tag
+                else WEEKLY_CONFLUENCE_TAG
+            )
+        else:
+            trident_tag = base_tag
         rec = {
             "ticker": r["ticker"],
             "source": r["source"],
@@ -376,13 +490,14 @@ def main():
             "risk_atr": r["risk_atr"],
             "paper_stream_ref": r["paper_stream_ref"] or "",
             "notes": "",
-            "trident_tag": _compute_trident_tag(att),
+            "trident_tag": trident_tag,
             "trident_D_pct": _fmt_trident_pct(att.get("D_pct")),
             "trident_SIL_pct_below_B": _fmt_trident_pct(
                 att.get("structural_invalidation_pct_below_B")
             ),
             "trident_zone_width_pct": _fmt_trident_pct(att.get("zone_width_pct")),
             "trident_zone_age_bars": _fmt_trident_int(att.get("zone_age_bars")),
+            "trident_weekly_family": weekly_fam,
         }
         records.append(rec)
 
@@ -445,6 +560,7 @@ def main():
                     "trident_SIL_pct_below_B": r["trident_SIL_pct_below_B"],
                     "trident_zone_width_pct": r["trident_zone_width_pct"],
                     "trident_zone_age_bars": r["trident_zone_age_bars"],
+                    "trident_weekly_family": r["trident_weekly_family"],
                 }
                 w.writerow(row)
 
@@ -562,6 +678,12 @@ def main():
                     if r["trident_tag"]
                     else f"(D%={d_pct}, SIL={sil})"
                 )
+            if r["trident_weekly_family"]:
+                wf = r["trident_weekly_family"]
+                trident_cell = (
+                    f"{trident_cell} [wk:{wf}]" if trident_cell
+                    else f"[wk:{wf}]"
+                )
             A(
                 "| "
                 + " | ".join([
@@ -621,10 +743,19 @@ def main():
             f"trident attachments: {trident_attach_count}/{total} rows enriched "
             f"(source=mb_scanner + setup_kind=above_mb_birth eligible cohort)"
         )
+        print(
+            f"weekly confluence: {weekly_confluence_count} rows tagged "
+            f"{WEEKLY_CONFLUENCE_TAG} (prior_completed_friday={prior_friday}; "
+            f"eligible_fresh_families={sorted(WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES)}; "
+            f"weekly_birth_tickers={len(weekly_birth_tickers)})"
+        )
     else:
         print(
             f"trident attachments: 0/{total} (probe parquet absent at "
             f"{TRIDENT_PROBE_PATH.relative_to(ROOT)} — Stage 7.5 skipped or unavailable)"
+        )
+        print(
+            f"weekly confluence: 0 (probe parquet absent — confluence skipped)"
         )
     print(f"OUT_MD: {out_md} bytes={len(md_bytes)} sha256={md_sha}")
     print(f"OUT_CSV: {out_csv} bytes={len(csv_bytes)} sha256={csv_sha}")
