@@ -38,6 +38,7 @@ OUT_DIR = ROOT / "output"
 EVENTS_PATH = OUT_DIR / "decision_engine_v1_events.parquet"
 STAGE6_MANIFEST_PATH = OUT_DIR / "paper_execution_v0_forward_run_manifest.json"
 TRIDENT_PROBE_PATH = OUT_DIR / "trident_probe_mb_3y.parquet"
+XU100_DAILY_PATH = OUT_DIR / "xu100_extfeed_daily.parquet"
 
 SECTIONS = ["EXECUTABLE", "SIZE_REDUCED", "WAIT_BETTER_ENTRY", "WAIT_RETEST", "PAPER_ONLY"]
 
@@ -49,6 +50,7 @@ CSV_COLS = [
     "trident_tag", "trident_D_pct", "trident_SIL_pct_below_B",
     "trident_zone_width_pct", "trident_zone_age_bars",
     "trident_weekly_family",
+    "trident_tier1_active",
 ]
 
 ALLOWED_TRIDENT_COLS = frozenset({
@@ -87,6 +89,27 @@ TRIDENT_ELIGIBLE_SOURCE = "mb_scanner"
 WEEKLY_CONFLUENCE_WEEKLY_FAMILIES = frozenset({"mb_1w", "bb_1w"})
 WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES = frozenset({"mb_5h", "mb_1d", "bb_5h", "bb_1d"})
 WEEKLY_CONFLUENCE_TAG = "WEEKLY_BIRTH_ACTIVE"
+
+# PR-DE-3.18: Trident Tier-1 strict daily filter.
+# A mb_scanner above_mb_birth event on family `mb_1d` whose event_bar_date ==
+# asof is tagged TRIDENT_TIER1_ACTIVE iff ALL four gates AND together:
+#   G1: D_pct ∈ [TIER1_D_PCT_LOW, TIER1_D_PCT_HIGH)
+#   G2: structural_invalidation_pct_below_B ≤ trailing-365d tercile-33%
+#       (mb_1d cohort only; strictly before asof)
+#   G3: bos_distance_atr_at_event ≥ trailing-365d tercile-67%
+#       (mb_1d cohort only; strictly before asof)
+#   G4: XU100 daily close ret_20d > 0 at most-recent-available bar
+#       (regime up; lagged feed accepted as proxy with stale-days log).
+# Tag scope: ONLY the originating mb_1d watchlist row. No cross-TF surfacing —
+# sibling mb_5h/bb_5h/bb_1d/mb_1w/etc. rows on the same ticker remain untagged.
+# Trailing terciles are computed in-process on the existing trident probe
+# (no new ETL; reads are ALLOWED_TRIDENT_COLS only — leak guard preserved).
+TIER1_FAMILY = "mb_1d"
+TIER1_TAG = "TRIDENT_TIER1_ACTIVE"
+TIER1_D_PCT_LOW = 20.0
+TIER1_D_PCT_HIGH = 30.0  # exclusive upper bound
+TIER1_TRAILING_WINDOW_DAYS = 365
+TIER1_TRAILING_MIN_N = 30
 
 
 def _parse_args() -> argparse.Namespace:
@@ -336,6 +359,217 @@ def _load_weekly_birth_tickers(asof: str) -> dict[str, list[str]]:
     return {tk: sorted(fams) for tk, fams in fams_by_ticker.items()}
 
 
+def _compute_xu100_regime(asof: str) -> dict:
+    """PR-DE-3.18 (G4): read xu100_extfeed_daily.parquet, compute ret_20d at
+    the most-recent close bar at-or-before asof. Returns a state dict:
+
+      {
+        "available": bool,                # parquet present & non-empty
+        "asof_available": "YYYY-MM-DD",   # date of the close used
+        "ret_20d_pct": float,             # last close pct_change(20) * 100
+        "pass": bool,                     # ret_20d_pct > 0
+        "days_stale": int,                # asof - asof_available (calendar)
+        "reason": str,                    # short status string for logs
+      }
+
+    Graceful degrade: missing/empty/short feed → available=False, pass=False
+    (Tier-1 evaluates to zero rows; clear log line emitted). NO hard FAIL —
+    the watchlist always renders even when the regime input is unavailable.
+    """
+    state = {
+        "available": False,
+        "asof_available": "",
+        "ret_20d_pct": float("nan"),
+        "pass": False,
+        "days_stale": 0,
+        "reason": "feed_missing",
+    }
+    if not XU100_DAILY_PATH.exists():
+        return state
+    try:
+        import pandas as _pd
+        df = pq.read_table(XU100_DAILY_PATH).to_pandas()
+    except Exception as exc:
+        state["reason"] = f"read_failed:{exc.__class__.__name__}"
+        return state
+    if df.empty or "close" not in df.columns:
+        state["reason"] = "empty_or_no_close"
+        return state
+    if not isinstance(df.index, _pd.DatetimeIndex):
+        # Fall back: look for a Date column.
+        for cand in ("Date", "date", "ts"):
+            if cand in df.columns:
+                df = df.set_index(_pd.to_datetime(df[cand]))
+                break
+        if not isinstance(df.index, _pd.DatetimeIndex):
+            state["reason"] = "no_datetime_index"
+            return state
+    df = df.sort_index()
+    cutoff = _pd.Timestamp(asof) + _pd.Timedelta(days=1)
+    df = df.loc[df.index < cutoff]
+    if len(df) < 21:
+        state["reason"] = f"short_history:n={len(df)}"
+        return state
+    last_close = float(df["close"].iloc[-1])
+    ref_close = float(df["close"].iloc[-21])
+    last_dt = df.index[-1]
+    ret_20d_pct = (last_close / ref_close - 1.0) * 100.0
+    asof_avail = str(last_dt.date())
+    days_stale = max(0, (_pd.Timestamp(asof) - _pd.Timestamp(asof_avail)).days)
+    state.update({
+        "available": True,
+        "asof_available": asof_avail,
+        "ret_20d_pct": ret_20d_pct,
+        "pass": ret_20d_pct > 0.0,
+        "days_stale": days_stale,
+        "reason": "ok" if days_stale == 0 else f"stale_{days_stale}d",
+    })
+    return state
+
+
+def _load_tier1_eligible_keys(
+    asof: str,
+    xu100_state: dict,
+) -> tuple[set[tuple[str, str]], dict]:
+    """PR-DE-3.18: return ({(ticker, "mb_1d"), ...}, summary_dict).
+
+    Eligible set contains every (ticker, "mb_1d") whose trident probe row
+    satisfies G1+G2+G3 on event_bar_date==asof, when G4 (XU100 regime up)
+    is also true. If G4 fails, returns empty set with full breakdown.
+
+    Reads only ALLOWED_TRIDENT_COLS — leak guard preserved.
+    """
+    summary = {
+        "universe_size": 0,
+        "g1_pass": 0,
+        "g2_pass": 0,
+        "g3_pass": 0,
+        "g4_pass": bool(xu100_state.get("pass")),
+        "eligible_count": 0,
+        "sil_t33": None,
+        "bos_t67": None,
+        "trailing_n": 0,
+        "reason": "ok",
+    }
+    if not TRIDENT_PROBE_PATH.exists():
+        summary["reason"] = "probe_missing"
+        return set(), summary
+    try:
+        table = pq.read_table(
+            TRIDENT_PROBE_PATH,
+            columns=[
+                "ticker", "family", "event_bar_date", "D_pct",
+                "structural_invalidation_pct_below_B",
+                "bos_distance_atr_at_event",
+            ],
+        )
+    except Exception as exc:
+        summary["reason"] = f"probe_read_failed:{exc.__class__.__name__}"
+        return set(), summary
+    rows = table.to_pylist()
+    asof_str = str(asof)
+    # Trailing window for G2/G3 terciles: strictly before asof.
+    try:
+        asof_dt = dt.date.fromisoformat(asof)
+    except Exception:
+        summary["reason"] = "asof_parse_failed"
+        return set(), summary
+    win_start = (asof_dt - dt.timedelta(days=TIER1_TRAILING_WINDOW_DAYS)).isoformat()
+    sil_train: list[float] = []
+    bos_train: list[float] = []
+    today_rows: list[dict] = []
+    for r in rows:
+        fam = r.get("family") or ""
+        if fam != TIER1_FAMILY:
+            continue
+        ed = r.get("event_bar_date")
+        ed_str = str(ed)[:10] if ed is not None else ""
+        if not ed_str:
+            continue
+        if ed_str == asof_str:
+            today_rows.append(r)
+            continue
+        if win_start <= ed_str < asof_str:
+            sil = r.get("structural_invalidation_pct_below_B")
+            bos = r.get("bos_distance_atr_at_event")
+            try:
+                if sil is not None:
+                    sf = float(sil)
+                    if sf == sf:
+                        sil_train.append(sf)
+            except (TypeError, ValueError):
+                pass
+            try:
+                if bos is not None:
+                    bf = float(bos)
+                    if bf == bf:
+                        bos_train.append(bf)
+            except (TypeError, ValueError):
+                pass
+    summary["universe_size"] = len(today_rows)
+    summary["trailing_n"] = min(len(sil_train), len(bos_train))
+    if summary["trailing_n"] < TIER1_TRAILING_MIN_N:
+        summary["reason"] = f"trailing_too_short:n={summary['trailing_n']}"
+        return set(), summary
+    sil_train.sort()
+    bos_train.sort()
+    sil_t33 = sil_train[int(round(len(sil_train) * (1 / 3))) - 1] if sil_train else None
+    bos_t67 = bos_train[int(round(len(bos_train) * (2 / 3))) - 1] if bos_train else None
+    summary["sil_t33"] = sil_t33
+    summary["bos_t67"] = bos_t67
+    eligible: set[tuple[str, str]] = set()
+    for r in today_rows:
+        d_pct = r.get("D_pct")
+        sil = r.get("structural_invalidation_pct_below_B")
+        bos = r.get("bos_distance_atr_at_event")
+        try:
+            d_f = float(d_pct) if d_pct is not None else None
+        except (TypeError, ValueError):
+            d_f = None
+        try:
+            s_f = float(sil) if sil is not None else None
+        except (TypeError, ValueError):
+            s_f = None
+        try:
+            b_f = float(bos) if bos is not None else None
+        except (TypeError, ValueError):
+            b_f = None
+        g1 = (d_f is not None) and (TIER1_D_PCT_LOW <= d_f < TIER1_D_PCT_HIGH)
+        g2 = (s_f is not None) and (sil_t33 is not None) and (s_f <= sil_t33)
+        g3 = (b_f is not None) and (bos_t67 is not None) and (b_f >= bos_t67)
+        if g1: summary["g1_pass"] += 1
+        if g2: summary["g2_pass"] += 1
+        if g3: summary["g3_pass"] += 1
+        if g1 and g2 and g3 and summary["g4_pass"]:
+            tk = r.get("ticker") or ""
+            if tk:
+                eligible.add((tk, TIER1_FAMILY))
+    summary["eligible_count"] = len(eligible)
+    return eligible, summary
+
+
+def _tier1_lookup(
+    eligible_keys: set[tuple[str, str]],
+    source: str,
+    family: str,
+    ticker: str,
+) -> bool:
+    """Return True iff this watchlist row IS the originating mb_1d Tier-1
+    ELIGIBLE event. Strict same-row semantics — sibling sub-TF rows on the
+    same ticker are NOT tagged."""
+    if source != TRIDENT_ELIGIBLE_SOURCE:
+        return False
+    parts = (family or "").split("__", 1)
+    if len(parts) != 2:
+        return False
+    family_short, setup_kind = parts[0], parts[1]
+    if setup_kind != TRIDENT_ELIGIBLE_SETUP_KIND:
+        return False
+    if family_short != TIER1_FAMILY:
+        return False
+    return (ticker, family_short) in eligible_keys
+
+
 def _weekly_confluence_lookup(
     weekly_birth_tickers: dict[str, list[str]],
     source: str,
@@ -438,8 +672,11 @@ def main():
     trident_attachments = _load_trident_attachments(asof)
     weekly_birth_tickers = _load_weekly_birth_tickers(asof)
     prior_friday = _prior_completed_friday(asof)
+    xu100_state = _compute_xu100_regime(asof)
+    tier1_keys, tier1_summary = _load_tier1_eligible_keys(asof, xu100_state)
     trident_attach_count = 0
     weekly_confluence_count = 0
+    tier1_tag_count = 0
 
     out_md = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.md"
     out_csv = OUT_DIR / f"decision_engine_v1_tomorrow_watchlist_post_class_b_{asof}.csv"
@@ -461,14 +698,20 @@ def main():
             r["ticker"],
         )
         base_tag = _compute_trident_tag(att)
+        tag_parts: list[str] = [base_tag] if base_tag else []
         if weekly_fam:
             weekly_confluence_count += 1
-            trident_tag = (
-                f"{base_tag};{WEEKLY_CONFLUENCE_TAG}" if base_tag
-                else WEEKLY_CONFLUENCE_TAG
-            )
-        else:
-            trident_tag = base_tag
+            tag_parts.append(WEEKLY_CONFLUENCE_TAG)
+        tier1_active = _tier1_lookup(
+            tier1_keys,
+            r["source"],
+            r["family"],
+            r["ticker"],
+        )
+        if tier1_active:
+            tier1_tag_count += 1
+            tag_parts.append(TIER1_TAG)
+        trident_tag = ";".join(tag_parts)
         rec = {
             "ticker": r["ticker"],
             "source": r["source"],
@@ -498,6 +741,7 @@ def main():
             "trident_zone_width_pct": _fmt_trident_pct(att.get("zone_width_pct")),
             "trident_zone_age_bars": _fmt_trident_int(att.get("zone_age_bars")),
             "trident_weekly_family": weekly_fam,
+            "trident_tier1_active": "TRUE" if tier1_active else "",
         }
         records.append(rec)
 
@@ -561,6 +805,7 @@ def main():
                     "trident_zone_width_pct": r["trident_zone_width_pct"],
                     "trident_zone_age_bars": r["trident_zone_age_bars"],
                     "trident_weekly_family": r["trident_weekly_family"],
+                    "trident_tier1_active": r["trident_tier1_active"],
                 }
                 w.writerow(row)
 
@@ -684,6 +929,10 @@ def main():
                     f"{trident_cell} [wk:{wf}]" if trident_cell
                     else f"[wk:{wf}]"
                 )
+            if r["trident_tier1_active"]:
+                trident_cell = (
+                    f"{trident_cell} [t1]" if trident_cell else "[t1]"
+                )
             A(
                 "| "
                 + " | ".join([
@@ -749,6 +998,31 @@ def main():
             f"eligible_fresh_families={sorted(WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES)}; "
             f"weekly_birth_tickers={len(weekly_birth_tickers)})"
         )
+        sil_t33_str = (
+            f"{tier1_summary['sil_t33']:.2f}"
+            if tier1_summary["sil_t33"] is not None else "—"
+        )
+        bos_t67_str = (
+            f"{tier1_summary['bos_t67']:.2f}"
+            if tier1_summary["bos_t67"] is not None else "—"
+        )
+        xu100_ret_str = (
+            f"{xu100_state['ret_20d_pct']:+.2f}%"
+            if xu100_state.get("available") else "n/a"
+        )
+        print(
+            f"trident tier-1: {tier1_tag_count} rows tagged {TIER1_TAG} "
+            f"(family={TIER1_FAMILY}; universe={tier1_summary['universe_size']}; "
+            f"G1={tier1_summary['g1_pass']} G2={tier1_summary['g2_pass']} "
+            f"G3={tier1_summary['g3_pass']} G4_pass={tier1_summary['g4_pass']}; "
+            f"sil_t33={sil_t33_str} bos_t67={bos_t67_str} "
+            f"trailing_n={tier1_summary['trailing_n']}; "
+            f"xu100_ret_20d={xu100_ret_str} "
+            f"xu100_asof_available={xu100_state.get('asof_available') or '—'} "
+            f"xu100_days_stale={xu100_state.get('days_stale', 0)} "
+            f"xu100_reason={xu100_state.get('reason','?')}; "
+            f"tier1_reason={tier1_summary['reason']})"
+        )
     else:
         print(
             f"trident attachments: 0/{total} (probe parquet absent at "
@@ -756,6 +1030,9 @@ def main():
         )
         print(
             f"weekly confluence: 0 (probe parquet absent — confluence skipped)"
+        )
+        print(
+            f"trident tier-1: 0 (probe parquet absent — tier-1 skipped)"
         )
     print(f"OUT_MD: {out_md} bytes={len(md_bytes)} sha256={md_sha}")
     print(f"OUT_CSV: {out_csv} bytes={len(csv_bytes)} sha256={csv_sha}")
