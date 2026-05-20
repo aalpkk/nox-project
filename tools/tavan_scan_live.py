@@ -181,6 +181,7 @@ def main() -> int:
 
     from ml.scorer import MLScorer  # noqa: E402
     scorer = MLScorer()
+    scorer._load_models()  # lazy by default — force load so we can warn loudly if missing
 
     price_data = {}
     for code, d in daily_cache.items():
