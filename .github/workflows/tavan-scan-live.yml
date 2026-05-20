@@ -1,0 +1,105 @@
+name: Tavan V1 Live Scan
+
+# WF-validated V1 config (2026-05-21):
+#   H=25 / Trail 2% / SL-10% / ML_S>=0.65 / D1-FILTER
+# Tarama saatleri: 17:00 ve 17:30 TR (14:00 / 14:30 UTC) — close 18:00 TR'ye
+# kadar trader manuel emir verebilsin. Sonrası yetişmez.
+
+on:
+  schedule:
+    # Pzt-Cuma 17:00 TR (UTC+3) = 14:00 UTC
+    - cron: '0 14 * * 1-5'
+    # Pzt-Cuma 17:30 TR (UTC+3) = 14:30 UTC
+    - cron: '30 14 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Cap universe size (debug)'
+        required: false
+        default: ''
+      asof:
+        description: 'Pin asof date (YYYY-MM-DD); blank = latest'
+        required: false
+        default: ''
+      scan_tag:
+        description: 'Label for output stamp (e.g. 17_00). Blank = derived from cron / "manual".'
+        required: false
+        default: ''
+      push:
+        description: 'Push HTML to gh-pages'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+
+concurrency:
+  group: tavan-scan-live-${{ github.event.schedule || github.event.inputs.scan_tag || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve scan tag
+        id: tag
+        run: |
+          INPUT_TAG="${{ github.event.inputs.scan_tag }}"
+          SCHED="${{ github.event.schedule }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "$SCHED" = "0 14 * * 1-5" ]; then
+            TAG="17_00"
+          elif [ "$SCHED" = "30 14 * * 1-5" ]; then
+            TAG="17_30"
+          else
+            TAG="manual"
+          fi
+          echo "scan_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using scan tag: $TAG"
+
+      - name: Run tavan_scan_live
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          set -o pipefail
+          ARGS="--scan-tag ${{ steps.tag.outputs.scan_tag }}"
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"
+          fi
+          if [ -n "${{ github.event.inputs.asof }}" ]; then
+            ARGS="$ARGS --asof ${{ github.event.inputs.asof }}"
+          fi
+          # Default push=true on cron; respect manual override otherwise
+          PUSH_INPUT="${{ github.event.inputs.push }}"
+          if [ -z "$PUSH_INPUT" ] || [ "$PUSH_INPUT" = "true" ]; then
+            ARGS="$ARGS --push"
+          fi
+          python tools/tavan_scan_live.py $ARGS 2>&1 | tee tavan_scan_output.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tavan-scan-${{ steps.tag.outputs.scan_tag }}-${{ github.run_number }}
+          path: |
+            output/tavan_scan_live_panel_*.parquet
+            output/tavan_scan_live_candidates_*.csv
+            output/tavan_scan_live_*.html
+            tavan_scan_output.txt
+          if-no-files-found: warn
+          retention-days: 30
