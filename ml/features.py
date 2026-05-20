@@ -565,7 +565,7 @@ def compute_all_features(df, xu_df=None, weekly_df=None):
         w_trend_rising = (w_ema21_rt > w_ema21_rt.shift(1)).astype(int)
         _c['rt_wk_trend_up'] = w_trend_rising.reindex(df.index, method='ffill')
     else:
-        _c['rt_wk_trend_up'] = np.nan
+        _c['rt_wk_trend_up'] = pd.Series(np.nan, index=df.index)
 
     # trend_score = ema_bull + st_bull + wk_trend_up
     trend_s = rt_ema_bull + rt_st_bull + _c['rt_wk_trend_up'].fillna(0).astype(int)
