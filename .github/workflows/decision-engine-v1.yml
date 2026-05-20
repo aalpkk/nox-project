@@ -1,11 +1,22 @@
 name: decision engine v1
 
-# PR-DE-3 v0 — manual dispatch only.
+# PR-DE-3 — Decision Engine v1 close-mode chain.
 #
 # Composes the DE v1 chain (Stages 1–9) on top of a pre-existing
 # successful master-data-pull run. NEVER pulls master data inline.
 #
-# v0 inputs:
+# Triggers (PR-DE-3.19):
+#   workflow_dispatch         → manual run; run_mode and target_date selectable.
+#   workflow_run (auto)       → fires when `master data pull` completes
+#                               successfully on main. The `gate` job filters
+#                               to close-mode firings only (master-data-pull
+#                               close cron = 15:30 UTC = 18:30 TR weekdays).
+#                               Intraday cron firings (14:10/14:20/14:30 UTC)
+#                               are filtered out. run_mode defaults to `close`
+#                               and target_date defaults to Europe/Istanbul
+#                               today via the resolver step.
+#
+# Inputs (workflow_dispatch only):
 #   run_mode = close          → full chain after master-data close
 #   run_mode = intraday_manual → scaffold-only; emits
 #                                STOP_INTRADAY_UNSUPPORTED advisory
@@ -15,10 +26,6 @@ name: decision engine v1
 # → Stage 6 signal_asof_floor → Stage 8 source_asof_mismatch) is NOT a
 # bug; the workflow emits a NO_DE_DAY advisory artifact and concludes
 # success. Bug-FAIL (any other stage failure) hard-fails the job.
-#
-# Schedule: deferred. v0 validation is manual dispatch only. Once a
-# close-mode dispatch is end-to-end green, a follow-up may add an
-# after-master-data-pull-close weekday cron (e.g. ~19:00 TR).
 
 concurrency:
   group: decision-engine-v1-${{ github.ref }}-${{ github.event.inputs.run_mode || 'close' }}
@@ -39,9 +46,71 @@ on:
         description: 'Operational target date (YYYY-MM-DD). Leave blank for Europe/Istanbul today.'
         required: false
         default: ''
+  workflow_run:
+    workflows: ["master data pull"]
+    types: [completed]
+    branches: [main]
 
 jobs:
+  gate:
+    # PR-DE-3.19: filter workflow_run firings to close-mode only and let
+    # workflow_dispatch through unconditionally. Skips intraday cron firings
+    # of master-data-pull (14:10/14:20/14:30 UTC) and any failed upstream.
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Evaluate trigger eligibility
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          UPSTREAM_STARTED: ${{ github.event.workflow_run.run_started_at }}
+          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "[de-v1 gate] manual workflow_dispatch — proceeding"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # workflow_run path. We have already filtered to branch=main via
+          # the `on.workflow_run.branches` trigger config; double-check here.
+          if [ "$UPSTREAM_BRANCH" != "main" ]; then
+            echo "[de-v1 gate] SKIP: upstream branch=$UPSTREAM_BRANCH (expected main)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+            echo "[de-v1 gate] SKIP: upstream conclusion=$UPSTREAM_CONCLUSION (expected success)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # master-data-pull cron UTC schedule:
+          #   14:10/14:20/14:30  → intraday_1700 (skip DE)
+          #   15:30              → close         (proceed)
+          # workflow_dispatch firings on master-data-pull may happen at any
+          # hour; we proceed iff the run started at 15:00 UTC or later
+          # (close window). This is a wide tolerance for cron skew.
+          HOUR="${UPSTREAM_STARTED:11:2}"
+          echo "[de-v1 gate] upstream: event=$UPSTREAM_EVENT conclusion=$UPSTREAM_CONCLUSION started_at=$UPSTREAM_STARTED hour_utc=$HOUR"
+          if [ -z "$HOUR" ]; then
+            echo "[de-v1 gate] SKIP: could not parse hour from started_at='$UPSTREAM_STARTED'"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$HOUR" -ge 15 ]; then
+            echo "[de-v1 gate] PROCEED: upstream is close-mode (hour=$HOUR UTC ≥ 15)"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "[de-v1 gate] SKIP: upstream is intraday cron (hour=$HOUR UTC < 15); DE only chains close cron"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   decision-engine-v1:
+    needs: [gate]
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
