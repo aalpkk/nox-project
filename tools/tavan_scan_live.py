@@ -180,8 +180,9 @@ def main() -> int:
         xu = None
 
     from ml.scorer import MLScorer  # noqa: E402
+    from ml.features import compute_all_features  # noqa: E402
     scorer = MLScorer()
-    scorer._load_models()  # lazy by default — force load so we can warn loudly if missing
+    scorer._load_models()
 
     price_data = {}
     for code, d in daily_cache.items():
@@ -189,11 +190,42 @@ def main() -> int:
         df.columns = [c.title() for c in df.columns]
         price_data[code] = df
 
-    if scorer.loaded:
-        scores = scorer.score_tickers(list(daily_cache.keys()), price_data, xu)
-    else:
+    scores: dict[str, dict] = {}
+    score_skip_reason: dict[str, str] = {}
+    if not scorer.loaded:
         print("  [WARN] MLScorer not loaded — ml_s set to NaN")
-        scores = {}
+    else:
+        for tk in daily_cache.keys():
+            df = price_data.get(tk)
+            if df is None or len(df) < 80:
+                score_skip_reason[tk] = f"insufficient_history ({0 if df is None else len(df)} bars)"
+                continue
+            try:
+                feats = compute_all_features(df, xu_df=xu)
+            except Exception as e:
+                score_skip_reason[tk] = f"feature_compute_error: {type(e).__name__}: {str(e)[:80]}"
+                continue
+            if feats.empty:
+                score_skip_reason[tk] = "feature_compute_empty"
+                continue
+            row = feats.iloc[-1]
+            vec = scorer._make_feature_vector(row)
+            if vec is None:
+                missing = [c for c in scorer._feat_cols if c not in row.index or pd.isna(row.get(c))]
+                score_skip_reason[tk] = f"feature_vector_sparse (missing {len(missing)}/{len(scorer._feat_cols)})"
+                continue
+            try:
+                pred_a = float(scorer._universe_1g.predict(vec.reshape(1, -1))[0])
+                pred_b = None
+                if scorer._reranker_1g is not None:
+                    pred_b = float(scorer._reranker_1g.predict(vec.reshape(1, -1))[0])
+                scores[tk] = {"ml_score": pred_a, "ml_a": pred_a, "ml_b": pred_b}
+            except Exception as e:
+                score_skip_reason[tk] = f"predict_error: {type(e).__name__}: {str(e)[:80]}"
+        if score_skip_reason:
+            print(f"\n  [skipped {len(score_skip_reason)}/{len(daily_cache)} from ML_S]:")
+            for tk, reason in score_skip_reason.items():
+                print(f"    {tk}: {reason}")
 
     df = pd.DataFrame(tavan_rows)
     df["ml_s"] = df["ticker"].map(lambda t: scores.get(t, {}).get("ml_score", np.nan))
@@ -241,56 +273,276 @@ def _write_outputs(df: pd.DataFrame, scan_tag: str, asof: str, push: bool,
 
 
 def _render_html(df: pd.DataFrame, scan_tag: str, asof_stamp: str, n_universe: int) -> str:
-    """Minimal NOX-themed report."""
+    """NOX-themed report — briefing aesthetic (aurora bg, gold accent)."""
     n_total = len(df)
     n_v1 = int(df["v1_candidate"].sum()) if "v1_candidate" in df.columns and not df.empty else 0
-    title = f"Tavan V1 Live Scan — {asof_stamp}" + (f" ({scan_tag})" if scan_tag else "")
+    n_scored = int(df["ml_s"].notna().sum()) if "ml_s" in df.columns and not df.empty else 0
+    title_text = f"Tavan V1 Live Scan — {asof_stamp}"
+    if scan_tag:
+        title_text += f" · {scan_tag}"
 
-    if df.empty:
-        body = "<p class='empty'>Bugün tavan tespit edilmedi.</p>"
+    rows_html = ""
+    if not df.empty:
+        for _, r in df.iterrows():
+            is_v1 = bool(r.get("v1_candidate"))
+            ml_s = r.get("ml_s")
+            ml_s_str = f"{ml_s:.3f}" if pd.notna(ml_s) else "—"
+            ml_cls = ""
+            if pd.notna(ml_s):
+                if ml_s >= 0.65: ml_cls = "ml-hi"
+                elif ml_s >= 0.50: ml_cls = "ml-mid"
+                else: ml_cls = "ml-lo"
+            pct_prev = r.get("pct_from_prev_close", float('nan'))
+            pct_tgt = r.get("pct_from_tavan_target", float('nan'))
+            badge = '<span class="badge-v1">V1</span>' if is_v1 else ''
+            tr_cls = "row-v1" if is_v1 else ""
+            ticker = r.get("ticker", "")
+            tv_link = (f'<a class="tv-link" href="https://tr.tradingview.com/chart/?symbol=BIST%3A{ticker}" '
+                       f'target="_blank">{ticker}</a>')
+            rows_html += (
+                f'<tr class="{tr_cls}">'
+                f'<td class="tk">{tv_link} {badge}</td>'
+                f'<td>{r.get("prev_close",""):.2f}</td>'
+                f'<td>{r.get("today_close",""):.2f}</td>'
+                f'<td class="num">{pct_prev:+.2f}%</td>'
+                f'<td class="num muted">{pct_tgt:+.2f}%</td>'
+                f'<td>{"✓" if r.get("is_currently_at_tavan") else ""}</td>'
+                f'<td>{"✓" if r.get("hit_tavan_intraday") else ""}</td>'
+                f'<td class="{ml_cls}">{ml_s_str}</td>'
+                f'<td>{"<b>✓</b>" if is_v1 else ""}</td>'
+                f'</tr>'
+            )
+        table_html = f"""
+        <div class="nox-table-wrap">
+          <table>
+            <thead><tr>
+              <th>Ticker</th><th>Prev Close</th><th>Today Close</th>
+              <th>%Δ prev</th><th>%Δ target</th>
+              <th>At Tavan</th><th>Intraday Hit</th>
+              <th>ML_S</th><th>V1</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+        </div>"""
     else:
-        cols = ["ticker", "prev_close", "today_close", "pct_from_prev_close",
-                "pct_from_tavan_target", "is_currently_at_tavan",
-                "hit_tavan_intraday", "ml_s", "v1_candidate"]
-        cols = [c for c in cols if c in df.columns]
-        view = df[cols].copy()
-        for c in ("prev_close", "today_close"):
-            if c in view.columns:
-                view[c] = view[c].map(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
-        for c in ("pct_from_prev_close", "pct_from_tavan_target"):
-            if c in view.columns:
-                view[c] = view[c].map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
-        if "ml_s" in view.columns:
-            view["ml_s"] = view["ml_s"].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
-        for c in ("is_currently_at_tavan", "hit_tavan_intraday", "v1_candidate"):
-            if c in view.columns:
-                view[c] = view[c].map(lambda x: "✓" if x else "")
-        body = "<h2>Adaylar</h2>" + view.to_html(index=False, classes="tbl", escape=False)
+        table_html = '<div class="empty-state">Bugün tavan tespit edilmedi.</div>'
 
-    return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>{title}</title>
+    return f"""<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title_text}</title>
 <style>
-  body {{ background:#0b0f15; color:#e8edf3; font-family: -apple-system, sans-serif; padding:24px; }}
-  h1 {{ color:#7dd3fc; margin-bottom:4px; }}
-  .meta {{ color:#94a3b8; font-size:13px; margin-bottom:20px; }}
-  .empty {{ color:#94a3b8; padding:40px; text-align:center; }}
-  .tbl {{ border-collapse: collapse; margin-top: 12px; }}
-  .tbl th, .tbl td {{ border:1px solid #233; padding:6px 10px; font-size:13px; }}
-  .tbl th {{ background:#1a2332; color:#7dd3fc; }}
-  .tbl tr:nth-child(even) {{ background:#0f1622; }}
-  .config {{ background:#1a2332; padding:12px; border-left:3px solid #7dd3fc;
-             margin:16px 0; font-size:13px; }}
-</style></head>
+@import url('https://fonts.googleapis.com/css2?family=Rubik+Glitch&family=Homemade+Apple&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+:root {{
+  --bg-primary: #060709;
+  --bg-card: #0d0d10;
+  --bg-elevated: #141417;
+  --bg-hover: #1b1b1f;
+  --border-subtle: #1e1e23;
+  --border-dim: #2c2b30;
+  --text-primary: #e8e4dc;
+  --text-secondary: #8a8580;
+  --text-muted: #555250;
+  --nox-gold: #c9a96e;
+  --nox-gold-dim: rgba(201,169,110,0.10);
+  --nox-cyan: #c9a96e;
+  --nox-cyan-dim: rgba(201,169,110,0.10);
+  --nox-green: #7a9e7a;
+  --nox-red: #9e5a5a;
+  --nox-blue: #7a8fa5;
+  --font-display: 'DM Sans', sans-serif;
+  --font-brand: 'Rubik Glitch', cursive;
+  --font-handwrite: 'Homemade Apple', cursive;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 14px;
+  --radius-sm: 8px;
+}}
+*, *::before, *::after {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{
+  font-family: var(--font-display);
+  background: #060709;
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}}
+.aurora-bg {{ position: fixed; top:0; left:0; width:100%; height:100%; z-index:0; overflow:hidden; pointer-events:none; }}
+.aurora-layer {{ position:absolute; width:200%; height:200%; top:-50%; left:-50%; opacity:1; }}
+.aurora-layer-1 {{
+  background:
+    radial-gradient(ellipse 35% 25% at 8% 12%, rgba(207,199,196,0.35) 0%, transparent 50%),
+    radial-gradient(ellipse 25% 20% at 88% 78%, rgba(32,30,33,0.6) 0%, transparent 50%);
+  animation: aurora-drift 28s ease-in-out infinite;
+}}
+.aurora-layer-2 {{
+  background:
+    radial-gradient(ellipse 30% 22% at 78% 8%, rgba(207,199,196,0.2) 0%, transparent 50%),
+    radial-gradient(ellipse 22% 22% at 12% 88%, rgba(32,30,33,0.5) 0%, transparent 50%);
+  animation: aurora-drift 35s ease-in-out infinite reverse;
+}}
+.aurora-layer-3 {{
+  background: radial-gradient(ellipse 25% 15% at 45% 45%, rgba(184,149,110,0.12) 0%, transparent 40%);
+  animation: aurora-pulse 22s ease-in-out infinite;
+}}
+.mesh-overlay {{
+  position: fixed; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;
+  background-image:
+    radial-gradient(circle 400px at 12% 18%, rgba(207,199,196,0.08) 0%, transparent 50%),
+    radial-gradient(circle 350px at 88% 72%, rgba(32,30,33,0.2) 0%, transparent 50%);
+  filter: blur(40px);
+}}
+@keyframes aurora-drift {{
+  0%, 100% {{ transform: translate(0,0) rotate(0deg); }}
+  25% {{ transform: translate(4%, -4%) rotate(3deg); }}
+  50% {{ transform: translate(-4%, 4%) rotate(-3deg); }}
+  75% {{ transform: translate(2%, 2%) rotate(2deg); }}
+}}
+@keyframes aurora-pulse {{
+  0%, 100% {{ opacity: 0.3; transform: scale(1); }}
+  50% {{ opacity: 0.6; transform: scale(1.1); }}
+}}
+.nox-container {{ position:relative; z-index:1; max-width:1280px; margin:0 auto; padding:24px 20px; }}
+
+.nox-header {{
+  display:flex; align-items:flex-end; justify-content:space-between;
+  padding:24px 0 18px; margin-bottom:24px;
+  border-bottom:1px solid var(--border-subtle);
+}}
+.nox-logo {{
+  font-family: var(--font-display);
+  font-size: 1.6rem; font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #c9a96e, #e8dcc8, #a8876a);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}}
+.nox-logo .proj {{ font-weight:400; -webkit-text-fill-color: var(--text-secondary); font-size:0.7em; margin-left:6px; letter-spacing:0.02em; }}
+.nox-logo .mode {{ display:block; font-size:0.45em; font-weight:500; letter-spacing:0.15em;
+  text-transform:uppercase; -webkit-text-fill-color: var(--text-muted); margin-top:4px; }}
+.nox-meta {{ text-align:right; font-size:0.78rem; color:var(--text-muted); font-family: var(--font-mono); line-height:1.6; }}
+.nox-meta b {{ color: var(--nox-gold); }}
+
+.nox-stats {{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }}
+.nox-stat {{
+  display:flex; align-items:center; gap:8px;
+  background: var(--bg-card); border:1px solid var(--border-subtle);
+  border-radius:20px; padding:8px 16px;
+  font-size:0.8rem; font-weight:500;
+}}
+.nox-stat .lbl {{ color: var(--text-secondary); text-transform:uppercase; letter-spacing:0.06em; font-size:0.66rem; }}
+.nox-stat .cnt {{ font-family: var(--font-mono); font-weight:700; font-size:0.95rem; color: var(--text-primary); }}
+.nox-stat.gold .cnt {{ color: var(--nox-gold); }}
+
+.config-card {{
+  background: var(--bg-card); border:1px solid var(--border-subtle);
+  border-left:3px solid var(--nox-gold);
+  border-radius: var(--radius); padding:14px 18px; margin-bottom:20px;
+  font-size:0.82rem; color: var(--text-secondary); line-height:1.7;
+}}
+.config-card b {{ color: var(--text-primary); }}
+.config-card .gold {{ color: var(--nox-gold); }}
+
+.nox-table-wrap {{ overflow-x:auto; border-radius: var(--radius); border:1px solid var(--border-subtle); background: var(--bg-card); }}
+table {{ width:100%; border-collapse:collapse; font-size:0.82rem; }}
+thead {{ position:sticky; top:0; z-index:10; }}
+th {{
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-weight:600; font-size:0.66rem;
+  text-transform:uppercase; letter-spacing:0.08em;
+  padding:12px 10px; text-align:left;
+  border-bottom:1px solid var(--border-subtle);
+  white-space:nowrap;
+}}
+td {{ padding:10px; border-bottom:1px solid rgba(39,39,42,0.5); white-space:nowrap;
+     font-family: var(--font-mono); font-size:0.78rem; color: var(--text-primary); }}
+td.tk {{ font-family: var(--font-display); font-weight:600; }}
+td.num {{ font-feature-settings: 'tnum'; }}
+td.muted {{ color: var(--text-muted); }}
+td.ml-hi {{ color: var(--nox-green); font-weight:700; }}
+td.ml-mid {{ color: var(--nox-blue); }}
+td.ml-lo {{ color: var(--text-muted); }}
+tr {{ transition: background 0.1s; }}
+tr:hover {{ background: var(--bg-hover); }}
+tr.row-v1 {{ background: var(--nox-gold-dim); }}
+tr.row-v1:hover {{ background: rgba(201,169,110,0.18); }}
+
+.tv-link {{ color: var(--text-primary); text-decoration:none; transition: color 0.15s; }}
+.tv-link:hover {{ color: var(--nox-gold); }}
+
+.badge-v1 {{
+  display:inline-block; padding:2px 7px; border-radius:8px;
+  font-size:0.6rem; font-weight:700; font-family: var(--font-mono);
+  background: var(--nox-gold-dim); color: var(--nox-gold);
+  border:1px solid rgba(201,169,110,0.3);
+  margin-left:4px; letter-spacing:0.05em;
+}}
+
+.empty-state {{
+  background: var(--bg-card); border:1px solid var(--border-subtle);
+  border-radius: var(--radius); padding:48px; text-align:center;
+  color: var(--text-muted); font-family: var(--font-mono); font-size:0.85rem;
+}}
+
+.nox-status {{
+  text-align:center; padding:20px 0 8px; margin-top:24px;
+  font-size:0.7rem; color: var(--text-muted);
+  font-family: var(--font-mono);
+  border-top:1px solid var(--border-subtle);
+}}
+.nox-status b {{ color: var(--nox-gold); }}
+
+@media (max-width: 768px) {{
+  .nox-header {{ flex-direction:column; gap:12px; align-items:flex-start; }}
+  .nox-meta {{ text-align:left; }}
+  table {{ font-size:0.72rem; }}
+  td, th {{ padding:6px 5px; }}
+  .nox-logo {{ font-size:1.3rem; }}
+}}
+</style>
+</head>
 <body>
-<h1>{title}</h1>
-<div class="meta">Universe: {n_universe} ticker · tavan hits: {n_total} · V1 candidates: <b>{n_v1}</b></div>
-<div class="config">
-  <b>V1 Config</b> (WF-validated 2026-05-21): H=25 / Trail 2% / SL-10% / ML_S≥0.65 / D1-FILTER<br>
-  <b>Entry</b>: akşam close (18:00 TR) · <b>Tavan tespit</b>: today_close ≈ prev_close × 1.10 (±0.5%)<br>
-  <b>OOS perf</b>: WR 91.4% · mean +11.0% · PF 21.2 · p5 -5.2% · ~459 trade/yıl
+<div class="aurora-bg">
+  <div class="aurora-layer aurora-layer-1"></div>
+  <div class="aurora-layer aurora-layer-2"></div>
+  <div class="aurora-layer aurora-layer-3"></div>
 </div>
-{body}
-</body></html>"""
+<div class="mesh-overlay"></div>
+
+<div class="nox-container">
+  <header class="nox-header">
+    <div class="nox-logo">
+      TAVAN<span class="proj">/V1</span>
+      <span class="mode">Live Intraday Scan</span>
+    </div>
+    <div class="nox-meta">
+      <div>asof <b>{asof_stamp}</b>{f' · <b>{scan_tag}</b>' if scan_tag else ''}</div>
+      <div>universe <b>{n_universe}</b> · scored <b>{n_scored}/{n_total}</b></div>
+    </div>
+  </header>
+
+  <div class="nox-stats">
+    <div class="nox-stat"><span class="lbl">Universe</span><span class="cnt">{n_universe}</span></div>
+    <div class="nox-stat"><span class="lbl">Tavan Hits</span><span class="cnt">{n_total}</span></div>
+    <div class="nox-stat"><span class="lbl">ML_S Scored</span><span class="cnt">{n_scored}</span></div>
+    <div class="nox-stat gold"><span class="lbl">V1 Candidates</span><span class="cnt">{n_v1}</span></div>
+  </div>
+
+  <div class="config-card">
+    <div><b>V1 Config</b> <span class="gold">(WF-validated 2026-05-21)</span> · H=25 · Trail 2% · SL-10% · ML_S≥0.65 · D1-FILTER</div>
+    <div><b>Entry</b>: akşam close (18:00 TR) · <b>Tavan tespit</b>: today_close ≈ prev_close × 1.10 (±0.5%)</div>
+    <div><b>OOS perf</b>: WR <span class="gold">91.4%</span> · mean <span class="gold">+11.0%</span> · PF 21.2 · p5 -5.2% · ~459 trade/yıl</div>
+  </div>
+
+  {table_html}
+
+  <div class="nox-status">
+    NOX · tavan v1 scanner · generated <b>{datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC</b>
+  </div>
+</div>
+</body>
+</html>"""
 
 
 def _maybe_push(html: str, stamp: str) -> None:
