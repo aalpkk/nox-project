@@ -28,7 +28,7 @@ on:
           - bootstrap
           - delta
       universe:
-        description: 'Universe: NDX100 | POC (5 tickers) | space-separated tickers (e.g. "AAPL MSFT NVDA")'
+        description: 'Universe: NDX100 | SP500 | POC (5 tickers) | space-separated tickers (e.g. "AAPL MSFT NVDA")'
         required: true
         default: 'POC'
         type: string
@@ -59,8 +59,12 @@ jobs:
           UNIV='${{ github.event.inputs.universe }}'
           case "$UNIV" in
             NDX100)
-              echo "args=" >> "$GITHUB_OUTPUT"
+              echo "args=--use-universe ndx100" >> "$GITHUB_OUTPUT"
               echo "label=NDX100" >> "$GITHUB_OUTPUT"
+              ;;
+            SP500)
+              echo "args=--use-universe sp500" >> "$GITHUB_OUTPUT"
+              echo "label=SP500" >> "$GITHUB_OUTPUT"
               ;;
             POC)
               echo "args=--universe AAPL MSFT NVDA GOOGL AMZN" >> "$GITHUB_OUTPUT"
