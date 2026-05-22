@@ -1,11 +1,13 @@
 """Output schema for mb_scanner pipeline (V0.3).
 
-Eight families: mb_{5h,1d,1w,1M}, bb_{5h,1d,1w,1M}.
+Ten families: mb_{1h,5h,1d,1w,1M}, bb_{1h,5h,1d,1w,1M}.
 Each scan emits 0..N rows per (ticker, family) at as-of — one row per
 simultaneously-active quartet (wide macro setups can coexist with
 narrower nested ones; all are reported).
 
-5h frequency mirrors TV's "5 saatlik" timeframe for BIST: 09:00 morning bar
+1h frequency reads the raw nox_intraday master directly (no resample) — used
+for US (NYSE 09:30–16:00 ET → 7 hourly bars/day incl. last 30min stub).
+5h frequency mirrors TV's "5 saatlik" for BIST: 09:00 morning bar
 (opening auction + continuous 10–14) and 14:00 afternoon bar (continuous
 14–18 + closing auction at 18:05 + closing-price trades 18:08–18:10).
 
@@ -17,8 +19,8 @@ from __future__ import annotations
 VERSION = "0.3.0"
 
 FAMILIES = (
-    "mb_5h", "mb_1d", "mb_1w", "mb_1M",
-    "bb_5h", "bb_1d", "bb_1w", "bb_1M",
+    "mb_1h", "mb_5h", "mb_1d", "mb_1w", "mb_1M",
+    "bb_1h", "bb_5h", "bb_1d", "bb_1w", "bb_1M",
 )
 
 STATES = ("above_mb", "mitigation_touch", "retest_bounce", "extended")
