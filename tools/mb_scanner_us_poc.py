@@ -1,17 +1,22 @@
 """mb_scanner US POC smoke runner.
 
 End-to-end pipeline validation: load US 1h bars from the new master parquet,
-run mb_scanner daily/weekly/monthly families (mb_5h skipped — BIST session
-hardcoded), print per-family summary and write per-family parquets to
-output/mb_scanner_us_<family>.parquet.
+run mb_scanner 1h / 3h / daily / weekly / monthly families (mb_5h skipped —
+BIST session hardcoded), print per-family summary and write per-family
+parquets to output/mb_scanner_us_<family>.parquet.
 
 Skips mb_scanner.engine.scan() because that wrapper imports BIST adapter
 directly. Reuses lower-level engine functions (_detect_for_panel,
 _resolve_asof) with US bars instead.
 
+1h frequency consumes raw bars directly (no resample) — NYSE 09:30–16:00 ET
+yields 7 hourly bars/day (incl. last 30min stub).
+3h frequency is the NYSE session split — AM bar (09:30–13:00) + PM bar
+(13:00–16:00), 2 bars/day via mb_scanner.resample.to_3h_us.
+
 Usage:
     python tools/mb_scanner_us_poc.py
-        [--families mb_1d mb_1w mb_1M]
+        [--families mb_3h mb_1h mb_1d mb_1w mb_1M]
         [--tickers AAPL MSFT NVDA GOOGL AMZN]
         [--asof "2026-05-21"]
 
@@ -31,13 +36,18 @@ sys.path.insert(0, str(REPO))
 
 from data import intraday_1h_us  # noqa: E402
 from mb_scanner.engine import _PARAMS as FAM_PARAMS, _detect_for_panel, _resolve_asof  # noqa: E402
-from mb_scanner.resample import per_ticker_panel, to_daily, to_monthly, to_weekly  # noqa: E402
+from mb_scanner.resample import (  # noqa: E402
+    per_ticker_panel, to_3h_us, to_daily, to_monthly, to_weekly,
+)
 from mb_scanner.schema import OUTPUT_COLUMNS  # noqa: E402
 
 OUT_DIR = REPO / "output"
 
 # 5h is BIST-specific. Caller may still pass it; we filter it out with a warning.
-US_SUPPORTED_FAMILIES = ("mb_1d", "mb_1w", "mb_1M", "bb_1d", "bb_1w", "bb_1M")
+US_SUPPORTED_FAMILIES = (
+    "mb_1h", "mb_3h", "mb_1d", "mb_1w", "mb_1M",
+    "bb_1h", "bb_3h", "bb_1d", "bb_1w", "bb_1M",
+)
 
 
 def _summarize(df: pd.DataFrame, family: str) -> None:
@@ -76,7 +86,8 @@ def _summarize(df: pd.DataFrame, family: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--families", nargs="*", default=["mb_1d", "mb_1w", "mb_1M"])
+    ap.add_argument("--families", nargs="*",
+                    default=["mb_3h", "mb_1h", "mb_1d", "mb_1w", "mb_1M"])
     ap.add_argument("--tickers", nargs="*", default=None,
                     help="Subset tickers (default = all in master).")
     ap.add_argument("--asof", default=None,
@@ -115,6 +126,12 @@ def main() -> int:
     needed_freqs = {FAM_PARAMS[f].frequency for f in fam_keys}
     panels: dict[str, dict[str, pd.DataFrame]] = {}
     t1 = time.time()
+    if "1h" in needed_freqs:
+        hourly = bars[["ticker", "ts_istanbul",
+                       "open", "high", "low", "close", "volume"]]
+        panels["1h"] = per_ticker_panel(hourly, "ts_istanbul")
+    if "3h" in needed_freqs:
+        panels["3h"] = per_ticker_panel(to_3h_us(bars), "ts_istanbul")
     if "1d" in needed_freqs:
         panels["1d"] = per_ticker_panel(to_daily(bars), "date")
     if "1w" in needed_freqs:

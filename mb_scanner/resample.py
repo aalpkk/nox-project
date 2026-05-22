@@ -65,6 +65,52 @@ def to_5h(bars_1h: pd.DataFrame, *, tz: str = "Europe/Istanbul") -> pd.DataFrame
     return agg
 
 
+def to_3h_us(bars_1h: pd.DataFrame, *, tz: str = "America/New_York") -> pd.DataFrame:
+    """Resample US 1h bars to 2-bars-per-day session panel (NYSE AM/PM split).
+
+    AM bin (label 09:30) covers hourly bars hh ∈ [9..12]: 09:30 opening
+    30min stub + 10:00 + 11:00 + 12:00 — i.e. session window 09:30–13:00.
+    PM bin (label 13:00) covers hourly bars hh ∈ [13..15]: 13:00 + 14:00
+    + 15:00 — i.e. session window 13:00–16:00.
+
+    "3h" is a nominal label — the PM bar is exactly 3h, AM is 3.5h.
+
+    Returns columns: ticker, ts_istanbul (label = bin start, NY-tz; legacy
+    column name preserved for resample-pipeline compat), open, high, low,
+    close, volume, n_bars. Bins with 0 source bars are dropped.
+    """
+    if bars_1h.empty:
+        return bars_1h.iloc[0:0].copy()
+    df = bars_1h.copy()
+    if df["ts_istanbul"].dt.tz is None:
+        df["ts_istanbul"] = df["ts_istanbul"].dt.tz_localize(tz)
+    df["date"] = df["ts_istanbul"].dt.date
+    df["hh"] = df["ts_istanbul"].dt.hour
+    df["half"] = (df["hh"] >= 13).astype(int)  # 0 = AM, 1 = PM
+    df["label_hh"] = df["half"].map({0: 9, 1: 13})
+    df["label_mm"] = df["half"].map({0: 30, 1: 0})
+    df["bin_ts"] = pd.to_datetime(
+        df["date"].astype(str) + " "
+        + df["label_hh"].astype(str).str.zfill(2) + ":"
+        + df["label_mm"].astype(str).str.zfill(2)
+    ).dt.tz_localize(tz)
+
+    agg = (
+        df.groupby(["ticker", "bin_ts"], observed=True)
+        .agg(open=("open", "first"),
+             high=("high", "max"),
+             low=("low", "min"),
+             close=("close", "last"),
+             volume=("volume", "sum"),
+             n_bars=("close", "count"))
+        .reset_index()
+        .rename(columns={"bin_ts": "ts_istanbul"})
+        .sort_values(["ticker", "ts_istanbul"])
+        .reset_index(drop=True)
+    )
+    return agg
+
+
 def to_daily(bars_1h: pd.DataFrame, *, tz: str = "Europe/Istanbul") -> pd.DataFrame:
     """Self-contained 1h→1d resample (mirrors data.intraday_1h.daily_resample).
 

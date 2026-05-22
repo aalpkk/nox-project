@@ -43,17 +43,21 @@ from .zones import (
 class FamilyParams:
     family: str
     mode: Literal["mb", "bb"]
-    frequency: Literal["5h", "1d", "1w", "1M"]
+    frequency: Literal["1h", "3h", "5h", "1d", "1w", "1M"]
     pivot_n: int
     max_quartet_span_bars: int
     max_zone_age_bars: int
 
 
 _PARAMS: dict[str, FamilyParams] = {
+    "mb_1h": FamilyParams("mb_1h", "mb", "1h", 2, 200, 100),
+    "mb_3h": FamilyParams("mb_3h", "mb", "3h", 2, 60, 40),
     "mb_5h": FamilyParams("mb_5h", "mb", "5h", 2, 120, 80),
     "mb_1d": FamilyParams("mb_1d", "mb", "1d", 2, 80, 60),
     "mb_1w": FamilyParams("mb_1w", "mb", "1w", 2, 30, 20),
     "mb_1M": FamilyParams("mb_1M", "mb", "1M", 2, 12, 8),
+    "bb_1h": FamilyParams("bb_1h", "bb", "1h", 2, 200, 100),
+    "bb_3h": FamilyParams("bb_3h", "bb", "3h", 2, 60, 40),
     "bb_5h": FamilyParams("bb_5h", "bb", "5h", 2, 120, 80),
     "bb_1d": FamilyParams("bb_1d", "bb", "1d", 2, 80, 60),
     "bb_1w": FamilyParams("bb_1w", "bb", "1w", 2, 30, 20),
