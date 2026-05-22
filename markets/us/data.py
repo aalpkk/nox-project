@@ -19,6 +19,21 @@ _NASDAQ_API_URL = "https://api.nasdaq.com/api/screener/stocks"
 _SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 _NDX100_URL = "https://en.wikipedia.org/wiki/NASDAQ-100#Components"
 
+# Canonical free source for US listing exchange (NASDAQ vs NYSE/AMEX). Pipe-
+# delimited plain text, no auth. Used to route TV symbols by exchange prefix.
+_NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+_OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+
+# otherlisted.txt Exchange code → TradingView prefix.
+_OTHER_EXCHANGE_MAP = {
+    "N": "NYSE",   # NYSE
+    "A": "AMEX",   # NYSE American (formerly AMEX)
+    "P": "AMEX",   # NYSE Arca — TV groups these under AMEX
+    "Z": "AMEX",   # BATS BZX — rare for SP500
+}
+
+_us_exchange_cache: dict[str, str] | None = None
+
 
 def get_nasdaq_screener_tickers(min_mcap=300e6, min_price=5.0):
     """NASDAQ Screener API'den tüm NYSE + NASDAQ hisselerini çek.
@@ -149,6 +164,117 @@ def get_ndx100_tickers():
     except Exception as e:
         print(f"⚠️ NASDAQ-100 Wikipedia hatası: {e}, fallback kullanılıyor")
         return _NDX100_STATIC
+
+
+def _fetch_us_exchange_map() -> dict[str, str]:
+    """Build ticker → TV exchange prefix map from NASDAQ Trader's listed files.
+
+    Returns dict like {"AAPL": "NASDAQ", "JPM": "NYSE", "BRK.B": "NYSE", ...}.
+    Cached at module level; subsequent calls are free.
+    """
+    global _us_exchange_cache
+    if _us_exchange_cache is not None:
+        return _us_exchange_cache
+
+    import requests as req
+    out: dict[str, str] = {}
+
+    def _read(url: str, sym_col: str, parse) -> None:
+        resp = req.get(url, timeout=30,
+                       headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        lines = resp.text.splitlines()
+        if not lines:
+            return
+        header = lines[0].split("|")
+        sym_idx = header.index(sym_col)
+        for line in lines[1:]:
+            if not line or line.startswith("File Creation Time"):
+                continue
+            parts = line.split("|")
+            if len(parts) <= sym_idx:
+                continue
+            sym = parts[sym_idx].strip()
+            if not sym:
+                continue
+            ex = parse(parts)
+            if ex:
+                out[sym] = ex
+
+    try:
+        _read(_NASDAQ_LISTED_URL, "Symbol", lambda _p: "NASDAQ")
+        _read(
+            _OTHER_LISTED_URL,
+            "ACT Symbol",
+            lambda p: _OTHER_EXCHANGE_MAP.get(p[2].strip()) if len(p) > 2 else None,
+        )
+        print(f"✅ NASDAQ Trader listed: {len(out)} symbols mapped to exchange")
+    except Exception as e:
+        print(f"⚠️ NASDAQ Trader listed fetch failed: {e}")
+
+    _us_exchange_cache = out
+    return out
+
+
+def _fetch_sp500_tickers_raw() -> list[str]:
+    """Fetch full S&P 500 ticker list from Wikipedia (dot form preserved).
+
+    Uses requests with a real UA — pd.read_html alone gets 403 from some IPs.
+    Falls back to _SP500_STATIC (100-ticker offline subset) if unreachable.
+    """
+    import io
+    import requests as req
+    try:
+        resp = req.get(
+            _SP500_URL,
+            timeout=30,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; nox-project/1.0)"},
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(io.StringIO(resp.text))
+        df = tables[0]
+        return df['Symbol'].astype(str).str.strip().tolist()
+    except Exception as e:
+        print(f"⚠️ S&P 500 Wikipedia hatası: {e} — fallback _SP500_STATIC")
+        return list(_SP500_STATIC)
+
+
+def get_sp500_universe() -> list[tuple[str, str]]:
+    """S&P 500 → list of (ticker, exchange) tuples for TV symbol routing.
+
+    Ticker form matches Wikipedia (BRK.B, BF.B — dot preserved; TV accepts
+    BRK.B). Tickers with no exchange match are dropped with a warning.
+    """
+    raw = _fetch_sp500_tickers_raw()
+
+    exch_map = _fetch_us_exchange_map()
+    universe: list[tuple[str, str]] = []
+    missing: list[str] = []
+    for t in sorted(set(raw)):
+        # NASDAQ Trader uses dot form for class shares (BRK.B). Wikipedia same.
+        # _SP500_STATIC uses dash form (BRK-B) — normalize for lookup.
+        lookup = t.replace('-', '.')
+        ex = exch_map.get(lookup) or exch_map.get(t)
+        if not ex:
+            missing.append(t)
+            continue
+        universe.append((lookup, ex))
+    if missing:
+        print(f"⚠️ S&P 500: {len(missing)} tickers without exchange match (skipped): "
+              f"{missing[:10]}{'...' if len(missing) > 10 else ''}")
+    nas = sum(1 for _, e in universe if e == "NASDAQ")
+    nyse = sum(1 for _, e in universe if e == "NYSE")
+    amex = sum(1 for _, e in universe if e == "AMEX")
+    print(f"✅ S&P 500 universe: {len(universe)} total ({nas} NASDAQ, {nyse} NYSE, {amex} AMEX)")
+    return universe
+
+
+def get_ndx100_universe() -> list[tuple[str, str]]:
+    """NASDAQ-100 → list of (ticker, "NASDAQ") tuples (all NASDAQ-listed by definition)."""
+    tickers = get_ndx100_tickers()
+    # NDX100 Wikipedia rewrites '.' to '-' (yfinance convention). For TV we
+    # want the dot form — but NDX100 has no class shares, so dash form is safe.
+    return [(t, "NASDAQ") for t in tickers]
 
 
 def get_all_us_tickers(min_mcap=300e6, min_price=5.0):
