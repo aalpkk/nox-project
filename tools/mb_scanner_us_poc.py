@@ -39,15 +39,12 @@ from mb_scanner.engine import _PARAMS as FAM_PARAMS, _detect_for_panel, _resolve
 from mb_scanner.resample import (  # noqa: E402
     per_ticker_panel, to_3h_us, to_daily, to_monthly, to_weekly,
 )
-from mb_scanner.schema import OUTPUT_COLUMNS  # noqa: E402
+from mb_scanner.schema import OUTPUT_COLUMNS, US_FAMILIES  # noqa: E402
 
 OUT_DIR = REPO / "output"
 
 # 5h is BIST-specific. Caller may still pass it; we filter it out with a warning.
-US_SUPPORTED_FAMILIES = (
-    "mb_1h", "mb_3h", "mb_1d", "mb_1w", "mb_1M",
-    "bb_1h", "bb_3h", "bb_1d", "bb_1w", "bb_1M",
-)
+US_SUPPORTED_FAMILIES = US_FAMILIES
 
 
 def _summarize(df: pd.DataFrame, family: str) -> None:
