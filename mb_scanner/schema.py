@@ -1,6 +1,14 @@
 """Output schema for mb_scanner pipeline (V0.3).
 
-Twelve families: mb_{1h,3h,5h,1d,1w,1M}, bb_{1h,3h,5h,1d,1w,1M}.
+Family universes are split by market — BIST and US do not mix:
+
+  BIST_FAMILIES = mb_{5h,1d,1w,1M}, bb_{5h,1d,1w,1M}            (8)
+  US_FAMILIES   = mb_{1h,3h,1d,1w,1M}, bb_{1h,3h,1d,1w,1M}      (10)
+  ALL_FAMILIES  = union of both                                  (12)
+
+`FAMILIES` is an alias for `BIST_FAMILIES` (the historical contract — all
+BIST tooling defaults to it). US tooling imports `US_FAMILIES` explicitly.
+
 Each scan emits 0..N rows per (ticker, family) at as-of — one row per
 simultaneously-active quartet (wide macro setups can coexist with
 narrower nested ones; all are reported).
@@ -21,10 +29,19 @@ from __future__ import annotations
 
 VERSION = "0.3.0"
 
-FAMILIES = (
-    "mb_1h", "mb_3h", "mb_5h", "mb_1d", "mb_1w", "mb_1M",
-    "bb_1h", "bb_3h", "bb_5h", "bb_1d", "bb_1w", "bb_1M",
+BIST_FAMILIES = (
+    "mb_5h", "mb_1d", "mb_1w", "mb_1M",
+    "bb_5h", "bb_1d", "bb_1w", "bb_1M",
 )
+
+US_FAMILIES = (
+    "mb_1h", "mb_3h", "mb_1d", "mb_1w", "mb_1M",
+    "bb_1h", "bb_3h", "bb_1d", "bb_1w", "bb_1M",
+)
+
+ALL_FAMILIES = tuple(dict.fromkeys(BIST_FAMILIES + US_FAMILIES))
+
+FAMILIES = BIST_FAMILIES
 
 STATES = ("above_mb", "mitigation_touch", "retest_bounce", "extended")
 
