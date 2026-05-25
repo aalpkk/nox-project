@@ -257,6 +257,7 @@ def main() -> None:
         "structural_invalidation_low", "structural_invalidation_pct_below_B",
         "days_to_D_loose", "days_to_D_strict",
         "structural_break_day", "forward_bars_available", "outcome_strict",
+        "pivot_post_confirmed",
     ]
     for h in HORIZONS_DAYS:
         keep += [f"forward_high_{h}d", f"D_touched_{h}d",
