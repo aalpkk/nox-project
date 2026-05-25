@@ -2,13 +2,13 @@
 
 The main `engine.scan()` emits one row per (ticker, family, active quartet)
 at a single as-of timestamp. For backtest we need every state-transition
-event in history — i.e. when each quartet was *born* (HH BoS confirmed
-with pivot lag), when it first *touched* its zone, and when (if ever) it
-produced a *retest_bounce* reclaim.
+event in history — i.e. when each quartet was *born* (HH BoS), when it
+first *touched* its zone, and when (if ever) it produced a *retest_bounce*
+reclaim.
 
 Output: `output/mb_scanner_events_<family>.parquet` with rows like
 
-    above_mb_birth          → entry bar = max(hh_idx, hl_idx + pivot_n)
+    above_mb_birth          → entry bar = hh_idx (the BoS bar itself)
     mit_touch_first         → entry bar = first overlap bar after birth
     retest_bounce_first     → entry bar = first reclaim-gate-pass bar
 
@@ -16,11 +16,18 @@ Each row contains the full quartet structure plus event-bar features
 (close, ATR, vol_ratio, BoS distance, zone age) so the Phase 1 outcome
 generator can join directly without re-touching the engine.
 
-Confirmation lag rationale: pivots are close-only fractals confirmed at
-i+n. The HL pivot for a quartet is only visible at HL_idx + pivot_n.
-If HH (BoS) fires earlier (HH < HL+n), a live trader could not have
-identified the quartet at HH; the earliest *tradeable* birth bar is
-max(HH, HL+n). This guards Phase 1 against same-bar look-ahead.
+Schema 1.1.0 (PR-DE-3.22): birth_idx is now hh_idx (the bar where close
+first crosses LH), not max(hh_idx, hl_idx + pivot_n). The previous lag
+rule was a tradeable-bar guard tied to scanner detection, but it had
+two downsides: (a) pushed event_bar_date forward when HH preceded HL
+pivot confirmation, (b) when close dropped back below LH in the lag
+window, the event was still labeled above_mb_birth with
+bos_distance_atr_at_event < 0 (3,792 rows / 2.9% of birth events).
+Firing at hh_idx guarantees event_close > lh_close so bos_distance > 0
+always. The structural-soundness check moves to the new
+`pivot_post_confirmed` column — True iff hh_idx >= hl_idx + pivot_n OR
+no close in (hl_idx, hl_idx + pivot_n] is below close[hl_idx].
+Consumers (e.g. WEEKLY_BIRTH_ACTIVE) gate on this flag by default.
 
 Quartets that are invalidated (close < HL − 0.30·ATR) before mit_touch /
 retest events suppress those later events. Quartets aged out beyond
@@ -50,7 +57,7 @@ from .zones import (
     retest_kind_label,
 )
 
-EVENT_SCHEMA_VERSION = "1.0.0"
+EVENT_SCHEMA_VERSION = "1.1.0"
 
 EVENT_TYPES = ("above_mb_birth", "mit_touch_first", "retest_bounce_first")
 
@@ -82,6 +89,7 @@ EVENT_OUTPUT_COLUMNS = (
     # lag diagnostics
     "hh_to_event_lag_bars",
     "pivot_confirm_lag_bars",
+    "pivot_post_confirmed",
     # invalidation level
     "structural_invalidation_low",
     # provenance
@@ -142,6 +150,21 @@ def _event_row(
     hl_idx = int(quartet["hl_idx"])
     hh_to_event = int(event_idx - hh_idx)
     pivot_confirm_lag = int(max(0, hl_idx + fam.pivot_n - hh_idx))
+    # PR-DE-3.22: True iff HL pivot's "after-side" rule was satisfied at HH —
+    # i.e. either HL was already fully pivot-confirmed by hh_idx, or no close
+    # in (hl_idx, hl_idx + pivot_n] dipped below close[hl_idx]. Consumers
+    # (WEEKLY_BIRTH_ACTIVE etc.) gate on this to filter false-BoS quartets
+    # where the C point shifts deeper after the BoS.
+    if pivot_confirm_lag == 0:
+        pivot_post_confirmed = True
+    else:
+        check_end = min(hl_idx + fam.pivot_n, len(df) - 1)
+        if check_end <= hl_idx:
+            pivot_post_confirmed = True
+        else:
+            hl_close = float(df["close"].iat[hl_idx])
+            after_min = float(df["close"].iloc[hl_idx + 1 : check_end + 1].min())
+            pivot_post_confirmed = bool(after_min >= hl_close)
 
     row: dict = {col: None for col in EVENT_OUTPUT_COLUMNS}
     row.update({
@@ -185,6 +208,7 @@ def _event_row(
         "concurrent_quartets": int(concurrent_quartets),
         "hh_to_event_lag_bars": hh_to_event,
         "pivot_confirm_lag_bars": pivot_confirm_lag,
+        "pivot_post_confirmed": pivot_post_confirmed,
         "structural_invalidation_low": float(invalidation),
         "schema_version": EVENT_SCHEMA_VERSION,
     })
@@ -203,13 +227,16 @@ def _walk_quartet(
     """Walk forward from quartet birth, return (birth_idx, mit_touch_idx,
     retest_bounce_idx, deepest_low_at_first_retest_or_touch).
 
-    `birth_idx` accounts for HL pivot confirmation lag — earliest tradeable
-    bar is max(HH, HL + pivot_n). If birth_idx is past panel end → None.
+    PR-DE-3.22: `birth_idx = hh_idx` (the BoS bar). Earlier code used
+    max(hh_idx, hl_idx + pivot_n) to wait for HL pivot post-confirmation,
+    but that produced events where close had dropped back below LH inside
+    the lag window (bos_distance < 0). Soundness now lives in the row-level
+    `pivot_post_confirmed` flag.
     """
     n_bars = len(df)
     hh_idx = int(q["hh_idx"])
     hl_idx = int(q["hl_idx"])
-    birth_idx = max(hh_idx, hl_idx + fam.pivot_n)
+    birth_idx = hh_idx
     if birth_idx >= n_bars:
         return None, None, None, float("inf")
 
@@ -307,7 +334,7 @@ def _events_for_panel(
     # whose alive window [birth_idx, age_cap] covers event_idx).
     quartet_windows: list[tuple[int, int]] = []
     for q, zone, _, _, _ in pending:
-        birth = max(int(q["hh_idx"]), int(q["hl_idx"]) + fam.pivot_n)
+        birth = int(q["hh_idx"])
         age_cap = min(int(q["hh_idx"]) + fam.max_zone_age_bars, n_bars - 1)
         if birth <= age_cap:
             quartet_windows.append((birth, age_cap))

@@ -61,6 +61,7 @@ ALLOWED_TRIDENT_COLS = frozenset({
     "zone_width_pct", "zone_age_bars",
     "bos_distance_atr_at_event", "vol_ratio_20_at_event",
     "structural_invalidation_low", "structural_invalidation_pct_below_B",
+    "pivot_post_confirmed",  # PR-DE-3.22: HL after-side pivot window flag (defensive gate)
 })
 FORBIDDEN_TRIDENT_COLS = frozenset({
     "forward_high_5d", "forward_high_10d", "forward_high_20d", "forward_high_30d",
@@ -322,18 +323,26 @@ def _load_weekly_birth_tickers(asof: str) -> dict[str, list[str]]:
     mb_1w / bb_1w above_mb_birth event whose `event_bar_date` matches
     `_prior_completed_friday(asof)`.
 
+    PR-DE-3.22: also require `pivot_post_confirmed == True` (HL after-side
+    pivot window satisfied at HH bar). Defensive guard — today 100% of
+    emitted events satisfy this because `alternating_pivots` already enforces
+    it, but the gate hardens WEEKLY_BIRTH_ACTIVE if quartet detection is
+    later relaxed. Missing column (legacy probe) = passthrough (no filter).
+
     Reads only ALLOWED columns from the trident probe (ticker, family,
-    event_bar_date) — leak guard preserved. Returns {} silently when the
-    probe is absent.
+    event_bar_date, pivot_post_confirmed) — leak guard preserved. Returns
+    {} silently when the probe is absent.
     """
     if not TRIDENT_PROBE_PATH.exists():
         return {}
     target = _prior_completed_friday(asof)
     try:
-        table = pq.read_table(
-            TRIDENT_PROBE_PATH,
-            columns=["ticker", "family", "event_bar_date"],
-        )
+        schema = pq.read_schema(TRIDENT_PROBE_PATH)
+        has_ppc = "pivot_post_confirmed" in {f.name for f in schema}
+        cols = ["ticker", "family", "event_bar_date"]
+        if has_ppc:
+            cols.append("pivot_post_confirmed")
+        table = pq.read_table(TRIDENT_PROBE_PATH, columns=cols)
     except Exception as exc:
         print(
             f"[watchlist_generator] WARN: trident probe read (weekly) failed "
@@ -350,6 +359,8 @@ def _load_weekly_birth_tickers(asof: str) -> dict[str, list[str]]:
         ed = r.get("event_bar_date")
         ed_str = str(ed)[:10] if ed is not None else ""
         if ed_str != target:
+            continue
+        if has_ppc and r.get("pivot_post_confirmed") is False:
             continue
         tk = r.get("ticker") or ""
         if tk:
