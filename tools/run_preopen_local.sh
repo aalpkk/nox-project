@@ -59,7 +59,7 @@ PY="${PY:-python3}"
 
 # ---------- run ----------
 {
-  echo "==== preopen-local $(date -Is) ===="
+  echo "==== preopen-local $(date "+%Y-%m-%dT%H:%M:%S%z") ===="
   echo "[cfg] snap_date=$SNAP_DATE  cand=$CAND_PATH"
   echo "[cfg] snap_out=$SNAP_OUT  val_out=$VAL_OUT"
   echo
@@ -103,37 +103,27 @@ PY
   echo
   echo "[digest] $SUMMARY"
 
-  # Telegram (optional)
+  # HTML report + GH Pages publish + Telegram link
+  # (preopen_report_html.py sends its own TG message with the URL; skip the
+  # plain-text TG fallback when GH_TOKEN+GH_PAGES_REPO are set.)
+  echo
+  echo "[report] building HTML + publish ..."
+  REPORT_TG_ARG=""
   if [ -n "${TG_BOT_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ]; then
-    MSG="preopen-validate (local) $SNAP_DATE
-candidates: $CAND_PATH
-$SUMMARY
-out: $VAL_OUT"
-    if "$PY" - <<PY
-import os, urllib.request, urllib.parse, sys
-tok = "$TG_BOT_TOKEN"
-chat = "$TG_CHAT_ID"
-msg = """$MSG"""
-url = f"https://api.telegram.org/bot{tok}/sendMessage"
-data = urllib.parse.urlencode({"chat_id": chat, "text": msg,
-                               "disable_web_page_preview": "true"}).encode()
-req = urllib.request.Request(url, data=data)
-try:
-    with urllib.request.urlopen(req, timeout=15) as r:
-        print("[tg]", r.status)
-except Exception as e:
-    print("[tg] FAIL", e, file=sys.stderr)
-    sys.exit(1)
-PY
-    then
-      echo "[tg] sent"
-    else
-      echo "[tg] send failed (continuing)"
-    fi
-  else
-    echo "[tg] TG_BOT_TOKEN/CHAT_ID not set — skip"
+    REPORT_TG_ARG="--send-telegram"
+  fi
+  REPORT_PUB_ARG=""
+  if [ -z "${GH_TOKEN:-}" ] || [ -z "${GH_PAGES_REPO:-}" ]; then
+    REPORT_PUB_ARG="--no-publish"
+    echo "[report] GH_TOKEN/GH_PAGES_REPO missing — HTML local only"
+  fi
+  if ! "$PY" tools/preopen_report_html.py \
+        --validated  "$VAL_OUT" \
+        --candidates "$CAND_PATH" \
+        $REPORT_PUB_ARG $REPORT_TG_ARG; then
+    echo "!! report step failed (continuing — snapshot/validate already done)"
   fi
 
   echo
-  echo "==== done $(date -Is) ===="
+  echo "==== done $(date "+%Y-%m-%dT%H:%M:%S%z") ===="
 } 2>&1 | tee -a "$LOG"

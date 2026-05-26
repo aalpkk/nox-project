@@ -124,6 +124,21 @@ jobs:
             --premarket  "${{ steps.paths.outputs.snap }}" \
             --output     "${{ steps.paths.outputs.out }}"
 
+      - name: Build HTML report + publish to GH Pages + Telegram link
+        # preopen_report_html.py sends its own TG message with the URL; the
+        # plain-text "Telegram notify" step below is skipped when this succeeds.
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+          GH_PAGES_BASE_URL: ${{ secrets.GH_PAGES_BASE_URL }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python tools/preopen_report_html.py \
+            --validated  "${{ steps.paths.outputs.out }}" \
+            --candidates "${{ steps.resolve_cand.outputs.path }}" \
+            --send-telegram
+
       - name: Print digest
         id: digest
         run: |
@@ -158,10 +173,10 @@ jobs:
         env:
           OUT: ${{ steps.paths.outputs.out }}
 
-      - name: Telegram notify
-        # Always notify on scheduled runs; on dispatch only when send_telegram=true.
-        # Secret presence is checked at runtime inside the script (empty token → skip).
-        if: ${{ (github.event_name == 'schedule' || github.event.inputs.send_telegram == 'true') }}
+      - name: Telegram notify (plain-text fallback)
+        # Fallback: only fires if the HTML-report step above failed to send,
+        # AND this is a scheduled run (or user dispatched with send_telegram=true).
+        if: ${{ failure() && (github.event_name == 'schedule' || github.event.inputs.send_telegram == 'true') }}
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -197,5 +212,6 @@ jobs:
           path: |
             ${{ steps.paths.outputs.snap }}
             ${{ steps.paths.outputs.out }}
+            output/preopen_us_*.html
           if-no-files-found: error
           retention-days: 30
