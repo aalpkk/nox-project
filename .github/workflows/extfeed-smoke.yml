@@ -16,6 +16,15 @@ on:
           - daily_recon
           - xu100_pull
           - delta_pull
+          - us_pull
+      us_universe:
+        description: 'US universe for us_pull mode (ndx100 | sp500)'
+        required: false
+        default: 'sp500'
+        type: choice
+        options:
+          - ndx100
+          - sp500
       symbol:
         description: 'Symbol for smoke mode (e.g. BIST:THYAO)'
         required: false
@@ -78,6 +87,8 @@ jobs:
             python tools/extfeed_pull_xu100.py
           elif [ "${{ github.event.inputs.mode }}" = "delta_pull" ]; then
             python tools/extfeed_delta_pull.py
+          elif [ "${{ github.event.inputs.mode }}" = "us_pull" ]; then
+            python tools/extfeed_pull_us.py --use-universe "${{ github.event.inputs.us_universe }}"
           else
             python tools/extfeed_smoke.py \
               "${{ github.event.inputs.symbol }}" \
@@ -134,5 +145,15 @@ jobs:
           name: extfeed-delta-pull
           path: |
             output/extfeed_intraday_1h_3y_master.parquet
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload us_pull artifacts
+        if: ${{ github.event.inputs.mode == 'us_pull' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extfeed-us-pull
+          path: |
+            output/extfeed_intraday_1h_3y_master_us.parquet
           if-no-files-found: error
           retention-days: 30
