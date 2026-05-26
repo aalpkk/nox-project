@@ -1,0 +1,202 @@
+name: preopen validate (US)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidates_path:
+        description: 'T-close candidates CSV (relative repo path). Leave blank to auto-detect latest output/tclose_candidates_us_*.csv'
+        required: false
+        default: ''
+      snapshot_date:
+        description: 'Snapshot day in ET (YYYY-MM-DD). Blank = today (ET).'
+        required: false
+        default: ''
+      pm_start:
+        description: 'Pre-market window start (HH:MM ET).'
+        required: false
+        default: '04:00'
+      pm_end:
+        description: 'Pre-market window end (HH:MM ET, exclusive).'
+        required: false
+        default: '09:30'
+      send_telegram:
+        description: 'Send Telegram digest of REJECT/WATCH/PASS counts.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+  # Three staggered crons to absorb GH Actions cron skew (typically up to ~15min).
+  # 13:15 / 13:20 / 13:25 UTC = 09:15 / 09:20 / 09:25 ET (year-round, EDT in summer).
+  # Concurrency group below cancels duplicate firings on the same UTC day so only
+  # the first one that actually starts gets to run end-to-end.
+  schedule:
+    - cron: '15 13 * * 1-5'
+    - cron: '20 13 * * 1-5'
+    - cron: '25 13 * * 1-5'
+
+# Scheduled runs share one group so the 3 staggered crons serialize (only one
+# at a time); dispatches each get their own group to keep manual runs free.
+# Note: this does NOT dedupe by day — all 3 crons will eventually run (each
+# re-runs the same idempotent snapshot+validate; outputs are overwritten).
+concurrency:
+  group: ${{ github.event_name == 'schedule' && 'preopen-validate-cron' || format('preopen-validate-dispatch-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  preopen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve candidates path
+        id: resolve_cand
+        env:
+          IN_PATH: ${{ github.event.inputs.candidates_path }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IN_PATH}" ]; then
+            if [ ! -f "${IN_PATH}" ]; then
+              echo "!! candidates_path not found: ${IN_PATH}" >&2
+              exit 1
+            fi
+            echo "path=${IN_PATH}" >> "$GITHUB_OUTPUT"
+          else
+            latest="$(ls -1 output/tclose_candidates_us_*.csv 2>/dev/null | sort | tail -n 1 || true)"
+            if [ -z "${latest}" ]; then
+              echo "!! no output/tclose_candidates_us_*.csv found in repo." >&2
+              exit 1
+            fi
+            echo "path=${latest}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "[resolved] candidates: $(cat $GITHUB_OUTPUT | grep ^path= | cut -d= -f2-)"
+
+      - name: Resolve snapshot date
+        id: resolve_date
+        env:
+          IN_DATE: ${{ github.event.inputs.snapshot_date }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IN_DATE}" ]; then
+            echo "date=${IN_DATE}" >> "$GITHUB_OUTPUT"
+          else
+            # ET date (US/Eastern)
+            d="$(TZ=America/New_York date +%F)"
+            echo "date=${d}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute output paths
+        id: paths
+        env:
+          D: ${{ steps.resolve_date.outputs.date }}
+        run: |
+          d_us="${D//-/_}"
+          echo "snap=output/premarket_snapshot_us_${d_us}.csv" >> "$GITHUB_OUTPUT"
+          echo "out=output/preopen_validated_us_${d_us}.csv" >> "$GITHUB_OUTPUT"
+
+      - name: Pull pre-market snapshot
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: |
+          python tools/preopen_pm_snapshot_us.py \
+            --candidates "${{ steps.resolve_cand.outputs.path }}" \
+            --output     "${{ steps.paths.outputs.snap }}" \
+            --snapshot-date "${{ steps.resolve_date.outputs.date }}" \
+            --pm-start "${{ github.event.inputs.pm_start || '04:00' }}" \
+            --pm-end   "${{ github.event.inputs.pm_end   || '09:30' }}"
+
+      - name: Run pre-open validator
+        run: |
+          python tools/preopen_validator_v0.py \
+            --candidates "${{ steps.resolve_cand.outputs.path }}" \
+            --premarket  "${{ steps.paths.outputs.snap }}" \
+            --output     "${{ steps.paths.outputs.out }}"
+
+      - name: Print digest
+        id: digest
+        run: |
+          python - <<'PY'
+          import os
+          import pandas as pd
+          p = os.environ["OUT"]
+          df = pd.read_csv(p)
+          col = "preopen_status" if "preopen_status" in df.columns else (
+                "status" if "status" in df.columns else None)
+          if col is None:
+              print("[digest] status column missing.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("summary=NO_STATUS_COL\n")
+              raise SystemExit(0)
+          counts = df[col].value_counts().to_dict()
+          n_pass = int(counts.get("PASS_PREOPEN", 0))
+          n_watch = int(counts.get("WATCH_OPEN", 0))
+          n_rej = int(counts.get("REJECT_PREOPEN", 0))
+          n = len(df)
+          summary = (
+              f"PASS={n_pass} WATCH={n_watch} REJECT={n_rej} (N={n})"
+          )
+          print(f"[digest] {summary}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"summary={summary}\n")
+              f.write(f"n={n}\n")
+              f.write(f"n_pass={n_pass}\n")
+              f.write(f"n_watch={n_watch}\n")
+              f.write(f"n_reject={n_rej}\n")
+          PY
+        env:
+          OUT: ${{ steps.paths.outputs.out }}
+
+      - name: Telegram notify
+        # Always notify on scheduled runs; on dispatch only when send_telegram=true.
+        # Secret presence is checked at runtime inside the script (empty token → skip).
+        if: ${{ (github.event_name == 'schedule' || github.event.inputs.send_telegram == 'true') }}
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          MSG: |
+            preopen-validate (US) ${{ steps.resolve_date.outputs.date }}
+            candidates: ${{ steps.resolve_cand.outputs.path }}
+            ${{ steps.digest.outputs.summary }}
+            run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import os, urllib.request, urllib.parse, json
+          tok = os.environ.get("TG_BOT_TOKEN", "")
+          chat = os.environ.get("TG_CHAT_ID", "")
+          msg = os.environ["MSG"]
+          if not tok or not chat:
+              print("[tg] missing TG_BOT_TOKEN/TG_CHAT_ID secrets — skip.")
+              raise SystemExit(0)
+          url = f"https://api.telegram.org/bot{tok}/sendMessage"
+          data = urllib.parse.urlencode({
+              "chat_id": chat,
+              "text": msg,
+              "disable_web_page_preview": "true",
+          }).encode()
+          req = urllib.request.Request(url, data=data)
+          with urllib.request.urlopen(req, timeout=15) as r:
+              print(r.status, r.read()[:200])
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: preopen-validate-${{ steps.resolve_date.outputs.date }}
+          path: |
+            ${{ steps.paths.outputs.snap }}
+            ${{ steps.paths.outputs.out }}
+          if-no-files-found: error
+          retention-days: 30
