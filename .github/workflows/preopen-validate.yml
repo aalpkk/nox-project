@@ -29,13 +29,12 @@ on:
           - 'true'
 
   # Three staggered crons to absorb GH Actions cron skew (typically up to ~15min).
-  # 13:15 / 13:20 / 13:25 UTC = 09:15 / 09:20 / 09:25 ET (year-round, EDT in summer).
-  # Concurrency group below cancels duplicate firings on the same UTC day so only
-  # the first one that actually starts gets to run end-to-end.
+  # 13:00 / 13:05 / 13:10 UTC = 09:00 / 09:05 / 09:10 ET = 16:00 / 16:05 / 16:10 TR.
+  # ~1h20m before US open at 09:30 ET — leaves room to act on PASS/WATCH/REJECT.
   schedule:
-    - cron: '15 13 * * 1-5'
-    - cron: '20 13 * * 1-5'
-    - cron: '25 13 * * 1-5'
+    - cron: '0 13 * * 1-5'
+    - cron: '5 13 * * 1-5'
+    - cron: '10 13 * * 1-5'
 
 # Scheduled runs share one group so the 3 staggered crons serialize (only one
 # at a time); dispatches each get their own group to keep manual runs free.
