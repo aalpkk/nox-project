@@ -38,6 +38,9 @@ SNAP_STR = {"~11:00": "11:00", "~12:00": "12:00", "~13:00": "13:00", "~15:00": "
 # predict P(ml_s>=0.65 | tavan) ~AUC 0.87. ml_s premium lives in the uncaptured tail so
 # filtering on it doesn't lift V1-exit returns — we only DISPLAY likely-v1 picks.
 STRUCT_FEATS = ["sf_sma200_dist", "sf_sma50_dist", "sf_rs20", "sf_dist252", "sf_atr_rank"]
+# v1? = structural + intraday hold-strength (Idea 2): AUC ~0.93 vs ~0.79 structural-only;
+# captures the day's-bar quality (fixes PRZMA-type reversals). Snapshot-specific.
+V1Q_FEATS = STRUCT_FEATS + v4.FEATS15
 
 
 def _struct_feats(d):
@@ -104,16 +107,33 @@ def freeze():
     panel["date"] = pd.to_datetime(panel["date"]).dt.normalize()
     art = {"base": BASE, "trained_from": str(TRAIN_FROM.date()), "snapshots": {}}
 
-    # v1-quality indicator: P(ml_s>=0.65 | tavan) from prior-day structural features.
-    tav = panel[(panel["is_tavan"] == 1) & panel["ml_s"].notna()].merge(
-        _struct_feats(d), on=["ticker", "date"], how="left").dropna(subset=STRUCT_FEATS)
-    if len(tav) > 50:
-        Xq = tav[STRUCT_FEATS].values; yq = (tav["ml_s"] >= 0.65).astype(int).values
+    # v1? quality model (Idea 2): P(ml_s>=0.65 | tavan) from structural + intraday-hold,
+    # PER snapshot (intraday-hold is snapshot-specific). Trained on ALL tavan events.
+    tav_ev = panel[(panel["is_tavan"] == 1) & panel["ml_s"].notna()][["ticker", "date", "ml_s"]]
+    sf = _struct_feats(d); m15 = v4.load15(); pc = d[["ticker", "date", "prev_close"]].copy()
+    art["v1q"] = {}
+    for label in SNAPSHOTS:
+        f15 = v4.feats15(m15, SNAP_STR[label], pc)
+        tav = tav_ev.merge(sf, on=["ticker", "date"], how="left").merge(
+            f15, on=["ticker", "date"], how="inner").dropna(subset=V1Q_FEATS)
+        if len(tav) < 100:
+            continue
+        Xq = tav[V1Q_FEATS].replace([np.inf, -np.inf], np.nan).fillna(0.0).values
+        yq = (tav["ml_s"] >= 0.65).astype(int).values
         muq, sdq = Xq.mean(0), Xq.std(0) + 1e-9
         cq = LogisticRegression(max_iter=4000, class_weight="balanced").fit((Xq - muq) / sdq, yq)
-        art["v1q"] = dict(feats=STRUCT_FEATS, coef=cq.coef_[0].tolist(), intercept=float(cq.intercept_[0]),
-                          mu=muq.tolist(), sd=sdq.tolist(), base=float(yq.mean()))
-        log(f"  v1q: trained on {len(tav):,} tavan events, base P(v1|tavan)={yq.mean():.1%}")
+        art["v1q"][label] = dict(feats=V1Q_FEATS, coef=cq.coef_[0].tolist(), intercept=float(cq.intercept_[0]),
+                                 mu=muq.tolist(), sd=sdq.tolist(), base=float(yq.mean()))
+        log(f"  v1q[{label}]: n={len(tav):,} base={yq.mean():.1%} (struct+intraday-hold)")
+
+    # structural-only model for the anytime `quality` command (no intraday data available)
+    tavs = tav_ev.merge(sf, on=["ticker", "date"], how="left").dropna(subset=STRUCT_FEATS)
+    if len(tavs) > 50:
+        Xs = tavs[STRUCT_FEATS].values; ys = (tavs["ml_s"] >= 0.65).astype(int).values
+        mus, sds = Xs.mean(0), Xs.std(0) + 1e-9
+        cs = LogisticRegression(max_iter=4000, class_weight="balanced").fit((Xs - mus) / sds, ys)
+        art["v1q_struct"] = dict(feats=STRUCT_FEATS, coef=cs.coef_[0].tolist(), intercept=float(cs.intercept_[0]),
+                                 mu=mus.tolist(), sd=sds.tolist(), base=float(ys.mean()))
 
     panel = panel.rename(columns={"is_tavan": "lock_true"})[["date", "ticker", "lock_true"]]
     for label, seg in pools.items():
@@ -155,7 +175,7 @@ def scan(asof, snapshot, topk, telegram=False):
     art = json.loads(MODEL.read_text())
     label = {"11:00": "~11:00", "12:00": "~12:00", "13:00": "~13:00", "15:00": "~15:00"}[snapshot]
     a = art["snapshots"][label]
-    q = art.get("v1q")
+    q = art.get("v1q", {}).get(label) if isinstance(art.get("v1q"), dict) else None
     asof = pd.Timestamp(asof).normalize()
     seg = _pools()[0][label]
     day = seg[seg["date"] == asof].copy()
@@ -206,9 +226,9 @@ def quality(asof, tickers, top, telegram=False):
     P(ml_s>=0.65 | tavan), prior-day, no intraday data needed. 'likely-v1 IF it taps tavan'."""
     if not MODEL.exists():
         log("No model — run freeze first."); return
-    q = json.loads(MODEL.read_text()).get("v1q")
+    q = json.loads(MODEL.read_text()).get("v1q_struct")
     if not q:
-        log("No v1q in model — re-freeze."); return
+        log("No v1q_struct in model — re-freeze."); return
     m = v1.load_intraday(); d = v1.daily_frame(m)
     sf = _struct_feats(d)
     asof = pd.Timestamp(asof).normalize()
