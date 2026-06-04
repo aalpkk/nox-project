@@ -34,6 +34,31 @@ SL_PCT, TP1_PCT, TP1_LOCK, TRAIL = 0.10, 0.04, 0.02, 0.02
 # Snapshots: H = hour-1 (1h bar) ; 15m string. 12:00 added (tests on par with 11/13:00).
 SNAPSHOTS = {"~11:00": 10, "~12:00": 11, "~13:00": 12, "~15:00": 14}
 SNAP_STR = {"~11:00": "11:00", "~12:00": "12:00", "~13:00": "13:00", "~15:00": "15:00"}
+# v1-quality INDICATOR (shown, NOT used to select): prior-day structural features that
+# predict P(ml_s>=0.65 | tavan) ~AUC 0.87. ml_s premium lives in the uncaptured tail so
+# filtering on it doesn't lift V1-exit returns — we only DISPLAY likely-v1 picks.
+STRUCT_FEATS = ["sf_sma200_dist", "sf_sma50_dist", "sf_rs20", "sf_dist252", "sf_atr_rank"]
+
+
+def _struct_feats(d):
+    """Prior-day (shifted) structural quality features from the 1h-master daily series."""
+    x = d[["ticker", "date", "d_high", "d_low", "d_close"]].copy().sort_values(["ticker", "date"])
+    gc = x.groupby("ticker")["d_close"]
+    sma50 = gc.transform(lambda s: s.rolling(50, min_periods=10).mean())
+    sma200 = gc.transform(lambda s: s.rolling(200, min_periods=40).mean())
+    x["sf_sma50_dist"] = (x["d_close"] - sma50) / sma50
+    x["sf_sma200_dist"] = (x["d_close"] - sma200) / sma200
+    x["ret20"] = gc.transform(lambda s: s / s.shift(20) - 1)
+    hi252 = x.groupby("ticker")["d_high"].transform(lambda s: s.rolling(252, min_periods=40).max())
+    x["sf_dist252"] = (x["d_close"] - hi252) / hi252
+    pc = gc.shift(1)
+    trng = pd.concat([(x["d_high"] - x["d_low"]), (x["d_high"] - pc).abs(), (x["d_low"] - pc).abs()], axis=1).max(axis=1)
+    x["atrp"] = trng.groupby(x["ticker"]).transform(lambda s: s.rolling(14, min_periods=5).mean()) / x["d_close"]
+    x["sf_atr_rank"] = x.groupby("ticker")["atrp"].transform(lambda s: s.rolling(60, min_periods=15).rank(pct=True))
+    x["sf_rs20"] = x.groupby("date")["ret20"].rank(pct=True)
+    for c in STRUCT_FEATS:
+        x[c] = x.groupby("ticker")[c].shift(1)        # prior close → known at T
+    return x[["ticker", "date"] + STRUCT_FEATS]
 
 
 def log(m): print(m, flush=True)
@@ -59,24 +84,38 @@ def _pools():
     self-contained (OHLCV+15m, no panel) so scan runs live; freeze adds the real label."""
     m = v1.load_intraday(); d = v1.daily_frame(m)
     pl = _ohlcv_lab(d)
+    sf = _struct_feats(d)
     m15 = v4.load15(); pc = d[["ticker", "date", "prev_close"]].copy()
     out = {}
     for label, H in SNAPSHOTS.items():
         seg = v1.build(m, d, pl, H, label)
         seg["date"] = pd.to_datetime(seg["date"]).dt.normalize()
         seg = seg.merge(v4.feats15(m15, SNAP_STR[label], pc), on=["ticker", "date"], how="left")
+        seg = seg.merge(sf, on=["ticker", "date"], how="left")
         out[label] = seg
-    return out
+    return out, d
 
 
 def freeze():
     from sklearn.linear_model import LogisticRegression
-    pools = _pools()
+    pools, d = _pools()
     # accurate training label from the panel (historical only); features are OHLCV-derived
-    panel = pd.read_parquet(v1.PANEL, columns=["date", "ticker", "is_tavan"])
+    panel = pd.read_parquet(v1.PANEL, columns=["date", "ticker", "is_tavan", "ml_s"])
     panel["date"] = pd.to_datetime(panel["date"]).dt.normalize()
-    panel = panel.rename(columns={"is_tavan": "lock_true"})
     art = {"base": BASE, "trained_from": str(TRAIN_FROM.date()), "snapshots": {}}
+
+    # v1-quality indicator: P(ml_s>=0.65 | tavan) from prior-day structural features.
+    tav = panel[(panel["is_tavan"] == 1) & panel["ml_s"].notna()].merge(
+        _struct_feats(d), on=["ticker", "date"], how="left").dropna(subset=STRUCT_FEATS)
+    if len(tav) > 50:
+        Xq = tav[STRUCT_FEATS].values; yq = (tav["ml_s"] >= 0.65).astype(int).values
+        muq, sdq = Xq.mean(0), Xq.std(0) + 1e-9
+        cq = LogisticRegression(max_iter=4000, class_weight="balanced").fit((Xq - muq) / sdq, yq)
+        art["v1q"] = dict(feats=STRUCT_FEATS, coef=cq.coef_[0].tolist(), intercept=float(cq.intercept_[0]),
+                          mu=muq.tolist(), sd=sdq.tolist(), base=float(yq.mean()))
+        log(f"  v1q: trained on {len(tav):,} tavan events, base P(v1|tavan)={yq.mean():.1%}")
+
+    panel = panel.rename(columns={"is_tavan": "lock_true"})[["date", "ticker", "lock_true"]]
     for label, seg in pools.items():
         seg = seg.merge(panel, on=["ticker", "date"], how="left")
         seg["lock"] = seg["lock_true"]
@@ -103,28 +142,39 @@ def _score(seg, a):
     return 1 / (1 + np.exp(-lin))
 
 
+def _score_v1(day, q):
+    """Structural P(ml_s>=0.65 | tavan) for each pick — the 'likely v1-quality?' signal."""
+    X = day[q["feats"]].replace([np.inf, -np.inf], np.nan).fillna(0.0).values
+    z = (X - np.array(q["mu"])) / np.array(q["sd"])
+    return 1 / (1 + np.exp(-(z @ np.array(q["coef"]) + q["intercept"])))
+
+
 def scan(asof, snapshot, topk, telegram=False):
     if not MODEL.exists():
         log("No frozen model — run: python tools/tavan_intraday_lock_system_v1.py freeze"); return
     art = json.loads(MODEL.read_text())
     label = {"11:00": "~11:00", "12:00": "~12:00", "13:00": "~13:00", "15:00": "~15:00"}[snapshot]
     a = art["snapshots"][label]
+    q = art.get("v1q")
     asof = pd.Timestamp(asof).normalize()
-    seg = _pools()[label]
+    seg = _pools()[0][label]
     day = seg[seg["date"] == asof].copy()
     if day.empty:
         log(f"No pool rows for {asof.date()} @ {snapshot} (no +3-8% candidates, or data not pulled). "); return
     day["P_lock"] = _score(day, a)
+    day["P_v1"] = _score_v1(day, q) if q else np.nan
     day = day.sort_values("P_lock", ascending=False)
     thr = a["thr_top1"]
     log(f"\n=== TAVAN INTRADAY LOCK SCAN — {asof.date()} @ {snapshot} ===")
     log(f"(model trained {art['trained_from']}+, lock-rate {a['lock_rate']:.1%}; "
-        f"high-conviction P_lock>={thr:.3f}) — PAPER-TRACK\n")
-    log(f"{'tk':<8}{'P_lock':>7}  {'now%':>6}  {'entry':>8}  {'SL-10%':>8}  {'TP1+4%':>8}  conv")
+        f"high-conviction P_lock>={thr:.3f}) — PAPER-TRACK")
+    log("P_lock=lock olasılığı (seçim bunadır) | v1?=yapısal kalite olasılığı (sadece bilgi)\n")
+    log(f"{'tk':<8}{'P_lock':>7}  {'v1?':>5}  {'now%':>6}  {'entry':>8}  {'SL-10%':>8}  {'TP1+4%':>8}  conv")
     picks = []
     for _, r in day.head(max(topk, 8)).iterrows():
         e = r["entry"]; conv = "**HIGH**" if r["P_lock"] >= thr else ""
-        log(f"{r['ticker']:<8}{r['P_lock']*100:>6.1f}%  {r['ret_at_T']*100:>5.1f}%  "
+        v1s = f"{r['P_v1']*100:.0f}%" if pd.notna(r["P_v1"]) else "-"
+        log(f"{r['ticker']:<8}{r['P_lock']*100:>6.1f}%  {v1s:>5}  {r['ret_at_T']*100:>5.1f}%  "
             f"{e:>8.2f}  {e*(1-SL_PCT):>8.2f}  {e*(1+TP1_PCT):>8.2f}  {conv}")
         if r["P_lock"] >= thr:
             picks.append(r["ticker"])
@@ -137,8 +187,8 @@ def scan(asof, snapshot, topk, telegram=False):
         lines_tg = [f"🎯 TAVAN LOCK {asof.date()} @{snapshot} (PAPER)"]
         if len(hi):
             for _, r in hi.iterrows():
-                e = r["entry"]
-                lines_tg.append(f"• {r['ticker']}  P={r['P_lock']*100:.0f}%  al≈{e:.2f}  "
+                e = r["entry"]; v1s = f" v1?{r['P_v1']*100:.0f}%" if pd.notna(r["P_v1"]) else ""
+                lines_tg.append(f"• {r['ticker']}  P={r['P_lock']*100:.0f}%{v1s}  al≈{e:.2f}  "
                                 f"SL {e*(1-SL_PCT):.2f}  TP1 {e*(1+TP1_PCT):.2f}")
             lines_tg.append("Exit: +4%→yarı sat, kalan %2 trail (BE taban), SL −10%, H25.")
         else:
