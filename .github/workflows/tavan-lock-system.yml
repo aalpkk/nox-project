@@ -33,6 +33,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      mode:
+        description: 'scan = intraday lock picks | quality = whole-BIST v1? ranking (structural, on-demand)'
+        required: false
+        default: 'scan'
+        type: choice
+        options: ['scan', 'quality']
 
 concurrency:
   group: tavan-lock-system
@@ -87,9 +93,15 @@ jobs:
           set -o pipefail
           ASOF="${{ github.event.inputs.asof }}"; [ -z "$ASOF" ] && ASOF="$(date -u +%F)"
           SNAP="${{ github.event.inputs.snapshot }}"; [ -z "$SNAP" ] && SNAP="11:00"
-          echo "scan asof=$ASOF snapshot=$SNAP"
-          python tools/tavan_intraday_lock_system_v1.py scan --asof "$ASOF" --snapshot "$SNAP" --telegram \
-            2>&1 | tee lock_scan_output.txt
+          MODE="${{ github.event.inputs.mode }}"; [ -z "$MODE" ] && MODE="scan"
+          echo "mode=$MODE asof=$ASOF snapshot=$SNAP"
+          if [ "$MODE" = "quality" ]; then
+            python tools/tavan_intraday_lock_system_v1.py quality --asof "$ASOF" --top 25 --telegram \
+              2>&1 | tee lock_scan_output.txt
+          else
+            python tools/tavan_intraday_lock_system_v1.py scan --asof "$ASOF" --snapshot "$SNAP" --telegram \
+              2>&1 | tee lock_scan_output.txt
+          fi
 
       - name: Upload artifact
         if: always()
