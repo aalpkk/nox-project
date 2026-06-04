@@ -27,6 +27,12 @@ on:
         default: '11:00'
         type: choice
         options: ['11:00', '12:00', '13:00', '15:00']
+      skip_pull:
+        description: 'Skip the delta-pull and scan the cached master as-is (re-scan same day)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 concurrency:
   group: tavan-lock-system
@@ -62,6 +68,7 @@ jobs:
             tavan-masters-
 
       - name: Delta-pull fresh 1h + 15m bars (cached master kept current)
+        if: ${{ github.event.inputs.skip_pull != 'true' }}
         env:
           INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
           INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
