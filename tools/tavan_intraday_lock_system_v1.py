@@ -201,6 +201,40 @@ def scan(asof, snapshot, topk, telegram=False):
             log(f"[telegram failed: {e}]")
 
 
+def quality(asof, tickers, top, telegram=False):
+    """On-demand v1? proxy for the WHOLE universe (or given tickers) — structural
+    P(ml_s>=0.65 | tavan), prior-day, no intraday data needed. 'likely-v1 IF it taps tavan'."""
+    if not MODEL.exists():
+        log("No model — run freeze first."); return
+    q = json.loads(MODEL.read_text()).get("v1q")
+    if not q:
+        log("No v1q in model — re-freeze."); return
+    m = v1.load_intraday(); d = v1.daily_frame(m)
+    sf = _struct_feats(d)
+    asof = pd.Timestamp(asof).normalize()
+    day = sf[sf["date"] == asof].dropna(subset=q["feats"]).copy()
+    if day.empty:
+        log(f"No structural data for {asof.date()} (data not pulled to that date?)."); return
+    day["P_v1"] = _score_v1(day, q)
+    if tickers:
+        tl = [t.strip().upper() for t in tickers.split(",")]
+        day = day[day["ticker"].isin(tl)]
+    day = day.sort_values("P_v1", ascending=False)
+    log(f"\n=== BIST v1-QUALITY (structural proxy, prior-day) — {asof.date()} ===")
+    log(f"(P(ml_s>=0.65 | tavan); universe base {q['base']:.0%}) — 'likely-v1 IF it taps tavan'\n")
+    log(f"{'tk':<8}{'v1?':>6}")
+    for _, r in day.head(top).iterrows():
+        log(f"{r['ticker']:<8}{r['P_v1']*100:>5.0f}%")
+    if telegram:
+        lines = [f"📊 BIST v1-QUALITY {asof.date()} (yapısal proxy)"]
+        lines += [f"• {r['ticker']}  v1?{r['P_v1']*100:.0f}%" for _, r in day.head(min(top, 15)).iterrows()]
+        try:
+            from core.reports import send_telegram
+            send_telegram("\n".join(lines)); log("[telegram sent]")
+        except Exception as e:
+            log(f"[telegram failed: {e}]")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -210,9 +244,16 @@ def main():
     sp.add_argument("--snapshot", default="11:00", choices=["11:00", "12:00", "13:00", "15:00"])
     sp.add_argument("--topk", type=int, default=12)
     sp.add_argument("--telegram", action="store_true")
+    qp = sub.add_parser("quality")
+    qp.add_argument("--asof", required=True)
+    qp.add_argument("--tickers", default="", help="comma list (blank = whole universe)")
+    qp.add_argument("--top", type=int, default=30)
+    qp.add_argument("--telegram", action="store_true")
     args = ap.parse_args()
     if args.cmd == "freeze":
         freeze()
+    elif args.cmd == "quality":
+        quality(args.asof, args.tickers, args.top, args.telegram)
     else:
         scan(args.asof, args.snapshot, args.topk, args.telegram)
 
