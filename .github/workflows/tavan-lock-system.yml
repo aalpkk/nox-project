@@ -13,8 +13,8 @@ name: Tavan Intraday Lock System
 # seed master, which the --days 7 delta tops up.
 
 on:
-  schedule:
-    - cron: '5 8 * * 1-5'        # 11:05 TR (after the 11:00 bar closes)
+  # Triggered solely by cron-job.org (POST workflow_dispatch) at 11:05 TR — GitHub's
+  # native schedule is removed to avoid double-runs (GH cron is also unreliable/delayed).
   workflow_dispatch:
     inputs:
       asof:
