@@ -26,7 +26,7 @@ on:
         required: false
         default: '11:00'
         type: choice
-        options: ['11:00', '13:00', '15:00']
+        options: ['11:00', '12:00', '13:00', '15:00']
 
 concurrency:
   group: tavan-lock-system

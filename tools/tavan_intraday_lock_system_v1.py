@@ -31,6 +31,9 @@ TRACKER = REPO / "output/tavan_intraday_lock_system_tracker.csv"
 BASE = v1.NEW + v4.FEATS15
 TRAIN_FROM = pd.Timestamp("2025-01-01")
 SL_PCT, TP1_PCT, TP1_LOCK, TRAIL = 0.10, 0.04, 0.02, 0.02
+# Snapshots: H = hour-1 (1h bar) ; 15m string. 12:00 added (tests on par with 11/13:00).
+SNAPSHOTS = {"~11:00": 10, "~12:00": 11, "~13:00": 12, "~15:00": 14}
+SNAP_STR = {"~11:00": "11:00", "~12:00": "12:00", "~13:00": "13:00", "~15:00": "15:00"}
 
 
 def log(m): print(m, flush=True)
@@ -58,10 +61,10 @@ def _pools():
     pl = _ohlcv_lab(d)
     m15 = v4.load15(); pc = d[["ticker", "date", "prev_close"]].copy()
     out = {}
-    for label, H in v1.SNAPSHOTS.items():
+    for label, H in SNAPSHOTS.items():
         seg = v1.build(m, d, pl, H, label)
         seg["date"] = pd.to_datetime(seg["date"]).dt.normalize()
-        seg = seg.merge(v4.feats15(m15, v4.SNAP_STR[label], pc), on=["ticker", "date"], how="left")
+        seg = seg.merge(v4.feats15(m15, SNAP_STR[label], pc), on=["ticker", "date"], how="left")
         out[label] = seg
     return out
 
@@ -104,7 +107,7 @@ def scan(asof, snapshot, topk, telegram=False):
     if not MODEL.exists():
         log("No frozen model — run: python tools/tavan_intraday_lock_system_v1.py freeze"); return
     art = json.loads(MODEL.read_text())
-    label = {"11:00": "~11:00", "13:00": "~13:00", "15:00": "~15:00"}[snapshot]
+    label = {"11:00": "~11:00", "12:00": "~12:00", "13:00": "~13:00", "15:00": "~15:00"}[snapshot]
     a = art["snapshots"][label]
     asof = pd.Timestamp(asof).normalize()
     seg = _pools()[label]
@@ -154,7 +157,7 @@ def main():
     sub.add_parser("freeze")
     sp = sub.add_parser("scan")
     sp.add_argument("--asof", required=True)
-    sp.add_argument("--snapshot", default="11:00", choices=["11:00", "13:00", "15:00"])
+    sp.add_argument("--snapshot", default="11:00", choices=["11:00", "12:00", "13:00", "15:00"])
     sp.add_argument("--topk", type=int, default=12)
     sp.add_argument("--telegram", action="store_true")
     args = ap.parse_args()
