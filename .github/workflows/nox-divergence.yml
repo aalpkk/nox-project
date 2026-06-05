@@ -1,7 +1,8 @@
 name: NOX Divergence Screener
 on:
   schedule:
-    - cron: '15 15 * * 5'   # Cuma 15:15 UTC = 18:15 TR (NOX v3'ten 15dk sonra)
+    - cron: '15 15 * * 5'   # Cuma 15:15 UTC = 18:15 TR (ön sonuç, ~17:00 barı)
+    - cron: '5 16 * * 5'    # Cuma 16:05 UTC = 19:05 TR (final, 18:30 close pull sonrası)
   workflow_dispatch:          # Manuel tetikleme
 
 jobs:
@@ -13,6 +14,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - run: python run_divergence.py --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -34,6 +39,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - run: python run_divergence.py --weekly --period 5y --scan-bars 6 --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -55,6 +64,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - run: python run_divergence.py --monthly --period 5y --scan-bars 6 --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}

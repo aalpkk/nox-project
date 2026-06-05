@@ -18,6 +18,8 @@ import requests as req
 import yfinance as yf
 from dotenv import load_dotenv
 
+from markets.bist import data as bist_data
+
 load_dotenv()
 
 warnings.filterwarnings("ignore")
@@ -45,6 +47,11 @@ SYMBOLS_FILE = Path(__file__).parent / "tools" / "bist_symbols.txt"
 
 
 def load_symbols():
+    # Evren = extfeed master (tüm BIST taramaları aynı veri/evren).
+    tickers = bist_data.get_all_bist_tickers()
+    if tickers and len(tickers) > 50:
+        return [t + ".IS" for t in tickers]
+    # Yedek: repodaki bist_symbols.txt
     if SYMBOLS_FILE.exists():
         symbols = [
             line.strip()
@@ -52,7 +59,7 @@ def load_symbols():
             if line.strip()
         ]
         return [s + ".IS" for s in symbols]
-    print("HATA: tools/bist_symbols.txt bulunamadı")
+    print("HATA: evren yüklenemedi (extfeed master + bist_symbols.txt yok)")
     sys.exit(1)
 
 
@@ -422,6 +429,11 @@ def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5, no
     end = datetime.now()
     start = end - timedelta(days=lookback_days)
 
+    # Tüm veriyi tek seferde extfeed master'dan çek (tüm taramalar aynı kaynak).
+    period = f"{max(lookback_days, 200)}d"
+    tickers = [s.replace(".IS", "") for s in symbols]
+    data_map = bist_data.fetch_data(tickers, period=period)
+
     results = {"SQUEEZE": [], "BOX": [], "BREAKOUT": []}
     errors = 0
 
@@ -430,12 +442,9 @@ def run_scanner(use_vol=True, use_htf=False, lookback_days=180, max_bo_age=5, no
         if (i + 1) % 50 == 0:
             print(f"   ... {i+1}/{len(symbols)} tamamlandı")
         try:
-            df = yf.download(sym, start=start, end=end, progress=False, timeout=10)
+            df = data_map.get(ticker)
             if df is None or len(df) < 50:
                 continue
-            # yfinance multi-level column fix
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
 
             res = scan_single(df, use_vol, use_htf)
             if res is None:
@@ -532,10 +541,8 @@ def _ml_score_breakouts(breakouts, start, end):
     xu100_above = 0
     xu100_ret = 0.0
     try:
-        xu = yf.download("XU100.IS", start=start, end=end, progress=False, timeout=10)
+        xu = bist_data.fetch_benchmark(period="1y")
         if xu is not None and len(xu) > 50:
-            if isinstance(xu.columns, pd.MultiIndex):
-                xu.columns = xu.columns.get_level_values(0)
             xu_ema = xu["Close"].ewm(span=50, adjust=False).mean()
             xu100_above = 1 if xu["Close"].iloc[-1] > xu_ema.iloc[-1] else 0
             xu100_ret = float((xu["Close"].iloc[-1] / xu["Close"].iloc[-21] - 1) * 100) if len(xu) > 21 else 0

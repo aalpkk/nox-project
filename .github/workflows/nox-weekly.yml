@@ -1,7 +1,8 @@
 name: NOX v3 Weekly Screener
 on:
   schedule:
-    - cron: '30 15 * * 1-5'  # Pzt-Cuma 15:30 UTC = 18:30 TR (BIST kapanis +30dk)
+    - cron: '30 15 * * 1-5'  # Pzt-Cuma 15:30 UTC = 18:30 TR (ön sonuç, ~17:00 barı)
+    - cron: '10 16 * * 1-5'  # 16:10 UTC = 19:10 TR (final, 18:30 close pull sonrası)
   workflow_dispatch:         # Manuel tetikleme
 
 jobs:
@@ -13,6 +14,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - run: python run_nox_v3.py --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}

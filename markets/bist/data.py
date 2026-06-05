@@ -3,6 +3,7 @@ BIST Screener — Veri Çekme
 Ticker listesi + yfinance veri + benchmark + USDTRY
 """
 import os
+import re
 import time
 import requests
 import pandas as pd
@@ -17,6 +18,7 @@ pd.set_option('future.no_silent_downcasting', True)
 # ── HİSSE LİSTESİ ──
 
 def get_all_bist_tickers():
+    # Manuel override: repodaki ticker dosyalari (varsa)
     for path in ['tickers.txt', 'hisseler.txt', 'xtum.txt']:
         if os.path.exists(path):
             with open(path, 'r') as f:
@@ -24,6 +26,20 @@ def get_all_bist_tickers():
             if len(tickers) > 50:
                 print(f"✅ {path} → {len(tickers)} hisse")
                 return tickers
+    # Varsayilan evren = extfeed master'da bulunan tum hisseler.
+    # Boylece tum taramalar AYNI veriyi -> AYNI evreni kullanir.
+    try:
+        from data import intraday_1h
+        tickers = sorted(
+            pd.read_parquet(intraday_1h.MASTER, columns=['ticker'])['ticker']
+            .dropna().unique().tolist()
+        )
+        if len(tickers) > 100:
+            print(f"✅ extfeed master → {len(tickers)} hisse")
+            return tickers
+    except Exception as e:
+        print(f"  [!] extfeed evren hata: {e}")
+    # Acil yedek (extfeed master yoksa): TradingView -> statik
     tickers = _fetch_from_tradingview()
     if tickers and len(tickers) > 100:
         return tickers
@@ -158,6 +174,11 @@ def _normalize_df(raw, t, yf_t, yf_syms):
             df = df.rename(columns=col_map)
 
         df = df.dropna(how='all')
+        # yfinance bazen en son bar icin OHLC=NaN ama Volume dolu bir kuyruk
+        # satiri dondurur (henuz kesinlesmemis seans) -> how='all' bunu dusurmez.
+        # Close'u NaN olan barlari at, yoksa iloc[-1] NaN fiyat/getiri uretir.
+        if 'Close' in df.columns:
+            df = df.dropna(subset=['Close'])
         if not df.empty and len(df) >= MIN_DATA_DAYS and 'Close' in df.columns:
             return df
     except:
@@ -165,7 +186,8 @@ def _normalize_df(raw, t, yf_t, yf_syms):
     return None
 
 
-def fetch_data(tickers, period="1y", batch_size=50):
+def _fetch_data_yfinance(tickers, period="1y", batch_size=50):
+    """ESKİ yfinance yolu — artık dormant fallback (extfeed master yoksa kullanılır)."""
     print(f"📡 {len(tickers)} hisse verisi çekiliyor (period={period})...")
     all_data = {}
     for i in range(0, len(tickers), batch_size):
@@ -243,10 +265,14 @@ def _normalize_index_df(xu):
             col_map[col] = 'Volume'
     if col_map:
         xu = xu.rename(columns=col_map)
+    # yfinance kuyruk satiri (OHLC=NaN, Volume dolu) -> Close'u NaN olani at.
+    if 'Close' in xu.columns:
+        xu = xu.dropna(subset=['Close'])
     return xu
 
 
-def fetch_benchmark(period="1y"):
+def _fetch_benchmark_yfinance(period="1y"):
+    """ESKİ yfinance XU100 yolu — dormant fallback."""
     try:
         xu = yf.download("XU100.IS", period=period, progress=False, auto_adjust=True)
         xu = _normalize_index_df(xu)
@@ -266,3 +292,99 @@ def fetch_usdtry(period="5y"):
     except Exception as e:
         print(f"  [!] USDTRY hata: {e}")
         return None
+
+
+# ── EXTFEED MASTER (tek kaynak) ──
+
+def _period_to_start(period):
+    """period string ('2y','6mo','90d','4wk') -> baslangic Timestamp (tz-naive).
+    Taninmazsa None (load_intraday kendi MIN_DATE'ine clamp eder)."""
+    if not period:
+        return None
+    m = re.fullmatch(r'\s*(\d+)\s*(d|wk|mo|y)\s*', str(period).lower())
+    if not m:
+        return None
+    n = int(m.group(1)); unit = m.group(2)
+    today = pd.Timestamp(datetime.now().date())
+    if unit == 'd':
+        return today - pd.Timedelta(days=n)
+    if unit == 'wk':
+        return today - pd.Timedelta(weeks=n)
+    if unit == 'mo':
+        return today - pd.DateOffset(months=n)
+    if unit == 'y':
+        return today - pd.DateOffset(years=n)
+    return None
+
+
+def fetch_data(tickers, period="1y", batch_size=50):
+    """extfeed 1h master → günlük OHLCV (TEK kaynak; tüm BIST taramaları bunu kullanır).
+
+    Dönüş: dict[ticker] -> DataFrame (DatetimeIndex 'Date', kolon Open/High/Low/Close/Volume),
+    yani eski yfinance fetch_data ile birebir aynı sözleşme.
+    extfeed master yoksa otomatik yfinance yedeğine düşer.
+    """
+    from data import intraday_1h
+    print(f"📡 {len(tickers)} hisse extfeed master'dan yükleniyor (period={period})...")
+    start = _period_to_start(period)
+    try:
+        long = intraday_1h.load_intraday(tickers=list(tickers), start=start)
+    except FileNotFoundError as e:
+        print(f"  [!] extfeed master yok ({e}); yfinance yedeğine düşülüyor")
+        return _fetch_data_yfinance(tickers, period=period, batch_size=batch_size)
+
+    daily = intraday_1h.daily_resample(long)
+    all_data = {}
+    if not daily.empty:
+        for tk, g in daily.groupby('ticker', observed=True):
+            g = g.sort_values('date')
+            # partial son-gün koruması: en son gün yarım seans (<4 saatlik bar) ise at.
+            # EOD çalıştırmada gün tamamdır → etkisiz; intraday çalıştırmada canlı barı eler.
+            if len(g) >= 2 and int(g.iloc[-1]['n_bars']) < 4:
+                g = g.iloc[:-1]
+            if len(g) < MIN_DATA_DAYS:
+                continue
+            idx = pd.DatetimeIndex(pd.to_datetime(g['date']), name='Date')
+            all_data[tk] = pd.DataFrame({
+                'Open': g['open'].to_numpy(),
+                'High': g['high'].to_numpy(),
+                'Low': g['low'].to_numpy(),
+                'Close': g['close'].to_numpy(),
+                'Volume': g['volume'].to_numpy(),
+            }, index=idx)
+
+    print(f"✅ {len(all_data)}/{len(tickers)} hisse yüklendi\n")
+    return all_data
+
+
+def fetch_one(ticker, period="1y"):
+    """Tek hisse günlük df (extfeed). Yoksa None."""
+    return fetch_data([ticker], period=period).get(ticker)
+
+
+def fetch_benchmark(period="1y"):
+    """XU100 günlük benchmark (extfeed kaynaklı: output/xu100_extfeed_daily.parquet).
+    Dosya yoksa yfinance yedeğine düşer. Dönüş: DataFrame (DatetimeIndex, 'Close' vb.)."""
+    path = "output/xu100_extfeed_daily.parquet"
+    try:
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+        xu = pd.read_parquet(path)
+        if not isinstance(xu.index, pd.DatetimeIndex):
+            for c in ('date', 'Date', 'ts_istanbul', 'ts_utc', 'ts'):
+                if c in xu.columns:
+                    xu = xu.set_index(pd.to_datetime(xu[c])).drop(columns=[c])
+                    break
+        if isinstance(xu.index, pd.DatetimeIndex) and xu.index.tz is not None:
+            xu.index = xu.index.tz_localize(None)
+        xu = xu.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low',
+                                'close': 'Close', 'volume': 'Volume'})
+        start = _period_to_start(period)
+        if start is not None:
+            xu = xu[xu.index >= start]
+        xu.index.name = 'Date'
+        print(f"  [DEBUG] XU100 (extfeed): {len(xu)} gün")
+        return xu
+    except Exception as e:
+        print(f"  [!] XU100 extfeed hata ({e}); yfinance yedeğine düşülüyor")
+        return _fetch_benchmark_yfinance(period=period)

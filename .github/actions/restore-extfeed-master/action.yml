@@ -1,0 +1,74 @@
+name: Restore extfeed master
+description: >
+  Download the freshest extfeed 1h master parquet produced by master-data-pull
+  into output/, so every BIST scanner consumes the SAME data (single source).
+  Picks the latest successful master-data-pull run on main whose manifest reports
+  extfeed.post.exists=true. Mode-agnostic on purpose: scheduled pulls are
+  intraday_1700 (extfeed only), which is exactly what the daily scanners need.
+
+inputs:
+  github-token:
+    description: Token for the gh CLI (pass ${{ github.token }} — NOT the GH_PAGES PAT).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Select latest fresh master-data-pull run on main
+      id: select
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        candidates=$(gh run list \
+          --workflow=master-data-pull.yml \
+          --branch=main \
+          --status=success \
+          --limit 30 \
+          --json databaseId \
+          --jq '.[].databaseId')
+        if [ -z "$candidates" ]; then
+          echo "::error::no successful master-data-pull runs on main"; exit 1
+        fi
+        selected=""
+        for run_id in $candidates; do
+          tmp=$(mktemp -d)
+          if gh run download "$run_id" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+            mf="$tmp/master_data_manifest.json"
+            if [ -f "$mf" ]; then
+              ok=$(python -c "import json; m=json.load(open('$mf')); ext=(m.get('extfeed') or {}).get('post') or {}; print('yes' if ext.get('exists') else 'no')")
+              if [ "$ok" = "yes" ]; then
+                selected="$run_id"; rm -rf "$tmp"; break
+              fi
+              echo "  skip run $run_id (extfeed.post.exists != true)"
+            fi
+          else
+            echo "  skip run $run_id (manifest artifact missing or expired)"
+          fi
+          rm -rf "$tmp"
+        done
+        if [ -z "$selected" ]; then
+          echo "::error::no master-data-pull run with extfeed.post.exists in last 30 successful runs"
+          exit 1
+        fi
+        echo "selected master-data-pull run: $selected"
+        echo "run_id=$selected" >> "$GITHUB_OUTPUT"
+
+    - name: Download extfeed 1h master parquet
+      uses: dawidd6/action-download-artifact@v6
+      with:
+        run_id: ${{ steps.select.outputs.run_id }}
+        name: master-extfeed-intraday-1h
+        path: output/
+        github_token: ${{ inputs.github-token }}
+        if_no_artifact_found: fail
+
+    - name: Verify extfeed master present
+      shell: bash
+      run: |
+        set -euo pipefail
+        f=output/extfeed_intraday_1h_3y_master.parquet
+        test -f "$f" || { echo "::error::extfeed master missing after restore"; exit 1; }
+        python -c "import pandas as pd; df=pd.read_parquet('$f', columns=['ticker','ts_utc']); print('extfeed restored: rows', len(df), 'tickers', df['ticker'].nunique(), 'max_ts', df['ts_utc'].max())"
