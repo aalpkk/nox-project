@@ -21,6 +21,10 @@
 path = "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-06-08__sha256_83754c0d.parquet"
 sha256 = "83754c0df1bbc01f57dbc648548cdd29b0c5e99f348a13fb22a95d97645a58a9"
 asof_date = "2026-06-08"
+# rows: HB event count of the locked baseline. Consumed as RESEARCH_BASELINE_HB_ROWS
+# by ema_forward_alignment + pilot3_forward (externalized from hardcoded constants
+# 2026-06-08 to enable auto-rotation; rotation updates this in lockstep with path/sha256).
+rows = 10859
 
 # NOT rotated: research_frozen breakpoints are permanently frozen at the original
 # research moment (2026-05-05). Forward consumers must tag with these ORIGINAL
@@ -42,6 +46,9 @@ asof_date = "2026-05-05"
 [locked_pilot3_panel]
 path = "output/_archive/ema_context_pilot3_panel__locked__sha256_ccd5a338.parquet"
 sha256 = "ccd5a3381b630bd1c108e4955d1d9f9a6e1e75fe7b96aa6a9175a5779752600c"
+# panel_rows / unique_eid consumed by pilot3_forward (externalized 2026-06-08).
+panel_rows = 336399
+unique_eid = 10859
 
 [locked_pilot5_panel]
 path = "output/_archive/ema_context_pilot5_panel__locked__sha256_587e755b.parquet"

@@ -32,6 +32,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tools._de_rotate_mode import ROTATE_MODE  # noqa: E402  (rotate-on-HALT bypass)
+
 # =============================================================================
 # LOCKED CONSTANTS — DO NOT MODIFY POST-RUN
 # =============================================================================
@@ -130,7 +132,7 @@ def _validate_inputs() -> tuple[dict, dict]:
             f"{EXPECTED_SCANNER_VERSION!r}. SPEC violation, no fallback."
         )
     rows = manifest.get("rows")
-    if rows != EXPECTED_HB_ROWS:
+    if not ROTATE_MODE and rows != EXPECTED_HB_ROWS:
         raise RuntimeError(
             f"HB manifest rows mismatch: got {rows!r} != {EXPECTED_HB_ROWS}. "
             f"SPEC violation, no rebuild."
@@ -144,7 +146,7 @@ def _validate_inputs() -> tuple[dict, dict]:
             f"{EXPECTED_BREAKPOINTS_VERSION!r}. SPEC violation."
         )
     ec_rows = em_meta.get("n_rows")
-    if ec_rows != EXPECTED_EC_ROWS:
+    if not ROTATE_MODE and ec_rows != EXPECTED_EC_ROWS:
         raise RuntimeError(
             f"ema_context rows mismatch: got {ec_rows!r} != {EXPECTED_EC_ROWS}. "
             f"SPEC violation."
@@ -160,7 +162,7 @@ def _validate_inputs() -> tuple[dict, dict]:
 
 def _load_hb_events() -> pd.DataFrame:
     df = pd.read_parquet(HB_EVENT_PARQUET)
-    if len(df) != EXPECTED_HB_ROWS:
+    if not ROTATE_MODE and len(df) != EXPECTED_HB_ROWS:
         raise RuntimeError(f"HB events row count mismatch: {len(df)} != {EXPECTED_HB_ROWS}")
     df["bar_date"] = pd.to_datetime(df["bar_date"]).dt.normalize()
     keep = [

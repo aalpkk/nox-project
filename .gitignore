@@ -32,3 +32,4 @@ output/nyxmomentum/**
 !output/nyxmomentum/reports/step1_labels.parquet
 !output/nyxmomentum/universe/
 !output/nyxmomentum/universe/fintables_bist_equities_20260422.csv
+output/_de_rotate_changed.txt
