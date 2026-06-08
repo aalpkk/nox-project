@@ -25,9 +25,14 @@ name: Horizontal Base — Daily Refresh + Scan
 # context kullanarak karar verir; rules-based ranker backtest in-sample
 # reference olarak `output/horizontal_base_rules_v1_backtest.md`.
 
+# PR: chained on master-data-pull CLOSE completion (was schedule '30 15' = 18:30 TR,
+# which raced ahead of the 19:00 TR close pull → stale operational_target_date FAIL).
+# Now fires when "master data pull" completes; gate proceeds only for close-mode PASS.
 on:
-  schedule:
-    - cron: '30 15 * * 1-5'
+  workflow_run:
+    workflows: ["master data pull"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       asof:
@@ -44,7 +49,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    # Proceed only when the upstream "master data pull" run is close-mode + PASS.
+    # workflow_dispatch always proceeds. Downloads the upstream manifest (not the
+    # start-hour heuristic) because this scanner hard-FAILs on operational_target_date
+    # mismatch, so a delayed-intraday mis-fire must be impossible.
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Gate — close-mode master-data-pull PASS only
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_ID: ${{ github.event.workflow_run.id }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "[gate] manual workflow_dispatch — proceed"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+            echo "[gate] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION (need main+success)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          tmp=$(mktemp -d)
+          if ! gh run download "$UPSTREAM_ID" --repo "${{ github.repository }}" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+            echo "[gate] SKIP: upstream run $UPSTREAM_ID has no master-data-manifest artifact"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          ok=$(python -c "import json;m=json.load(open('$tmp/master_data_manifest.json'));print('yes' if m.get('mode')=='close' and m.get('verdict')=='PASS' and m.get('freshness_status')=='PASS' else 'no')")
+          if [ "$ok" = "yes" ]; then
+            echo "[gate] PROCEED: upstream $UPSTREAM_ID is close-mode verdict=PASS freshness=PASS"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "[gate] SKIP: upstream $UPSTREAM_ID not close-mode-PASS (intraday or non-PASS fire)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   daily:
+    needs: [gate]
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
