@@ -94,8 +94,8 @@ MIN_N_BASELINE = 1000
 
 # Manifest expectations
 EXPECTED_SCANNER_VERSION = "1.4.0"
-EXPECTED_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
-EXPECTED_PILOT5_PANEL_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
+EXPECTED_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
+EXPECTED_PILOT5_PANEL_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
 
 # Tier labels
 TIER_A = "TIER_A_PAPER"
