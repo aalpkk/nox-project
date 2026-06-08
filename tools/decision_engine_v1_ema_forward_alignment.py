@@ -66,7 +66,7 @@ LCTD_REQUIRED: dt.date | None = None
 MAX_OFFSET_WINDOW = 10  # Pilot 3's offset upper bound (§6.1)
 
 HB_PATH = OUT / "horizontal_base_event_v1.parquet"
-RESEARCH_BASELINE_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470 @asof 2026-04-29)
+RESEARCH_BASELINE_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
 LOCKED_HB_ARCHIVE_SHA: str | None = None
 LOCKED_HB_ARCHIVE: Path | None = None
 

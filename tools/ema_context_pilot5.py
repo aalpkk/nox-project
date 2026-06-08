@@ -87,8 +87,8 @@ WIDTH_HI_Q = 0.666
 
 # Manifest expectations
 EXPECTED_SCANNER_VERSION = "1.4.0"
-EXPECTED_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
-EXPECTED_EARLINESS_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
+EXPECTED_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
+EXPECTED_EARLINESS_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
 
 # Pilot 4 surviving sample filter (mirror Pilot 4 ≥25/31 non-null)
 NON_NULL_MIN_PER_EVENT = 25  # only meaningful via earliness null check (NaN ⇒ filtered Pilot 4)

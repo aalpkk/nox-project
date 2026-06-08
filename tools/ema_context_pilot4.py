@@ -76,9 +76,9 @@ GROUP_B_LABEL = "trigger_or_retest_bounce"
 
 # Source manifest expectations
 EXPECTED_SCANNER_VERSION = "1.4.0"
-EXPECTED_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
+EXPECTED_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
 EXPECTED_BREAKPOINTS_VERSION = "v0.0"
-EXPECTED_PILOT3_PANEL_ROWS = 335053  # baseline rotation 2026-06-04 (was 322011)
+EXPECTED_PILOT3_PANEL_ROWS = 336399  # baseline rotation 2026-06-08 CI-aligned (was 335053)
 
 
 # =============================================================================

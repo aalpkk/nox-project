@@ -98,9 +98,9 @@ WIDTH_TIER_HI = 0.666
 
 # Source manifest expectations
 EXPECTED_SCANNER_VERSION = "1.4.0"
-EXPECTED_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470 @asof 2026-04-29)
+EXPECTED_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 local / 10470 @04-29)
 EXPECTED_BREAKPOINTS_VERSION = "v0.0"
-EXPECTED_EC_ROWS = 461898  # baseline rotation 2026-06-04 (was 451475)
+EXPECTED_EC_ROWS = 461968  # baseline rotation 2026-06-08 CI-aligned (was 461898)
 
 # Window for offset extraction
 OFFSET_MIN = -20
