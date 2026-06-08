@@ -101,6 +101,53 @@ def _fetch_yf_eod(tickers: list[str], target: pd.Timestamp) -> pd.DataFrame:
     return df
 
 
+def _fetch_extfeed_eod(tickers: list[str], target: pd.Timestamp) -> pd.DataFrame:
+    """extfeed 1h master → tek günlük bar (resample). yfinance'a tek-kaynak alternatif.
+
+    _fetch_yf_eod ile AYNI long-form şemayı döndürür (Date index; ticker, Open,
+    High, Low, Close, Volume, Adj Close). Adj Close = NaN (yf yolu da NaN bırakır).
+    NOT: Volume = seans-içi 1h barların toplamı (yfinance resmi gün-sonu hacminden
+    hafif farklı olabilir). Master parquet yoksa / hedef gün yoksa boş döner →
+    çağıran yfinance'a düşer.
+    """
+    try:
+        from data import intraday_1h
+    except Exception as exc:
+        print(f"  extfeed import hata: {exc}")
+        return pd.DataFrame()
+    if not intraday_1h.MASTER.exists():
+        print(f"  extfeed master yok: {intraday_1h.MASTER}")
+        return pd.DataFrame()
+
+    tgt = pd.Timestamp(target).normalize()
+    day = tgt.strftime("%Y-%m-%d")
+    long = intraday_1h.load_intraday(tickers=list(tickers), start=day, end=day)
+    if long.empty:
+        return pd.DataFrame()
+    daily = intraday_1h.daily_resample(long)
+    daily = daily[pd.to_datetime(daily["date"]) == tgt]
+    if daily.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, r in daily.iterrows():
+        if pd.isna(r["close"]):
+            continue
+        rows.append({
+            "Date": tgt,
+            "ticker": str(r["ticker"]),
+            "Open": float(r["open"]) if pd.notna(r["open"]) else np.nan,
+            "High": float(r["high"]) if pd.notna(r["high"]) else np.nan,
+            "Low": float(r["low"]) if pd.notna(r["low"]) else np.nan,
+            "Close": float(r["close"]),
+            "Volume": float(r["volume"]) if pd.notna(r["volume"]) else 0.0,
+            "Adj Close": np.nan,
+        })
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).set_index("Date")
+
+
 def _patch_master(master: pd.DataFrame, delta: pd.DataFrame,
                   target: pd.Timestamp) -> pd.DataFrame:
     """Drop target_date rows from master, append delta, sort."""
@@ -162,7 +209,12 @@ def main() -> int:
     ap.add_argument("--master", default=str(MASTER_PATH))
     ap.add_argument("--v4", default=str(V4_PATH))
     ap.add_argument("--min-coverage", type=float, default=DEFAULT_MIN_COVERAGE,
-                    help="yf coverage altında pasif çık (default 0.5)")
+                    help="coverage altında pasif çık (default 0.5)")
+    ap.add_argument("--source", choices=["auto", "extfeed", "yfinance"],
+                    default="auto",
+                    help="günlük delta kaynağı: auto=extfeed→yfinance yedek "
+                         "(default; tek-kaynak extfeed), extfeed=yalnız extfeed, "
+                         "yfinance=eski davranış")
     args = ap.parse_args()
 
     if args.date:
@@ -191,8 +243,18 @@ def main() -> int:
     universe = sorted(master["ticker"].astype(str).unique().tolist())
     print(f"  universe: {len(universe)}")
 
-    print("[2/6] yfinance EOD bulk fetch")
-    delta = _fetch_yf_eod(universe, target)
+    print(f"[2/6] EOD delta fetch (source={args.source})")
+    delta = pd.DataFrame()
+    if args.source in ("auto", "extfeed"):
+        delta = _fetch_extfeed_eod(universe, target)
+        if not delta.empty:
+            print(f"  extfeed: {len(delta)} satır")
+        elif args.source == "extfeed":
+            print("  extfeed boş (master/gün yok) — source=extfeed, fallback yok")
+    if delta.empty and args.source in ("auto", "yfinance"):
+        if args.source == "auto":
+            print("  extfeed boş → yfinance yedeğine düşülüyor")
+        delta = _fetch_yf_eod(universe, target)
     delta_target = delta[delta.index == target] if not delta.empty else pd.DataFrame()
     coverage = len(delta_target) / max(len(universe), 1)
     print(f"  delta @ {target.date()}: {len(delta_target)}/{len(universe)} "
