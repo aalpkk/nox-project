@@ -391,9 +391,13 @@ def main() -> int:
             failures.append(f"extfeed_delta_pull failed: {ext_step.detail}")
 
         if args.mode == "close" and not failures:
+            # --source extfeed: günlük delta extfeed 1h master'dan resample edilir
+            # (tek-kaynak). extfeed_delta_pull yukarıda zaten koştu → master taze.
+            # extfeed boş kalırsa rebuild_dataset_delta kendi içinde yfinance'a
+            # düşmez (source=extfeed); fallback isteniyorsa --source auto kullan.
             fin_step = run_subprocess(
                 [sys.executable, "-m", "nyxexpansion.tools.rebuild_dataset_delta",
-                 "--date", target.isoformat()],
+                 "--date", target.isoformat(), "--source", "extfeed"],
                 step_name="rebuild_dataset_delta",
             )
             steps.append(fin_step)
