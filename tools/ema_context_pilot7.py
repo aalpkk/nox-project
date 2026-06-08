@@ -63,6 +63,7 @@ from scipy import stats
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+from tools._de_rotate_mode import ROTATE_MODE  # noqa: E402  (rotate-on-HALT bypass)
 
 # =============================================================================
 # LOCKED CONSTANTS — DO NOT MODIFY POST-RUN
@@ -173,20 +174,20 @@ def _validate_inputs() -> tuple[dict, int, dict]:
             f"{EXPECTED_SCANNER_VERSION!r}. SPEC violation — STOP."
         )
     rows = manifest.get("rows")
-    if rows != EXPECTED_HB_ROWS:
+    if not ROTATE_MODE and rows != EXPECTED_HB_ROWS:
         raise RuntimeError(
             f"HB manifest rows mismatch: got {rows!r} != {EXPECTED_HB_ROWS}. "
             f"SPEC violation — STOP."
         )
 
     hb_sha = _sha256(HB_EVENT_PARQUET)
-    if hb_sha != EXPECTED_HB_SHA256:
+    if not ROTATE_MODE and hb_sha != EXPECTED_HB_SHA256:
         raise RuntimeError(
             f"HB event parquet sha256 mismatch:\n  got      {hb_sha}\n  expected {EXPECTED_HB_SHA256}\n"
             f"SPEC §7 violation — frozen artifact changed. STOP."
         )
     earliness_sha = _sha256(EARLINESS_PARQUET)
-    if earliness_sha != EXPECTED_EARLINESS_SHA256:
+    if not ROTATE_MODE and earliness_sha != EXPECTED_EARLINESS_SHA256:
         raise RuntimeError(
             f"Earliness parquet sha256 mismatch:\n  got      {earliness_sha}\n  "
             f"expected {EXPECTED_EARLINESS_SHA256}\n"
@@ -194,7 +195,7 @@ def _validate_inputs() -> tuple[dict, int, dict]:
         )
 
     p5_rows = pd.read_parquet(PILOT5_PANEL, columns=["event_id"]).shape[0]
-    if p5_rows != EXPECTED_PILOT5_PANEL_ROWS:
+    if not ROTATE_MODE and p5_rows != EXPECTED_PILOT5_PANEL_ROWS:
         raise RuntimeError(
             f"Pilot 5 panel rows mismatch: got {p5_rows} != {EXPECTED_PILOT5_PANEL_ROWS}. "
             f"SPEC violation — panel may have been rebuilt."

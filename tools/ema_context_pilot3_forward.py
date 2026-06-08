@@ -54,19 +54,33 @@ from tools.ema_context_pilot3 import (  # type: ignore
 # =============================================================================
 
 CANDIDATE_KEY = ["ticker", "bar_date", "setup_family", "signal_type", "breakout_bar_date"]
-RESEARCH_BASELINE_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
-EXPECTED_LOCKED_HB_ARCHIVE_SHA = (
-    "83754c0df1bbc01f57dbc648548cdd29b0c5e99f348a13fb22a95d97645a58a9"  # rotation 2026-06-08 CI-aligned (was d6ae9f2a)
-)
-EXPECTED_LOCKED_PILOT3_PANEL_ROWS = 336399  # baseline rotation 2026-06-08 CI-aligned (was 335053)
-EXPECTED_LOCKED_PILOT3_UNIQUE_EID = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816)
 
-LOCKED_HB_ARCHIVE = (
-    PROJECT_ROOT
-    / "output"
-    / "_archive"
-    / "horizontal_base_event_v1__pre_refresh__asof_2026-06-08__sha256_83754c0d.parquet"
-)
+
+# Baseline counts/sha/path are externalized to tools/pin_baselines.toml so a
+# rotation updates ONE file and this script picks it up with no source edit
+# (auto-rotation enablement, 2026-06-08). Hard-FAIL on missing keys — no fallback.
+def _load_baseline_pins() -> dict:
+    import tomllib
+
+    pin_path = PROJECT_ROOT / "tools" / "pin_baselines.toml"
+    with pin_path.open("rb") as fh:
+        d = tomllib.load(fh)
+    hb = d.get("locked_hb_archive") or {}
+    p3 = d.get("locked_pilot3_panel") or {}
+    missing = [f"locked_hb_archive.{k}" for k in ("path", "sha256", "rows") if hb.get(k) is None]
+    missing += [f"locked_pilot3_panel.{k}" for k in ("panel_rows", "unique_eid") if p3.get(k) is None]
+    if missing:
+        raise RuntimeError(f"pin_baselines.toml missing baseline keys: {missing}")
+    return {"hb": hb, "p3": p3}
+
+
+_PINS = _load_baseline_pins()
+RESEARCH_BASELINE_HB_ROWS = int(_PINS["hb"]["rows"])
+EXPECTED_LOCKED_HB_ARCHIVE_SHA = str(_PINS["hb"]["sha256"])
+EXPECTED_LOCKED_PILOT3_PANEL_ROWS = int(_PINS["p3"]["panel_rows"])
+EXPECTED_LOCKED_PILOT3_UNIQUE_EID = int(_PINS["p3"]["unique_eid"])
+
+LOCKED_HB_ARCHIVE = PROJECT_ROOT / str(_PINS["hb"]["path"])
 LOCKED_PILOT3_PANEL = PROJECT_ROOT / "output" / "ema_context_pilot3_panel.parquet"
 CURRENT_HB = PROJECT_ROOT / "output" / "horizontal_base_event_v1.parquet"
 EMA_CONTEXT_DAILY = PROJECT_ROOT / "output" / "ema_context_daily.parquet"

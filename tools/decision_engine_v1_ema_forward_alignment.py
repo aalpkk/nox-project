@@ -66,7 +66,13 @@ LCTD_REQUIRED: dt.date | None = None
 MAX_OFFSET_WINDOW = 10  # Pilot 3's offset upper bound (§6.1)
 
 HB_PATH = OUT / "horizontal_base_event_v1.parquet"
-RESEARCH_BASELINE_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
+# RESEARCH_BASELINE_HB_ROWS externalized to pin_baselines.toml [locked_hb_archive].rows
+# (2026-06-08, auto-rotation enablement) — a rotation updates the pin, no source edit.
+with PIN_BASELINES_PATH.open("rb") as _pin_fh:
+    _PIN_HB0 = tomllib.load(_pin_fh).get("locked_hb_archive") or {}
+if _PIN_HB0.get("rows") is None:
+    raise RuntimeError("pin_baselines.toml [locked_hb_archive].rows missing (required since 2026-06-08)")
+RESEARCH_BASELINE_HB_ROWS = int(_PIN_HB0["rows"])
 LOCKED_HB_ARCHIVE_SHA: str | None = None
 LOCKED_HB_ARCHIVE: Path | None = None
 
