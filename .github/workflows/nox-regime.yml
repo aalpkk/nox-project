@@ -1,7 +1,8 @@
 name: NOX Regime Transition Screener
 on:
   schedule:
-    - cron: '10 15 * * 1-5'   # Pzt-Cum 15:10 UTC = 18:10 TR
+    - cron: '10 15 * * 1-5'   # Pzt-Cum 15:10 UTC = 18:10 TR (ön sonuç, ~17:00 barı)
+    - cron: '0 16 * * 1-5'    # 16:00 UTC = 19:00 TR (final, 18:30 close pull sonrası)
   workflow_dispatch:
 
 jobs:
@@ -13,6 +14,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - run: python run_regime_transition.py --csv --html --notify
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -34,6 +39,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - name: Check if Friday
         id: check_day
         run: |
@@ -63,6 +72,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - name: Check last Friday of month
         id: check_month
         run: |

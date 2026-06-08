@@ -1,32 +1,32 @@
 name: master data pull
 
 concurrency:
-  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || (github.event.schedule == '30 15 * * 1-5' && 'close' || 'intraday_1700') }}
+  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || (github.event.schedule == '0 16 * * 1-5' && 'close' || 'intraday_1700') }}
   cancel-in-progress: false
 
 on:
-  # Scheduled producer fires. Two schedules in one workflow:
+  # İki tür scheduled fire (mod schedule cron string'inden çözülür):
   #
-  # intraday_1700 (three slots 17:10/17:20/17:30 TR) — SBT-1700 consumer
-  # prerequisite. Fires after BIST 16:00–17:00 hourly bar closes at 17:00
-  # TR, giving the 1h extfeed enough time to publish the 14:00 UTC bar
-  # before the orchestrator pulls. Multiple slots absorb GitHub Actions
-  # cron skew/skips.
+  # intraday_1700 (extfeed only) — 17:10/17:20/17:30 + 18:30 TR slotları.
+  #   17:10-17:30: SBT-1700 tüketicisi için (16:00–17:00 barı 17:00 TR'de
+  #   kapanır, extfeed 14:00 UTC barını yayınlar). 18:30: BIST 18:00
+  #   kapanışından SONRA günün SON 1h barını (18:00 kapanış) yakalar →
+  #   günlük BIST taramaları (regime/divergence/weekly/smart-breakout)
+  #   post-kapanış çalıştırmalarında bunun tam-gün extfeed'ini tüketir.
+  #   fintables/xu100 token bağımlılığı YOK.
   #
-  # close (single slot 18:30 TR) — DE v1 close-consumer prerequisite
-  # (PR-DE-0). Fires after BIST 18:00 daily close so fintables + xu100
-  # daily closes are published. Single slot today; if cron skew proves
-  # disruptive, additional slots (40/50 15) can be added in a follow-up.
+  # close (extfeed + fintables + xu100) — 19:00 TR tek slot. BIST 18:00
+  #   kapanışından sonra fintables + xu100 günlük kapanışları yayınlanınca
+  #   çekilir. decision-engine-v1 + mb-scanner/hw-obos/horizontal-base/
+  #   triangle-break/sbt1700-refresh (mode==close tüketicileri) buna bağlı.
   #
-  # Concurrency group serializes fires within each mode (close-cron,
-  # close-dispatch, intraday-cron, intraday-dispatch each share a group).
-  # Modes run in parallel. delta_pull is idempotent, so duplicate fires
-  # within a mode are harmless.
+  # Concurrency group modu serialize eder; delta_pull idempotent.
   schedule:
     - cron: '10 14 * * 1-5'   # 17:10 TR  intraday_1700
     - cron: '20 14 * * 1-5'   # 17:20 TR  intraday_1700
     - cron: '30 14 * * 1-5'   # 17:30 TR  intraday_1700
-    - cron: '30 15 * * 1-5'   # 18:30 TR  close (PR-DE-0)
+    - cron: '30 15 * * 1-5'   # 18:30 TR  intraday_1700 (günün tam kapanışı; günlük taramalar)
+    - cron: '0 16 * * 1-5'    # 19:00 TR  close (fintables+xu100; DE v1 + close tüketicileri)
   workflow_dispatch:
     inputs:
       mode:
@@ -65,12 +65,12 @@ jobs:
         run: |
           set -euo pipefail
           MODE='${{ github.event.inputs.mode }}'
-          # workflow_dispatch sets MODE; cron fires leave it empty.
-          # On cron, resolve from the schedule cron string: '30 15 * * 1-5'
-          # → close, all others (10/20/30 14) → intraday_1700.
+          # workflow_dispatch sets MODE; cron fires leave it empty. On cron,
+          # resolve from the schedule string: '0 16 * * 1-5' (19:00 TR) → close,
+          # all others (14:xx + 15:30) → intraday_1700.
           if [ -z "$MODE" ]; then
             case '${{ github.event.schedule }}' in
-              '30 15 * * 1-5')
+              '0 16 * * 1-5')
                 MODE=close
                 ;;
               *)

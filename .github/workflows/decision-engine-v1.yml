@@ -10,9 +10,9 @@ name: decision engine v1
 #   workflow_run (auto)       → fires when `master data pull` completes
 #                               successfully on main. The `gate` job filters
 #                               to close-mode firings only (master-data-pull
-#                               close cron = 15:30 UTC = 18:30 TR weekdays).
-#                               Intraday cron firings (14:10/14:20/14:30 UTC)
-#                               are filtered out. run_mode defaults to `close`
+#                               close cron = 16:00 UTC = 19:00 TR weekdays).
+#                               Intraday cron firings (14:10/14:20/14:30/15:30
+#                               UTC) are filtered out. run_mode defaults to `close`
 #                               and target_date defaults to Europe/Istanbul
 #                               today via the resolver step.
 #
@@ -89,9 +89,10 @@ jobs:
           fi
           # master-data-pull cron UTC schedule:
           #   14:10/14:20/14:30  → intraday_1700 (skip DE)
-          #   15:30              → close         (proceed)
+          #   15:30              → intraday_1700 (skip DE — günlük tarama close'u)
+          #   16:00              → close         (proceed)
           # workflow_dispatch firings on master-data-pull may happen at any
-          # hour; we proceed iff the run started at 15:00 UTC or later
+          # hour; we proceed iff the run started at 16:00 UTC or later
           # (close window). This is a wide tolerance for cron skew.
           HOUR="${UPSTREAM_STARTED:11:2}"
           echo "[de-v1 gate] upstream: event=$UPSTREAM_EVENT conclusion=$UPSTREAM_CONCLUSION started_at=$UPSTREAM_STARTED hour_utc=$HOUR"
@@ -100,11 +101,11 @@ jobs:
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$HOUR" -ge 15 ]; then
-            echo "[de-v1 gate] PROCEED: upstream is close-mode (hour=$HOUR UTC ≥ 15)"
+          if [ "$HOUR" -ge 16 ]; then
+            echo "[de-v1 gate] PROCEED: upstream is close-mode (hour=$HOUR UTC ≥ 16)"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "[de-v1 gate] SKIP: upstream is intraday cron (hour=$HOUR UTC < 15); DE only chains close cron"
+            echo "[de-v1 gate] SKIP: upstream is intraday cron (hour=$HOUR UTC < 16); DE only chains close cron"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
