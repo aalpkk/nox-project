@@ -108,10 +108,10 @@ MIN_N_BASELINE = 500   # BASELINE (lower than Pilot 6 1000 because trigger+retes
 
 # Manifest expectations (LOCKED hashes from paper_execution_v0 manifest 2026-05-04)
 EXPECTED_SCANNER_VERSION = "1.4.0"
-EXPECTED_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
-EXPECTED_PILOT5_PANEL_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470)
-EXPECTED_HB_SHA256 = "d6ae9f2a4f71bb206a4ca8f07e349cd5ce8ea85afb2114697714b2f95f84a98f"  # rotation 2026-06-04 (was 2eb8a9a5)
-EXPECTED_EARLINESS_SHA256 = "cd98847bacbaa1d8d1681c8d093178ebe6b9dccd2404cb18104baf9fe9a86fe0"  # rotation 2026-06-04 (was a6926de0)
+EXPECTED_HB_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
+EXPECTED_PILOT5_PANEL_ROWS = 10859  # baseline rotation 2026-06-08 CI-aligned (was 10816 / 10470)
+EXPECTED_HB_SHA256 = "83754c0df1bbc01f57dbc648548cdd29b0c5e99f348a13fb22a95d97645a58a9"  # rotation 2026-06-08 CI-aligned (was d6ae9f2a)
+EXPECTED_EARLINESS_SHA256 = "90afbd2e7a59be8764026cb5e0b5bd361f01c50a899ce3caa6665cb41147e10e"  # rotation 2026-06-08 CI-aligned (was cd98847b)
 
 # Tier labels
 EVENT_NEAR_TIER = "EVENT_NEAR_TIER"
