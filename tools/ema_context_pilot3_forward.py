@@ -54,18 +54,18 @@ from tools.ema_context_pilot3 import (  # type: ignore
 # =============================================================================
 
 CANDIDATE_KEY = ["ticker", "bar_date", "setup_family", "signal_type", "breakout_bar_date"]
-RESEARCH_BASELINE_HB_ROWS = 10470
+RESEARCH_BASELINE_HB_ROWS = 10816  # baseline rotation 2026-06-04 (was 10470 @asof 2026-04-29)
 EXPECTED_LOCKED_HB_ARCHIVE_SHA = (
-    "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818"
+    "d6ae9f2a4f71bb206a4ca8f07e349cd5ce8ea85afb2114697714b2f95f84a98f"  # rotation 2026-06-04 (was 2eb8a9a5)
 )
-EXPECTED_LOCKED_PILOT3_PANEL_ROWS = 322011
-EXPECTED_LOCKED_PILOT3_UNIQUE_EID = 10470
+EXPECTED_LOCKED_PILOT3_PANEL_ROWS = 335053  # baseline rotation 2026-06-04 (was 322011)
+EXPECTED_LOCKED_PILOT3_UNIQUE_EID = 10816  # baseline rotation 2026-06-04 (was 10470)
 
 LOCKED_HB_ARCHIVE = (
     PROJECT_ROOT
     / "output"
     / "_archive"
-    / "horizontal_base_event_v1__pre_refresh__asof_2026-04-29__sha256_2eb8a9a5.parquet"
+    / "horizontal_base_event_v1__pre_refresh__asof_2026-06-04__sha256_d6ae9f2a.parquet"
 )
 LOCKED_PILOT3_PANEL = PROJECT_ROOT / "output" / "ema_context_pilot3_panel.parquet"
 CURRENT_HB = PROJECT_ROOT / "output" / "horizontal_base_event_v1.parquet"

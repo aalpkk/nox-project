@@ -18,10 +18,13 @@
 # key is a hard FAIL in consumer scripts — no fallback, no auto-derive.
 
 [locked_hb_archive]
-path = "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-04-29__sha256_2eb8a9a5.parquet"
-sha256 = "2eb8a9a5d68e7e4831158f6a3e97c8b74521591af55e29a9682aa3ae7107b818"
-asof_date = "2026-04-29"
+path = "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-06-04__sha256_d6ae9f2a.parquet"
+sha256 = "d6ae9f2a4f71bb206a4ca8f07e349cd5ce8ea85afb2114697714b2f95f84a98f"
+asof_date = "2026-06-04"
 
+# NOT rotated: research_frozen breakpoints are permanently frozen at the original
+# research moment (2026-05-05). Forward consumers must tag with these ORIGINAL
+# breakpoints for cross-chain label consistency; they do NOT track the HB baseline.
 [research_frozen_metadata_archive]
 path = "output/_archive/ema_context_daily_metadata__pre_ema_cascade__asof_2026-05-05__sha256_5aa1936b.json"
 asof_date = "2026-05-05"
@@ -37,20 +40,20 @@ asof_date = "2026-05-05"
 # archive parquet(s), updated full sha256 entries, and validation evidence.
 
 [locked_pilot3_panel]
-path = "output/_archive/ema_context_pilot3_panel__locked__sha256_5809fef4.parquet"
-sha256 = "5809fef4b3fb4f844355e76a78b47b4d2f3a9697b3be54d07fe2a7123074bf46"
+path = "output/_archive/ema_context_pilot3_panel__locked__sha256_ff0c9b22.parquet"
+sha256 = "ff0c9b2227395ae27a3015d4dd972ccfce21488a6923396a4a2be22f9ca92307"
 
 [locked_pilot5_panel]
-path = "output/_archive/ema_context_pilot5_panel__locked__sha256_683366dc.parquet"
-sha256 = "683366dcc69a6c180040737bde84395b4302103a23cc71d9adbc51a7f06b2608"
+path = "output/_archive/ema_context_pilot5_panel__locked__sha256_89877c1d.parquet"
+sha256 = "89877c1db343fd0cc233385ee84852e2bebc9e8119d03798a5a7eb87cb2deefb"
 
 [locked_pilot6_panel]
-path = "output/_archive/ema_context_pilot6_panel__locked__sha256_4a362677.parquet"
-sha256 = "4a362677220ffb7c88502787916645e36c12ad1f5f272be1b96596a17fca677e"
+path = "output/_archive/ema_context_pilot6_panel__locked__sha256_310b17c2.parquet"
+sha256 = "310b17c2c87bf61f0e3dcf7ec5e009d2d591e5cce2f35996472e160230a93316"
 
 [locked_pilot7_panel]
-path = "output/_archive/ema_context_pilot7_panel__locked__sha256_688513e0.parquet"
-sha256 = "688513e0b00b25756a3e58f5195707e8c4d446f590790958e521a7d4e77e5329"
+path = "output/_archive/ema_context_pilot7_panel__locked__sha256_a832f6bf.parquet"
+sha256 = "a832f6bffa1622707603b764624b5287d35075b63f3a6246952edaf6eb0b4048"
 
 # ── Locked pilot7 research CSVs (PR-DE-3.9) ─────────────────────────────────
 # Statistical baseline outputs consumed by Stage 6 Line TR producer
@@ -64,12 +67,12 @@ sha256 = "688513e0b00b25756a3e58f5195707e8c4d446f590790958e521a7d4e77e5329"
 # sha256, and validation evidence.
 
 [locked_pilot7_gates_main]
-path = "output/_archive/ema_context_pilot7_gates_main__locked__sha256_49d0fdcc.csv"
-sha256 = "49d0fdccd22e060f9d77715c3d1168cc6fc4aa2249856b54d13b3f092ad69db7"
+path = "output/_archive/ema_context_pilot7_gates_main__locked__sha256_9add1212.csv"
+sha256 = "9add1212a1415dd74022223f55cad377a22c17f896dd181b48a87cdd75959634"
 
 [locked_pilot7_drop_diagnostic_census]
-path = "output/_archive/ema_context_pilot7_drop_diagnostic_census__locked__sha256_ff802f6c.csv"
-sha256 = "ff802f6c4f3b73a971605c13d72910a66a5d4f090f4b5ddb165c137be26594b9"
+path = "output/_archive/ema_context_pilot7_drop_diagnostic_census__locked__sha256_ac607356.csv"
+sha256 = "ac607356174998b7156f2edffd8d802d177c05fa8512b60f17aabd22f1eefa35"
 
 # ── Locked prior-day DE operational state (PR-DE-3.10) ──────────────────────
 # Baseline for Stage 7 (tools/decision_engine_v1_panel_refresh.py):
@@ -94,25 +97,25 @@ sha256 = "ff802f6c4f3b73a971605c13d72910a66a5d4f090f4b5ddb165c137be26594b9"
 # archive(s), updated full sha256, and a fresh PASS provenance receipt.
 
 [locked_de_v1_events]
-path = "output/_archive/decision_engine_v1_events__locked__sha256_c1c5ba39.parquet"
-sha256 = "c1c5ba390e97959d3729a035e5b8d07fd11c8328254b9335b8ed2fc1908324fb"
+path = "output/_archive/decision_engine_v1_events__locked__sha256_d239769c.parquet"
+sha256 = "d239769cbeae4e287e1530c3fc469684acbb2f910e31c4ef7392c47d95c99e7b"
 
 [locked_de_v1_tier2_label_distribution]
-path = "output/_archive/decision_engine_v1_tier2_label_distribution__locked__sha256_5183da12.csv"
-sha256 = "5183da1233c6d9ecdc5b03f54d0298b2e18806bffb72faf2da21717b2034a2a0"
+path = "output/_archive/decision_engine_v1_tier2_label_distribution__locked__sha256_4b87f0d7.csv"
+sha256 = "4b87f0d7ff0176d661904ee85a53935348cca4ddff2969b9e2895b092a4cce53"
 
 [locked_de_v1_paper_link_integrity]
-path = "output/_archive/decision_engine_v1_paper_link_integrity__locked__sha256_892d496e.csv"
-sha256 = "892d496eb28451325dc3065cee66ed595fef2dfdc50282c2d18d6fc357704654"
+path = "output/_archive/decision_engine_v1_paper_link_integrity__locked__sha256_efc74202.csv"
+sha256 = "efc742028bc4906d22de171ef9065711696f00ab85a3d781424054549637b52c"
 
 [locked_de_v1_tier2_label_summary]
-path = "output/_archive/decision_engine_v1_tier2_label_table_summary__locked__sha256_47bda8e2.md"
-sha256 = "47bda8e21d2a4c87236309ae1f946f8470818d4c68b9c6fa8ea83c048333b2f3"
+path = "output/_archive/decision_engine_v1_tier2_label_table_summary__locked__sha256_bf173dcb.md"
+sha256 = "bf173dcb9a949ca237cbceac9059af151c3d8cf9a3f564d90e94194d91731dd7"
 
 [locked_de_v1_tier3_review_report]
 path = "output/_archive/decision_engine_v1_tier3_review_report__locked__sha256_54030072.md"
 sha256 = "540300729a4aaf19110896f8401686ed0d9e41baa30dc0a528075c8d2471a5c1"
 
 [locked_de_v0_classification_panel]
-path = "output/_archive/decision_v0_classification_panel__locked__sha256_0bae7104.parquet"
-sha256 = "0bae7104b358a03da31d8caf7099c53e3dfe6e0ad5c93abbf0da8e5fa5e7fd96"
+path = "output/_archive/decision_v0_classification_panel__locked__sha256_a76bf5b3.parquet"
+sha256 = "a76bf5b3d3795d0efad2b89ce01464f35836de7d0bf1f8bbb97661e6f0af01ed"
