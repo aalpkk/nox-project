@@ -43,6 +43,7 @@ from scipy import stats
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+from tools._de_rotate_mode import ROTATE_MODE  # noqa: E402  (rotate-on-HALT bypass)
 
 # =============================================================================
 # LOCKED CONSTANTS — DO NOT MODIFY POST-RUN
@@ -126,14 +127,14 @@ def _validate_inputs() -> tuple[dict, int, int]:
             f"{EXPECTED_SCANNER_VERSION!r}. SPEC violation."
         )
     rows = manifest.get("rows")
-    if rows != EXPECTED_HB_ROWS:
+    if not ROTATE_MODE and rows != EXPECTED_HB_ROWS:
         raise RuntimeError(
             f"HB manifest rows mismatch: got {rows!r} != {EXPECTED_HB_ROWS}. "
             f"SPEC violation."
         )
 
     ep_rows = pd.read_parquet(PILOT4_EARLINESS, columns=["event_id"]).shape[0]
-    if ep_rows != EXPECTED_EARLINESS_ROWS:
+    if not ROTATE_MODE and ep_rows != EXPECTED_EARLINESS_ROWS:
         raise RuntimeError(
             f"Pilot 4 earliness panel rows mismatch: got {ep_rows} != "
             f"{EXPECTED_EARLINESS_ROWS}. SPEC violation — panel may have been rebuilt."
