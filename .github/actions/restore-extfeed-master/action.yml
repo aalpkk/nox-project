@@ -8,7 +8,7 @@ description: >
 
 inputs:
   github-token:
-    description: Token for the gh CLI (pass ${{ github.token }} — NOT the GH_PAGES PAT).
+    description: "Token for the gh CLI (pass the workflow github.token — NOT the GH_PAGES PAT)."
     required: true
 
 runs:
