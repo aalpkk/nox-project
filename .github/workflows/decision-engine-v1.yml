@@ -397,10 +397,18 @@ jobs:
             echo "::error::rotation produced no staged changes — unexpected"; exit 1
           fi
           git commit -m "chore(de-v1): auto-rotate baseline (rotate-on-HALT) asof=$ASOF [skip ci]"
-          # Land on main; rebase once if main advanced during this run.
-          git fetch origin main
-          git rebase origin/main || { git rebase --abort; echo "::error::rebase conflict on auto-rotate"; exit 1; }
-          git push origin HEAD:main
+          # Persist to main, BEST-EFFORT. The checkout is shallow (fetch-depth: 1;
+          # the .git history is multi-GB so a full clone per run is not viable), so
+          # we must NOT rebase (no merge-base under shallow). A single fast-forward
+          # push of one commit whose parent IS the remote tip works fine on a shallow
+          # clone — the server enforces FF. If main advanced during this run the push
+          # is rejected; that is non-fatal: THIS run already rotated locally (Stages
+          # 6-9 below use it) and the next run will simply re-rotate and retry the push.
+          if git push origin HEAD:main; then
+            echo "[de-v1] rotated baseline persisted to main"
+          else
+            echo "::warning::could not fast-forward the rotated baseline to main (main advanced or shallow); this run is unaffected — it uses the local rotation; the next run re-rotates + retries the push"
+          fi
 
           echo "[de-v1] retrying Stage 5 with rotated baseline"
           if run_stage5; then
