@@ -59,7 +59,6 @@ DEFAULT_THRESHOLDS = {
     "investor_drop_pct": 0.0,
     "size_drop_pct": 0.0,
     "min_history": 4,
-    "lookback_days": 40,
 }
 
 
@@ -94,44 +93,62 @@ def _empty_df() -> pd.DataFrame:
 
 # ── Kaynak 1: Fintables MCP (veri_sorgula) ───────────────────────────────────
 
-def fetch_fintables(codes: list, lookback_days: int) -> pd.DataFrame:
-    """gunluk_fon_degerleri'nden gercek net-akis gecmisi. Token yoksa AuthError."""
-    from datetime import timedelta
+# veri_sorgula explicit LIMIT'i max 300 satirla sinirlar; LIMIT verilmezse 50'de
+# keser. Fon basina son-N satiri ROW_NUMBER ile garanti alir, fonlari 300-satir
+# butcesine sigacak batch'lere boleriz (yoksa cok fonda sessiz fon dususu olur).
+_MCP_ROW_CAP = 300
+
+
+def fetch_fintables(codes: list, th: dict) -> pd.DataFrame:
+    """gunluk_fon_degerleri'nden fon basina son-N gunluk gercek net-akis serisi."""
     from nyxexpansion.intraday.fetchers.fintables import (
         FintablesMCPClient, _parse_markdown_table, _validate_tickers,
     )
 
     safe = _validate_tickers(codes)
-    cutoff = (_today() - timedelta(days=int(lookback_days))).strftime("%Y-%m-%d")
-    in_clause = ", ".join(f"'{c}'" for c in safe)
-    sql = (
-        "SELECT g.fon_kodu, g.tarih_europe_istanbul, g.fon_buyuklugu, "
-        "g.yatirimci_sayisi, g.gunluk_nakit_giris_cikisi, f.unvan "
-        "FROM gunluk_fon_degerleri g "
-        "LEFT JOIN fonlar f ON f.fon_kodu = g.fon_kodu "
-        f"WHERE g.fon_kodu IN ({in_clause}) "
-        f"AND g.tarih_europe_istanbul >= TIMESTAMP '{cutoff} 00:00:00' "
-        "ORDER BY g.fon_kodu, g.tarih_europe_istanbul"
-    )
+    wmax = max(int(th.get("flow_window", 5)), int(th.get("investor_window", 3)), int(th.get("size_window", 5)))
+    per_fund = 2 * wmax + 5  # pencere hesabi icin yeterli son gozlem
+    batch_size = max(1, (_MCP_ROW_CAP - 5) // per_fund)
+
     cli = FintablesMCPClient()
-    payload = cli.call_tool("veri_sorgula", {"sql": sql, "purpose": "NOX fon akis izleme"})
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"veri_sorgula beklenmeyen tip: {type(payload)}")
-    rows = _parse_markdown_table(payload.get("table") or "")
     out = []
-    for r in rows:
-        out.append({
-            "date": str(r.get("tarih_europe_istanbul", ""))[:10],
-            "code": r.get("fon_kodu"),
-            "name": (r.get("unvan") or "")[:48],
-            "fund_size": _f(r.get("fon_buyuklugu")),
-            "investor_count": _i(r.get("yatirimci_sayisi")),
-            "net_flow": _f(r.get("gunluk_nakit_giris_cikisi")),
-            "shares": float("nan"),
-        })
+    for i in range(0, len(safe), batch_size):
+        batch = safe[i:i + batch_size]
+        in_clause = ", ".join(f"'{c}'" for c in batch)
+        limit = min(len(batch) * per_fund + 5, _MCP_ROW_CAP)
+        sql = (
+            "WITH ranked AS ("
+            " SELECT g.fon_kodu, g.tarih_europe_istanbul, g.fon_buyuklugu, g.yatirimci_sayisi,"
+            " g.gunluk_nakit_giris_cikisi, f.unvan,"
+            " ROW_NUMBER() OVER (PARTITION BY g.fon_kodu ORDER BY g.tarih_europe_istanbul DESC) AS rn"
+            " FROM gunluk_fon_degerleri g LEFT JOIN fonlar f ON f.fon_kodu = g.fon_kodu"
+            f" WHERE g.fon_kodu IN ({in_clause}))"
+            " SELECT fon_kodu, tarih_europe_istanbul, fon_buyuklugu, yatirimci_sayisi,"
+            " gunluk_nakit_giris_cikisi, unvan"
+            f" FROM ranked WHERE rn <= {per_fund}"
+            f" ORDER BY fon_kodu, tarih_europe_istanbul LIMIT {limit}"
+        )
+        payload = cli.call_tool("veri_sorgula", {"sql": sql, "purpose": "NOX fon akis izleme"})
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"veri_sorgula beklenmeyen tip: {type(payload)}")
+        for r in _parse_markdown_table(payload.get("table") or ""):
+            out.append({
+                "date": str(r.get("tarih_europe_istanbul", ""))[:10],
+                "code": r.get("fon_kodu"),
+                "name": (r.get("unvan") or "")[:48],
+                "fund_size": _f(r.get("fon_buyuklugu")),
+                "investor_count": _i(r.get("yatirimci_sayisi")),
+                "net_flow": _f(r.get("gunluk_nakit_giris_cikisi")),
+                "shares": float("nan"),
+            })
+
     df = pd.DataFrame(out, columns=STATE_COLS)
+    got = set(df["code"]) if not df.empty else set()
+    missing = [c for c in safe if c not in got]
     if not df.empty:
-        print(f"  ✓ Fintables: {len(df)} satir / {df['code'].nunique()} fon (>= {cutoff})")
+        print(f"  ✓ Fintables: {len(df)} satir / {df['code'].nunique()}/{len(safe)} fon (fon basina ≤{per_fund})")
+    if missing:
+        print(f"  ⚠️ Fintables'ta veri bulunamayan fon(lar): {', '.join(missing)}")
     return df
 
 
@@ -183,7 +200,7 @@ def fetch_history(funds: list, th: dict, source: str) -> tuple:
 
     if want == "fintables":
         try:
-            df = fetch_fintables(funds, th.get("lookback_days", 40))
+            df = fetch_fintables(funds, th)
             if not df.empty:
                 return df, "fintables"
             print("  ⚠️ Fintables 0 satir — borsapy'ye dusuluyor")
