@@ -1,0 +1,108 @@
+name: Fund Flow Monitor (TEFAS)
+
+# TLY/PBR/PHE/DFI (+ eklenen) TEFAS fonlari icin gunluk akis izleme.
+# Her gun snapshot'i output/fund_flow_monitor_state.csv'ye biriktirir,
+# kosul tetiklenirse Telegram'a uyari yollar. State repoya geri commit edilir
+# (gecmis kalici olsun diye). Veri: borsapy (TEFAS), auth gerektirmez.
+#
+# Takvim: hafta ici 19:00 TR (16:00 UTC). TEFAS gunluk veriyi aksam gunceller;
+# 19:00 cogu gun guncel veriyi yakalar. Gerekirse cron'u oteleyin.
+#
+# Fon ekleme/cikarma: Actions UI'dan "Run workflow" → add/remove kutulari,
+# ya da lokalde `python tools/fund_flow_monitor.py --add KOD`.
+
+on:
+  schedule:
+    # Pzt-Cuma 19:00 TR (UTC+3) = 16:00 UTC
+    - cron: '0 16 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: 'Tetiklense de tetiklenmese de tam durum tablosunu yolla'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      add:
+        description: 'Izleme listesine fon ekle (TEFAS kodu, or. KRS). Bos = yok.'
+        required: false
+        default: ''
+      remove:
+        description: 'Izleme listesinden fon cikar. Bos = yok.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fund-flow-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install borsapy
+
+      - name: Manage watchlist (add/remove)
+        if: ${{ github.event.inputs.add != '' || github.event.inputs.remove != '' }}
+        run: |
+          if [ -n "${{ github.event.inputs.add }}" ]; then
+            python tools/fund_flow_monitor.py --add "${{ github.event.inputs.add }}"
+          fi
+          if [ -n "${{ github.event.inputs.remove }}" ]; then
+            python tools/fund_flow_monitor.py --remove "${{ github.event.inputs.remove }}"
+          fi
+
+      - name: Run fund flow monitor
+        env:
+          # Fintables (birincil kaynak): gercek gunluk net akis + gecmis seri.
+          # Token yoksa script otomatik borsapy snapshot fallback'ine duser.
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.digest }}" = "true" ]; then
+            ARGS="--digest"
+          fi
+          python tools/fund_flow_monitor.py $ARGS 2>&1 | tee fund_flow_output.txt
+
+      - name: Commit watchlist changes (add/remove only)
+        # Fintables gecmisi her calismada yeniden cektigi icin state CSV'si
+        # commit edilmez (repo churn yok). Sadece izleme listesi (add/remove)
+        # kalici olur.
+        if: ${{ github.event.inputs.add != '' || github.event.inputs.remove != '' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/fund_flow_monitor.json
+          if git diff --cached --quiet; then
+            echo "Watchlist degismedi — commit atlaniyor."
+          else
+            git commit -m "chore(fund-monitor): watchlist guncellendi"
+            git pull --rebase --autostash origin ${{ github.ref_name }} || true
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fund-flow-monitor-${{ github.run_number }}
+          path: |
+            output/fund_flow_monitor_state.csv
+            fund_flow_output.txt
+          if-no-files-found: warn
+          retention-days: 30

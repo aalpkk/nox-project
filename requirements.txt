@@ -17,3 +17,4 @@ PyPDF2>=3.0
 reportlab>=4.0
 websockets>=12
 exchange_calendars>=4.0
+borsapy>=0.1
