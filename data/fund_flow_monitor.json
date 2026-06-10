@@ -1,0 +1,18 @@
+{
+  "_comment": "TEFAS fon-akis izleme listesi. Fon eklemek/cikarmak icin: python tools/fund_flow_monitor.py --add KOD / --remove KOD / --list. Esikler asagidan ayarlanir.",
+  "funds": [
+    "TLY",
+    "PBR",
+    "PHE",
+    "DFI"
+  ],
+  "thresholds": {
+    "flow_window": 5,
+    "investor_window": 3,
+    "size_window": 5,
+    "slowdown_ratio": 0.5,
+    "investor_drop_pct": 0.0,
+    "size_drop_pct": 0.0,
+    "min_history": 4
+  }
+}
