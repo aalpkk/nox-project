@@ -1,0 +1,30 @@
+name: Takas Batch IPO-RBR (EKDMR ATATR AKHAN LXGYO UCAYM ARFYE FRMPL BESTE GENKM)
+on:
+  workflow_dispatch:
+
+jobs:
+  takas-batch-ipo-rbr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Run takas batch ipo-rbr
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          PYTHONPATH: .
+        run: python tools/takas_batch_ipo_rbr_2026_06_11.py
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: takas-batch-2026-06-11-ipo-rbr
+          path: |
+            output/takas_batch_2026-06-11_ipo_rbr.csv
+            output/takas_batch_2026-06-11_ipo_rbr_ice.csv
+            output/takas_batch_2026-06-11_ipo_rbr.md
+          if-no-files-found: warn
