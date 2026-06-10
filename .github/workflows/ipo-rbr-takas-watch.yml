@@ -1,0 +1,24 @@
+name: IPO-RBR Takas Watch (hafta içi 19:45 TR)
+on:
+  schedule:
+    - cron: '45 16 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  takas-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Run takas watch
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PYTHONPATH: .
+        run: python tools/ipo_rbr_takas_watch.py

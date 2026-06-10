@@ -1,0 +1,11 @@
+{
+  "_comment": "IPO-RBR takas izleme listesi. key_buyers = ana toplayıcı el (ev-DIŞI); house = arz aracı kurumu (sinyal sayılmaz). add/remove ile yönet.",
+  "tickers": [
+    {"ticker": "GENKM", "house": "DENIZ", "key_buyers": ["BANK-OF-AMERICA"], "not": "çekirdek; koşulsuz lockup 2027-03"},
+    {"ticker": "AKHAN", "house": "HALK", "key_buyers": ["PIRAMIT", "INVESTAZ"], "not": "zirveye %1"},
+    {"ticker": "ATATR", "house": "TERA", "key_buyers": ["BANK-OF-AMERICA"], "not": "fiyat-koşullu lockup: ortaklar satabilir, KAP izle"},
+    {"ticker": "EKDMR", "house": "A1 CAPITAL", "key_buyers": ["BANK-OF-AMERICA"], "not": "tetik ~70+ tavan kapanışı bekleniyor"},
+    {"ticker": "SVGYO", "house": "TERA", "key_buyers": ["BANK-OF-AMERICA"], "not": "bant 20.8+ kırılım şartı"},
+    {"ticker": "LXGYO", "house": "TERA", "key_buyers": [], "not": "izlemede, pozisyon yok"}
+  ]
+}
