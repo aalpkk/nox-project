@@ -78,7 +78,10 @@ KURALLAR (ihlal post-validasyonda düzeltilir, uğraşma):
 6. Tavan lock pick'leri pozisyon BAĞLAMIDIR (sabah 11:00 anlık görüntüsü) — akşam AL adayı değil.
    Elde tavan-lock kaynaklı pozisyon varsa V1 exit kurallarını gerekçeye yansıt.
 7. Tüm birincil hatlar kağıt-doğrulamalı ve tek-rejim — kesinlik iddia etme, ölçülü konuş.
-8. Türkçe yaz, kısa ve operasyonel ol."""
+8. Türkçe yaz, kısa ve operasyonel ol.
+9. ÇIKTI DİSİPLİNİ: önce position_recommendations'ı yaz (her pozisyon için MUTLAKA bir
+   kayıt), sonra buy_candidates, en son narrative. Her rationale_tr en fazla 1-2 cümle
+   (~200 karakter) — uzun gerekçe çıktının kesilmesine ve alan kaybına yol açar."""
 
 
 MAX_BLOCKED_FOR_LLM = 10   # bloklu adaylardan LLM'e giden örnek sayısı
@@ -270,6 +273,18 @@ def resolve_llm_mode(llm_mode="auto"):
     return "none"
 
 
+def _persist_raw(raw, asof):
+    """Ham LLM çıktısını debug için sakla (post_validate ÖNCESİ hali)."""
+    try:
+        from agent.advisor.context_pack import ADVISOR_DIR
+        ADVISOR_DIR.mkdir(parents=True, exist_ok=True)
+        path = ADVISOR_DIR / f"raw_llm_{asof}.json"
+        path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, default=str),
+                        encoding="utf-8")
+    except Exception as e:
+        print(f"⚠️ raw persist hatası: {e}")
+
+
 def build_advisory(pack, use_llm=True, llm_mode="auto"):
     """Sentez + post-validasyon. LLM hatasında fallback — rapor her zaman çıkar.
 
@@ -287,6 +302,8 @@ def build_advisory(pack, use_llm=True, llm_mode="auto"):
             raw = synthesize_via_cli(pack)
         except Exception as e:
             print(f"⚠️ CLI sentez hatası — deterministik fallback: {e}")
+    if raw is not None:
+        _persist_raw(raw, pack["asof"])
     if raw is None:
         raw = deterministic_fallback(pack)
     return guardrails.post_validate(raw, pack)
