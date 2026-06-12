@@ -167,19 +167,19 @@ def single_prompt(prompt, tool_handler=None, system_prompt=None,
 
 
 def structured_prompt(prompt, schema_tool, system_prompt=None, model=None,
-                      max_tokens=8192, temperature=0.2):
+                      max_tokens=8192):
     """Zorlanmış tool çıktısıyla tek çağrı — parse edilmiş dict döner.
 
     schema_tool: {"name", "description", "input_schema"} formatında tek tool.
     tool_choice ile model bu tool'u çağırmaya ZORLANIR; dönen tool_use.input
     SDK tarafında input_schema'ya göre üretilir. (Advisor gibi tek-atımlık
     yapılandırılmış çıktılar için; çok-turlu akış için chat() kullan.)
+    NOT: temperature gönderilmiyor — Opus 4.8+ parametreyi reddediyor (400).
     """
     client = _get_client()
     response = client.messages.create(
         model=model or MODEL_ANALYSIS,
         max_tokens=max_tokens,
-        temperature=temperature,
         system=system_prompt or SYSTEM_PROMPT,
         tools=[schema_tool],
         tool_choice={"type": "tool", "name": schema_tool["name"]},

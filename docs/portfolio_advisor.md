@@ -41,9 +41,12 @@ job fail = gerçek bug. Dispatch ile manuel: asof boş bırakılırsa en son DE 
 ## Sentez yolları (HİBRİT tasarım)
 
 `--llm-mode {auto,api,cli,none}`:
-- **CI = `none`**: her akşam deterministik garanti raporu, $0 (korkuluk flag'leri +
-  boyutlandırılmış adaylar). API'ye dönmek istersen workflow'a ANTHROPIC_API_KEY
-  ekleyip `--llm-mode auto` yap (Sonnet ~$2/ay).
+- **CI = `auto` + Opus 4.8** (2026-06-13 aktifleştirildi): `NOX_MODEL_ADVISOR=
+  claude-opus-4-8`, inceltilmiş pack (`_pack_for_llm`: geçen adaylar + 10 bloklu
+  örnek + 10 watch) ~11k giriş → ölçülen **~$0.13/koşu ≈ $3/ay**. API hatasında
+  deterministik fallback raporu yine gider. $0'a dönmek: env'den iki satırı sil +
+  `--llm-mode none`. NOT: Opus 4.8 `temperature` parametresini reddediyor —
+  `structured_prompt` göndermez.
 - **Lokal = `cli`**: headless `claude -p --model opus` — **API key'siz, abonelikten,
   marjinal maliyet $0**. `synthesize_via_cli()`: pack stdin'den girer, salt-JSON
   çıkar (`_extract_json` kod-bloğu/prose toleranslı); post_validate korkulukları

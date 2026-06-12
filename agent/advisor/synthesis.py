@@ -81,9 +81,33 @@ KURALLAR (ihlal post-validasyonda düzeltilir, uğraşma):
 8. Türkçe yaz, kısa ve operasyonel ol."""
 
 
+MAX_BLOCKED_FOR_LLM = 10   # bloklu adaylardan LLM'e giden örnek sayısı
+MAX_WATCH_FOR_LLM = 10
+_DROP_CAND_FIELDS = ("reason_codes",)  # uzun, karar LLM'in değil — token tasarrufu
+
+
+def _slim_cand(c):
+    return {k: v for k, v in c.items() if k not in _DROP_CAND_FIELDS}
+
+
 def _pack_for_llm(pack):
-    """Pack'in LLM'e giden kompakt hâli (ham fiyat dict'i vb. atılır)."""
+    """Pack'in LLM'e giden kompakt hâli — korkuluk hesapları TAM pack'i görür,
+    burası yalnızca prompt kopyasını inceltir (token maliyeti).
+
+    buy_table: korkuluğu geçenler (OK/ADD) tamamı + bloklulardan ilk N örnek
+    (cand_status görünür kalır ki model 'neden seçilmedi'yi bilsin)."""
     ctx = pack["context_signals"]
+    table = pack["pre_check"]["buy_table"]
+    passed = [_slim_cand(c) for c in table if c["cand_status"] in ("OK", "ADD")]
+    blocked = [_slim_cand(c) for c in table
+               if c["cand_status"] not in ("OK", "ADD")][:MAX_BLOCKED_FOR_LLM]
+    n_blocked_total = sum(1 for c in table if c["cand_status"] not in ("OK", "ADD"))
+
+    de = pack["validated_signals"]["decision_engine"]
+    de_slim = {k: v for k, v in de.items() if k not in ("buy_rows", "watch_rows")}
+    de_slim["watch_rows"] = [_slim_cand(r) for r in de.get("watch_rows", [])[:MAX_WATCH_FOR_LLM]]
+    de_slim["n_watch_total"] = len(de.get("watch_rows", []))
+
     return {
         "asof": pack["asof"],
         "inputs_status": pack["inputs_status"],
@@ -94,10 +118,10 @@ def _pack_for_llm(pack):
             "risk": pack["pre_check"]["risk"],
             "positions": pack["pre_check"]["positions"],
         },
-        "buy_table": pack["pre_check"]["buy_table"],
+        "buy_table": passed + blocked,
+        "n_blocked_not_shown": max(0, n_blocked_total - len(blocked)),
         "validated_signals": {
-            "decision_engine": {k: v for k, v in pack["validated_signals"]["decision_engine"].items()
-                                if k != "buy_rows"},  # buy_table zaten boyutlandırılmış hali
+            "decision_engine": de_slim,
             "tavan_lock": pack["validated_signals"]["tavan_lock"],
             "cluster3": {**pack["validated_signals"]["cluster3"],
                          "open_candidates": pack["validated_signals"]["cluster3"]["open_candidates"][:20]},
