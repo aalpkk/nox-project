@@ -56,6 +56,14 @@
         "PUSULA"
       ],
       "not": "blok devri 10-11 Haz (~14M lot, INFO/BofA -> BULLS/PUSULA); el satıcıya dönerse tez biter"
+    },
+    {
+      "ticker": "ESCOM",
+      "house": "",
+      "key_buyers": [
+        "DENIZ"
+      ],
+      "not": "Yalçın grubu %3.58 (KAP 10 Haz, maliyet 4-6); Deniz=muhtemel alım kanalı; %5 eşiği bildirimi izle; stop 4.90 altı kapanış"
     }
   ]
 }
