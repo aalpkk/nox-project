@@ -236,3 +236,54 @@ def _f(v):
         return None if pd.isna(f) else f
     except (TypeError, ValueError):
         return None
+
+
+# ── GitHub Actions artifact'ından DE watchlist çekme (bot /danis tam) ──
+
+def fetch_latest_de_artifact(repo=None, dest_dir=None, max_artifacts=100):
+    """Public repodaki en yeni de-v1-watchlist-*/no-de-day artifact'ını indir.
+
+    Bot host'ta lokal output/ yok — artifact zip'i indirip dest_dir'e açar.
+    (asof, kind) döner; kind ∈ {WATCHLIST, NO_DE_DAY}; bulunamazsa (None, None).
+    """
+    import io
+    import re
+    import zipfile
+    import requests as rq
+
+    repo = repo or os.environ.get("NOX_SIGNALS_REPO", "aalpkk/nox-project")
+    dest = Path(dest_dir) if dest_dir else OUT_DIR
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return None, None
+    headers = {"Authorization": f"token {token}",
+               "Accept": "application/vnd.github.v3+json"}
+    try:
+        resp = rq.get(f"https://api.github.com/repos/{repo}/actions/artifacts",
+                      params={"per_page": max_artifacts}, headers=headers, timeout=20)
+        resp.raise_for_status()
+        arts = resp.json().get("artifacts", [])
+        best = None
+        for a in arts:  # API en-yeni-önce döner
+            if a.get("expired"):
+                continue
+            m = re.match(r"^de-v1-(watchlist|no-de-day)-(\d{4}-\d{2}-\d{2})$", a["name"])
+            if not m:
+                continue
+            kind = "WATCHLIST" if m.group(1) == "watchlist" else "NO_DE_DAY"
+            cand = (m.group(2), kind, a)
+            # watchlist > no-de-day aynı gün; daha yeni tarih her zaman kazanır
+            if best is None or cand[0] > best[0] or (cand[0] == best[0] and kind == "WATCHLIST"):
+                best = cand
+        if best is None:
+            return None, None
+        asof, kind, art = best
+        zresp = rq.get(art["archive_download_url"], headers=headers, timeout=60)
+        zresp.raise_for_status()
+        dest.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(zresp.content)) as zf:
+            zf.extractall(dest)
+        return asof, kind
+    except Exception as e:
+        print(f"⚠️ DE artifact indirme hatası: {e}")
+        return None, None

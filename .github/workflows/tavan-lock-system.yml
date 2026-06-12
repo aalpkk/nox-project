@@ -108,6 +108,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tavan-lock-scan-${{ github.run_number }}
-          path: lock_scan_output.txt
+          path: |
+            lock_scan_output.txt
+            output/tavan_lock_scan_*.json
           if-no-files-found: warn
           retention-days: 30

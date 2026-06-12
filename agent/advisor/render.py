@@ -81,6 +81,29 @@ def render_telegram_tr(advisory):
     return "\n".join(lines)
 
 
+def render_portfolio_tr(pre, source="?", rev=None):
+    """Bot /portfoy çıktısı — pre_check sonucundan canlı özet."""
+    lines = [
+        "💼 <b>Portföy</b>",
+        f"Varlık: <b>{_fmt_tl(pre['equity_tl'])} TL</b> · Nakit: {_fmt_tl(pre['cash_tl'])} TL · "
+        f"Yatırımda %{pre['invested_pct']:.1f}",
+        f"Açık risk: %{pre['risk']['existing_open_risk_pct']:.1f} "
+        f"(tavan %{pre['risk']['cap_pct']})",
+        "",
+    ]
+    if not pre["positions"]:
+        lines.append("Açık pozisyon yok. /poz_al ile ekle.")
+    for p in sorted(pre["positions"], key=lambda x: -x["weight_pct"]):
+        pnl = f"{p['pnl_pct']:+.1f}%" if p["last"] is not None else "fiyat yok"
+        flag_txt = f" ⚠️{','.join(p['flags'])}" if p["flags"] else ""
+        stop_txt = f" · stop {p['stop']}" if p.get("stop") else ""
+        lines.append(f"• <b>{p['ticker']}</b> {p['qty']}×{p['avg_cost']:.2f} → "
+                     f"{p['last'] if p['last'] is not None else '—'} ({pnl}) · "
+                     f"%{p['weight_pct']:.1f}{stop_txt}{flag_txt}")
+    lines.append(f"\n<i>kaynak: {source} · rev {rev[:8] if rev else 'lokal'}</i>")
+    return "\n".join(lines)
+
+
 def render_html(advisory):
     """Basit bağımsız HTML raporu — Telegram document için."""
     a = advisory

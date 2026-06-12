@@ -202,6 +202,22 @@ def scan(asof, snapshot, topk, telegram=False):
     log("EXIT PLAN per pick: SL=−10% | at +4% sell HALF (locks +2%) | trail remaining 2% "
         "below high, floor=breakeven | hard exit 25 trading days.")
 
+    # makine-okunur çıktı — portfolio advisor tüketir (paper-track etiketiyle)
+    scan_json = REPO / f"output/tavan_lock_scan_{asof.date().isoformat()}.json"
+    scan_json.write_text(json.dumps({
+        "asof": asof.date().isoformat(), "snapshot": snapshot,
+        "thr_top1": float(thr), "validation": "paper-track (tek-rejim 2025-26 boğa)",
+        "picks": [
+            {"ticker": str(r["ticker"]), "P_lock": float(r["P_lock"]),
+             "P_v1": float(r["P_v1"]) if pd.notna(r["P_v1"]) else None,
+             "entry": float(r["entry"]), "ret_at_T": float(r["ret_at_T"]),
+             "high_conviction": bool(r["P_lock"] >= thr)}
+            for _, r in day.head(max(topk, 8)).iterrows()
+        ],
+        "exit_rules": "SL -10% | TP1 +4% yarı sat | %2 trail (BE taban) | H25",
+    }, indent=2))
+    log(f"[json written: {scan_json}]")
+
     if telegram:
         hi = day[day["P_lock"] >= thr]
         lines_tg = [f"🎯 TAVAN LOCK {asof.date()} @{snapshot} (PAPER)"]
