@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  NOX Advisor — lokal akşam koşusu (headless Claude Code, API key'siz).
+  Kurulum:
+    cp scripts/com.nox.advisor.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.nox.advisor.plist
+  Kaldırma:
+    launchctl unload ~/Library/LaunchAgents/com.nox.advisor.plist
+  Not: Mac uykudaysa koşmaz; kaçan koşu CI'nın deterministik raporuyla
+  telafi edilir (hibrit tasarım). İstersen: sudo pmset repeat wake MTWRF 21:40:00
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nox.advisor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>~/Projects/nox_project/scripts/advisor_local.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <!-- hafta içi 21:45 lokal saat (TR'de yaşıyorsan = 21:45 TR; DE v1 zinciri ~20:00-21:30'da biter) -->
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>45</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/tmp/com.nox.advisor.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.nox.advisor.err</string>
+</dict>
+</plist>

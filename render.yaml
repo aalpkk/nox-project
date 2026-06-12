@@ -14,3 +14,8 @@ services:
         sync: false
       - key: GH_PAGES_BASE_URL
         value: "https://aalpkk.github.io/nox-signals"
+      # Portfolio advisor (PR #72): /portfoy /poz_al /poz_sat /nakit /danis için
+      - key: NOX_PORTFOLIO_REPO
+        value: "aalpkk/nox-private"
+      - key: GH_TOKEN          # PAT (repo scope) — değer dashboard'dan girilir
+        sync: false

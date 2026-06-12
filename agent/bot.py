@@ -10,6 +10,9 @@ Komutlar:
     /cikar THYAO — Watchlist'ten çıkar
     /tavsiye — Al/Sat tavsiyeleri
     /makro — Makro özet
+    /portfoy — Gerçek portföy + canlı PnL (agent/advisor)
+    /poz_al /poz_sat /nakit — Portföy kayıtları (private repo'ya Contents API)
+    /danis — Son danışman raporu (/danis tam = yeniden üret)
     /yardim — Komut listesi
     Serbest metin — Claude API ile yanıt
 
@@ -98,7 +101,13 @@ async def cmd_yardim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/cikar THYAO — Pozisyon çıkar\n"
         "/tavsiye — Al/Sat tavsiyeleri\n"
         "/makro — Makro piyasa özeti\n"
-        "/model — Model seç (haiku/sonnet/opus)\n"
+        "/model — Model seç (haiku/sonnet/opus)\n\n"
+        "<b>💼 Portföy (gerçek para)</b>\n"
+        "/portfoy — Pozisyonlar + canlı PnL + risk\n"
+        "/poz_al THYAO 100 45.50 — Alım kaydet\n"
+        "/poz_sat THYAO [adet] [fiyat] — Satım kaydet\n"
+        "/nakit 150000 — Nakit güncelle\n"
+        "/danis — Son danışman raporu (/danis tam = yeniden üret)\n\n"
         "/yardim — Bu mesaj\n\n"
         "📎 Excel/CSV yükle → kademe/takas analizi\n"
         "📷 Fotoğraf yükle → görsel analiz\n"
@@ -244,6 +253,185 @@ async def cmd_makro(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_long(update, format_macro_summary(result))
     except Exception as e:
         await update.message.reply_text(f"⚠️ Makro hatası: {e}")
+
+
+# ── Portföy komutları (gerçek para — agent/advisor) ──
+# YAZMA komutları yalnızca komut-kapılı (_authorized); LLM hiçbir zaman
+# portföy yazamaz (Claude tool'ları salt-okunur).
+
+async def cmd_portfoy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    await update.message.reply_text("⏳ Portföy + canlı fiyatlar...")
+    try:
+        import asyncio
+        from agent.advisor.portfolio import Portfolio
+        from agent.advisor import signals as adv_signals, guardrails
+        from agent.advisor.render import render_portfolio_tr
+
+        def _build():
+            pf = Portfolio.load()
+            prices = adv_signals.fetch_prices(pf.tickers())
+            pre = guardrails.pre_check(pf.data, prices, [])
+            return render_portfolio_tr(pre, source=pf.source, rev=pf.rev)
+
+        await _send_long(update, await asyncio.to_thread(_build))
+    except Exception as e:
+        logger.error(f"Portföy hatası: {e}")
+        await update.message.reply_text(f"⚠️ Portföy hatası: {e}")
+
+
+async def cmd_poz_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    args = context.args
+    if len(args) < 3:
+        await update.message.reply_text(
+            "Kullanım: /poz_al THYAO 100 45.50 [2026-06-13]")
+        return
+    try:
+        import asyncio
+        from agent.advisor.portfolio import Portfolio
+        ticker, qty, price = args[0], args[1], args[2]
+        date = args[3] if len(args) > 3 else None
+
+        def _mut():
+            return Portfolio.mutate(
+                lambda d: Portfolio.apply_buy(d, ticker, qty, price, date=date),
+                updated_by="telegram_bot")
+
+        pf, summary = await asyncio.to_thread(_mut)
+        pos = next(p for p in pf.data["positions"]
+                   if p["ticker"] == ticker.upper().strip())
+        await update.message.reply_text(
+            f"✅ {summary}\n"
+            f"Yeni ort. maliyet: {pos['avg_cost']:.2f} · adet: {pos['qty']}\n"
+            f"Kalan nakit: {pf.data['cash_tl']:,.0f} TL",
+            parse_mode='HTML')
+    except ValueError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+    except Exception as e:
+        logger.error(f"poz_al hatası: {e}")
+        await update.message.reply_text(f"⚠️ Kayıt hatası: {e}")
+
+
+async def cmd_poz_sat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Kullanım: /poz_sat THYAO [adet] [fiyat]  (adet boş = tamamı)")
+        return
+    try:
+        import asyncio
+        from agent.advisor.portfolio import Portfolio
+        ticker = args[0]
+        qty = args[1] if len(args) > 1 else None
+        price = args[2] if len(args) > 2 else None
+
+        def _mut():
+            return Portfolio.mutate(
+                lambda d: Portfolio.apply_sell(d, ticker, qty=qty, price=price),
+                updated_by="telegram_bot")
+
+        pf, summary = await asyncio.to_thread(_mut)
+        last_trade = pf.data["trades"][-1]
+        pnl = last_trade.get("realized_pnl_tl")
+        pnl_txt = f"\nRealize PnL: {pnl:+,.0f} TL" if pnl is not None else \
+            "\n(fiyat girilmedi — nakit/PnL güncellenmedi)"
+        await update.message.reply_text(
+            f"✅ {summary}{pnl_txt}\nNakit: {pf.data['cash_tl']:,.0f} TL",
+            parse_mode='HTML')
+    except ValueError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+    except Exception as e:
+        logger.error(f"poz_sat hatası: {e}")
+        await update.message.reply_text(f"⚠️ Kayıt hatası: {e}")
+
+
+async def cmd_nakit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _authorized(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Kullanım: /nakit 150000")
+        return
+    try:
+        import asyncio
+        from agent.advisor.portfolio import Portfolio
+
+        def _mut():
+            return Portfolio.mutate(
+                lambda d: Portfolio.apply_set_cash(d, args[0]),
+                updated_by="telegram_bot")
+
+        _, summary = await asyncio.to_thread(_mut)
+        await update.message.reply_text(f"✅ {summary}")
+    except ValueError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+    except Exception as e:
+        logger.error(f"nakit hatası: {e}")
+        await update.message.reply_text(f"⚠️ Kayıt hatası: {e}")
+
+
+async def cmd_danis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Son advisory'yi getir; '/danis tam' = tam yeniden-sentez (DE artifact + LLM)."""
+    if not _authorized(update):
+        return
+    full = bool(context.args) and context.args[0].lower() in ("tam", "full", "yeni")
+    import asyncio
+
+    if full:
+        await update.message.reply_text(
+            "⏳ Tam yeniden değerlendirme (DE artifact + sinyaller + LLM, ~1-2 dk)...")
+        try:
+            from agent.advisor import run_advisor
+            from agent.advisor.signals import fetch_latest_de_artifact
+            from agent.advisor.render import render_telegram_tr
+
+            def _full():
+                asof, kind = fetch_latest_de_artifact()
+                advisory = run_advisor(asof=asof, notify=False, dry_run=False,
+                                       use_llm=True, publish_latest=True)
+                return advisory, kind
+
+            advisory, kind = await asyncio.to_thread(_full)
+            await _send_long(update, render_telegram_tr(advisory))
+        except Exception as e:
+            logger.error(f"danis tam hatası: {e}")
+            await update.message.reply_text(f"⚠️ Yeniden-sentez hatası: {e}")
+        return
+
+    await update.message.reply_text("⏳ Son danışman raporu getiriliyor...")
+    try:
+        from agent.advisor.portfolio import fetch_advisory_latest, Portfolio
+        from agent.advisor.render import render_telegram_tr
+
+        def _fetch():
+            advisory = fetch_advisory_latest()
+            stale = False
+            if advisory:
+                try:
+                    pf = Portfolio.load()
+                    stale = (pf.rev and advisory.get("portfolio_rev")
+                             and pf.rev != advisory["portfolio_rev"])
+                except Exception:
+                    pass
+            return advisory, stale
+
+        advisory, stale = await asyncio.to_thread(_fetch)
+        if not advisory:
+            await update.message.reply_text(
+                "Henüz advisory yok. Akşam cron'unu bekle veya /danis tam dene.")
+            return
+        msg = render_telegram_tr(advisory)
+        if stale:
+            msg = "⚠️ <b>Portföy bu rapordan SONRA değişti</b> — /danis tam ile yenile.\n\n" + msg
+        await _send_long(update, msg)
+    except Exception as e:
+        logger.error(f"danis hatası: {e}")
+        await update.message.reply_text(f"⚠️ Danışman hatası: {e}")
 
 
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -576,6 +764,13 @@ def main():
     app.add_handler(CommandHandler("tavsiye", cmd_tavsiye))
     app.add_handler(CommandHandler("makro", cmd_makro))
     app.add_handler(CommandHandler("model", cmd_model))
+
+    # Portföy komutları (gerçek para — agent/advisor)
+    app.add_handler(CommandHandler("portfoy", cmd_portfoy))
+    app.add_handler(CommandHandler("poz_al", cmd_poz_al))
+    app.add_handler(CommandHandler("poz_sat", cmd_poz_sat))
+    app.add_handler(CommandHandler("nakit", cmd_nakit))
+    app.add_handler(CommandHandler("danis", cmd_danis))
 
     # Serbest metin handler
     app.add_handler(MessageHandler(

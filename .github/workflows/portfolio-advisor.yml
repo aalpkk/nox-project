@@ -1,0 +1,193 @@
+name: portfolio advisor
+
+# AI Portföy Danışmanı — DE v1 zincirinin SONUNA bağlı kişisel değerlendirme.
+#
+#   1. "decision engine v1" completed (main) → gate (success şart;
+#      NO_DE_DAY günleri de success biter, advisor iki durumu da işler)
+#   2. Upstream run'ın de-v1-watchlist-{asof} / de-v1-no-de-day-{asof}
+#      artifact'ından asof türetilir + indirilir (dispatch: walk-back)
+#   3. python -m agent.advisor --notify:
+#      portföy (aalpkk/nox-private, Contents API) + doğrulanmış sinyaller
+#      + korkuluklar → tek Claude çağrısı (hata → deterministik fallback,
+#      rapor HER HALÜKÂRDA Telegram'a gider)
+#   4. advisory/pack/HTML → artifact (30g). Public repoya HİÇBİR portföy
+#      verisi commit edilmez; advisory_latest.json private repoya yazılır.
+#
+# Zamanlama: DE v1 ~20:00-21:30 TR'de biter → advisor 19:45 brifinginden
+# sonra düşer (brifing pazar-geneli, advisor kişisel) — doğru sıra.
+
+on:
+  workflow_run:
+    workflows: ["decision engine v1"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      asof:
+        description: 'As-of YYYY-MM-DD (boş = en son DE run''ından türet)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: portfolio-advisor
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Gate — DE v1 success on main (dispatch her zaman geçer)
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "[gate] manual dispatch — proceed"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+            echo "[gate] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+  advise:
+    needs: [gate]
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Select DE v1 run + resolve asof (artifact adından)
+        id: select_de
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_ID: ${{ github.event.workflow_run.id }}
+          ASOF_INPUT: ${{ github.event.inputs.asof }}
+        run: |
+          set -euo pipefail
+          # Adayı belirle: workflow_run → upstream id; dispatch → walk-back
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            candidates="$UPSTREAM_ID"
+          else
+            candidates=$(gh run list --repo "${{ github.repository }}" \
+              --workflow=decision-engine-v1.yml --branch=main --status=success \
+              --limit 20 --json databaseId --jq '.[].databaseId')
+          fi
+          run_id="" ; asof="" ; artifact="" ; de_status=""
+          for rid in $candidates; do
+            names=$(gh api "repos/${{ github.repository }}/actions/runs/$rid/artifacts" \
+                    --jq '.artifacts[].name')
+            # önce watchlist, yoksa no-de-day
+            wl=$(echo "$names" | grep -E '^de-v1-watchlist-[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort | tail -1 || true)
+            nd=$(echo "$names" | grep -E '^de-v1-no-de-day-[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort | tail -1 || true)
+            if [ -n "$wl" ]; then
+              artifact="$wl"; asof="${wl#de-v1-watchlist-}"; de_status="WATCHLIST"
+            elif [ -n "$nd" ]; then
+              artifact="$nd"; asof="${nd#de-v1-no-de-day-}"; de_status="NO_DE_DAY"
+            else
+              echo "  skip run $rid (DE artifact yok/expired)"; continue
+            fi
+            if [ -n "$ASOF_INPUT" ] && [ "$asof" != "$ASOF_INPUT" ]; then
+              echo "  skip run $rid (asof=$asof != input=$ASOF_INPUT)"
+              artifact=""; asof=""; de_status=""; continue
+            fi
+            run_id="$rid"; break
+          done
+          if [ -z "$run_id" ]; then
+            echo "::warning::uygun DE artifact'ı bulunamadı — advisor DE'siz (UNAVAILABLE) koşacak"
+            asof="${ASOF_INPUT:-$(TZ=Europe/Istanbul date +%F)}"
+            de_status="UNAVAILABLE"
+          fi
+          echo "run_id=$run_id"     >> "$GITHUB_OUTPUT"
+          echo "asof=$asof"         >> "$GITHUB_OUTPUT"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          echo "de_status=$de_status" >> "$GITHUB_OUTPUT"
+          echo "selected: run=$run_id asof=$asof artifact=$artifact status=$de_status"
+
+      - name: Download DE artifact
+        if: steps.select_de.outputs.artifact != ''
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.select_de.outputs.run_id }}
+          name: ${{ steps.select_de.outputs.artifact }}
+          path: output/
+          if_no_artifact_found: warn
+
+      - name: Download tavan lock artifact (varsa, en son scan)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: tavan-lock-system.yml
+          branch: main
+          workflow_conclusion: success
+          name: tavan-lock-scan-.*
+          name_is_regexp: true
+          path: /tmp/tavan_lock
+          if_no_artifact_found: warn
+
+      - name: Stage tavan lock JSON
+        continue-on-error: true
+        run: |
+          mkdir -p output
+          find /tmp/tavan_lock -name 'tavan_lock_scan_*.json' -exec cp {} output/ \; 2>/dev/null || true
+          ls output/tavan_lock_scan_*.json 2>/dev/null || echo "(tavan lock JSON yok — UNAVAILABLE olarak işlenecek)"
+
+      - name: Run advisor
+        env:
+          PYTHONUNBUFFERED: "1"
+          # OPUS AKTİF (kullanıcı kararı 2026-06-13): tek çağrı/gün, inceltilmiş
+          # pack ~11k giriş + ~3k çıkış → ölçülen ~$0.13/koşu ≈ $3/ay. LLM hatası
+          # advisor içinde deterministik fallback'e düşer — rapor her halükârda gider.
+          # $0'a dönmek için: iki env satırını sil + --llm-mode none yap
+          # (lokal claude -p yolu scripts/advisor_local.sh ile yine kullanılabilir).
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOX_MODEL_ADVISOR: claude-opus-4-8
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}            # private portföy repo (PAT, repo scope)
+          NOX_PORTFOLIO_REPO: aalpkk/nox-private
+          ASOF: ${{ steps.select_de.outputs.asof }}
+        run: |
+          # exit != 0 yalnızca gerçek bug/portföy-okunamadı durumudur.
+          python -u -m agent.advisor --asof "$ASOF" --llm-mode auto --notify
+
+      - name: Upload advisory artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: advisor-${{ steps.select_de.outputs.asof }}-${{ github.run_number }}
+          path: |
+            output/advisor/advisory_${{ steps.select_de.outputs.asof }}.json
+            output/advisor/context_pack_${{ steps.select_de.outputs.asof }}.json
+            output/advisor/advisor_report_${{ steps.select_de.outputs.asof }}.html
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Telegram failure alert
+        if: failure()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          MSG="🔴 portfolio-advisor FAIL — asof=${{ steps.select_de.outputs.asof }} run=${{ github.run_id }} (rapor üretilemedi, log'a bak)"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" -d text="$MSG" > /dev/null || true
