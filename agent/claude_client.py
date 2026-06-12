@@ -166,6 +166,31 @@ def single_prompt(prompt, tool_handler=None, system_prompt=None,
     return "\n".join(text_parts)
 
 
+def structured_prompt(prompt, schema_tool, system_prompt=None, model=None,
+                      max_tokens=8192, temperature=0.2):
+    """Zorlanmış tool çıktısıyla tek çağrı — parse edilmiş dict döner.
+
+    schema_tool: {"name", "description", "input_schema"} formatında tek tool.
+    tool_choice ile model bu tool'u çağırmaya ZORLANIR; dönen tool_use.input
+    SDK tarafında input_schema'ya göre üretilir. (Advisor gibi tek-atımlık
+    yapılandırılmış çıktılar için; çok-turlu akış için chat() kullan.)
+    """
+    client = _get_client()
+    response = client.messages.create(
+        model=model or MODEL_ANALYSIS,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system=system_prompt or SYSTEM_PROMPT,
+        tools=[schema_tool],
+        tool_choice={"type": "tool", "name": schema_tool["name"]},
+        messages=[{"role": "user", "content": prompt}],
+    )
+    for block in response.content:
+        if block.type == "tool_use" and block.name == schema_tool["name"]:
+            return dict(block.input)
+    raise ValueError("structured_prompt: modelden tool_use bloğu gelmedi")
+
+
 def analyze_image(image_path, prompt="Bu görseli analiz et."):
     """Claude vision ile görsel analiz.
     Kademe/takas ekran görüntüsü, grafik, tablo fotoğrafları için.
