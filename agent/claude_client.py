@@ -167,7 +167,7 @@ def single_prompt(prompt, tool_handler=None, system_prompt=None,
 
 
 def structured_prompt(prompt, schema_tool, system_prompt=None, model=None,
-                      max_tokens=8192):
+                      max_tokens=16384):
     """Zorlanmış tool çıktısıyla tek çağrı — parse edilmiş dict döner.
 
     schema_tool: {"name", "description", "input_schema"} formatında tek tool.
@@ -185,9 +185,16 @@ def structured_prompt(prompt, schema_tool, system_prompt=None, model=None,
         tool_choice={"type": "tool", "name": schema_tool["name"]},
         messages=[{"role": "user", "content": prompt}],
     )
+    if response.stop_reason == "max_tokens":
+        # kesik JSON → alanlar kaybolur; çağıran (advisor post_validate) telafi
+        # eder ama veri kaybıdır — yüksek sesle logla
+        print(f"⚠️ structured_prompt: çıktı max_tokens({max_tokens})'da KESİLDİ — "
+              "alan kaybı olası, max_tokens artırılmalı")
     for block in response.content:
         if block.type == "tool_use" and block.name == schema_tool["name"]:
-            return dict(block.input)
+            out = dict(block.input)
+            out["_stop_reason"] = response.stop_reason
+            return out
     raise ValueError("structured_prompt: modelden tool_use bloğu gelmedi")
 
 

@@ -181,6 +181,7 @@ jobs:
             output/advisor/advisory_${{ steps.select_de.outputs.asof }}.json
             output/advisor/context_pack_${{ steps.select_de.outputs.asof }}.json
             output/advisor/advisor_report_${{ steps.select_de.outputs.asof }}.html
+            output/advisor/raw_llm_${{ steps.select_de.outputs.asof }}.json
           if-no-files-found: warn
           retention-days: 30
 
