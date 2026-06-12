@@ -73,6 +73,12 @@ def render_telegram_tr(advisory):
         lines.append(f"⛔ Elenen adaylar: {skipped}")
     lines.append("")
 
+    if a.get("scorecard_prev"):
+        from agent.advisor.scorecard import format_scorecard_line
+        sc = format_scorecard_line(a["scorecard_prev"])
+        if sc:
+            lines.append(sc)
+            lines.append("")
     if a.get("narrative_tr"):
         lines.append(f"🧭 {a['narrative_tr']}")
     if a.get("guardrail_log"):

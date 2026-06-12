@@ -201,4 +201,40 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "get_portfolio",
+        "description": ("Kullanicinin GERCEK portfoyu (salt-okunur): pozisyonlar, canli PnL, "
+                        "agirlik, nakit, acik risk, korkuluk flag'leri (STOP_VIOLATED/OVERWEIGHT). "
+                        "Portfoy YAZMA bu tool'dan YAPILAMAZ — kullanici /poz_al /poz_sat "
+                        "komutlarini kullanir."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": "Istenen kesit (opsiyonel, vars: hepsi)",
+                    "enum": ["summary", "positions", "risk"],
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_validated_signals",
+        "description": ("Dogrulanmis sinyal hatlari (paper-track etiketli): DE v1 tomorrow "
+                        "watchlist (EXECUTABLE/SIZE_REDUCED adaylar entry/stop/risk ile), tavan "
+                        "lock pick'leri, cluster-3 forward ledger. Her blok status tasir "
+                        "(OK/NO_DE_DAY/STALE/UNAVAILABLE). Bu hatlar kagit-dogrulamali "
+                        "tek-rejim — kesinlik iddia etme."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "asof": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD (opsiyonel, vars: bugun)"
+                },
+            },
+            "required": [],
+        },
+    },
 ]

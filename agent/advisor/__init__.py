@@ -21,8 +21,8 @@ def resolve_asof(asof=None):
 
 def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                 portfolio_path=None, publish_latest=True):
-    from agent.advisor import signals, guardrails, context_pack, synthesis, render
-    from agent.advisor.portfolio import Portfolio, publish_advisory_latest
+    from agent.advisor import signals, guardrails, context_pack, synthesis, render, scorecard
+    from agent.advisor.portfolio import Portfolio, publish_advisory_latest, fetch_advisory_latest
 
     asof = resolve_asof(asof)
     print(f"🤖 NOX Advisor — asof={asof}")
@@ -32,17 +32,32 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     print(f"   portföy: {pf.source} rev={pf.rev or '—'} · "
           f"{len(pf.tickers())} pozisyon · nakit {pf.data['cash_tl']:,.0f} TL")
 
-    # 2) doğrulanmış sinyaller
+    # 2) doğrulanmış sinyaller + önceki advisory (skorkart için, yayından ÖNCE)
     validated = signals.load_validated_signals(asof)
     de = validated["decision_engine"]
     print(f"   DE v1: {de['status']} ({len(de['buy_rows'])} aday) · "
           f"tavan: {validated['tavan_lock']['status']} · "
           f"cluster3: {validated['cluster3']['status']}")
+    try:
+        prev_advisory = fetch_advisory_latest()
+    except Exception:
+        prev_advisory = None
 
-    # 3) canlı fiyat (pozisyonlar + adaylar)
-    tickers = sorted(set(pf.tickers()) | {r["ticker"] for r in de["buy_rows"]})
+    # 3) canlı fiyat (pozisyonlar + adaylar + önceki rapor ticker'ları)
+    tickers = set(pf.tickers()) | {r["ticker"] for r in de["buy_rows"]}
+    if prev_advisory and prev_advisory.get("asof") != asof:
+        tickers |= {b["ticker"] for b in prev_advisory.get("buy_candidates", [])}
+        tickers |= {r["ticker"] for r in prev_advisory.get("position_recommendations", [])}
+    tickers = sorted(tickers)
     prices = signals.fetch_prices(tickers)
     print(f"   fiyat: {len(prices)}/{len(tickers)} ticker")
+
+    # 3b) skorkart: önceki rapor bugünkü fiyatlarla (aynı gün yeniden-koşuda atla)
+    score_entry = None
+    if prev_advisory and prev_advisory.get("asof") != asof:
+        score_entry = scorecard.score_previous(prev_advisory, prices)
+        if score_entry:
+            print(f"   skorkart: {scorecard.format_scorecard_line(score_entry)}")
 
     # 4) bağlam
     context = signals.load_context_signals(asof, tickers_of_interest=tickers)
@@ -56,6 +71,8 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
 
     # 6) sentez (LLM → fallback) + post-validasyon
     advisory = synthesis.build_advisory(pack, use_llm=use_llm and not dry_run)
+    if score_entry:
+        advisory["scorecard_prev"] = score_entry
     adv_path = context_pack.persist_advisory(advisory)
     print(f"   advisory: {adv_path} (mode={advisory['mode']})")
 
@@ -74,5 +91,6 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         send_telegram(msg)
         send_telegram_document(str(html_path))
     if publish_latest:
-        publish_advisory_latest(advisory)
+        publish_advisory_latest(advisory)   # bot /danis bunu okur
+        scorecard.update_scorecard(score_entry)
     return advisory

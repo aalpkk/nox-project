@@ -126,6 +126,10 @@ def handle_tool(name, input_data):
         return _tool_smart_money_score(input_data)
     elif name == "get_institutional_confirmation":
         return _tool_institutional_confirmation(input_data)
+    elif name == "get_portfolio":
+        return _tool_portfolio(input_data)
+    elif name == "get_validated_signals":
+        return _tool_validated_signals(input_data)
     else:
         return {"error": f"Bilinmeyen tool: {name}"}
 
@@ -1176,3 +1180,53 @@ def _tool_institutional_confirmation(input_data):
             for ice in sorted_results
         ],
     }
+
+
+# ── Portföy tool'ları (SALT-OKUNUR — yazma yalnızca bot komutlarından) ──
+
+def _tool_portfolio(input_data):
+    """Gerçek portföy kesiti: pozisyonlar + canlı PnL + risk (agent/advisor)."""
+    try:
+        from agent.advisor.portfolio import Portfolio
+        from agent.advisor import signals as adv_signals, guardrails
+
+        pf = Portfolio.load()
+        prices = adv_signals.fetch_prices(pf.tickers())
+        pre = guardrails.pre_check(pf.data, prices, [])
+        section = input_data.get("section", "")
+        out = {"source": pf.source, "rev": pf.rev,
+               "updated_at": pf.data.get("updated_at")}
+        if section in ("", "summary"):
+            out["summary"] = {k: pre[k] for k in
+                              ("equity_tl", "cash_tl", "invested_pct", "n_positions")}
+        if section in ("", "positions"):
+            out["positions"] = pre["positions"]
+        if section in ("", "risk"):
+            out["risk"] = pre["risk"]
+            out["settings"] = pf.data["settings"]
+        return out
+    except Exception as e:
+        return {"error": f"Portföy okunamadı: {e}"}
+
+
+def _tool_validated_signals(input_data):
+    """Doğrulanmış sinyal hatları (status + paper-track etiketli)."""
+    try:
+        from agent.advisor import signals as adv_signals
+        from agent.advisor import resolve_asof
+
+        asof = input_data.get("asof") or resolve_asof()
+        v = adv_signals.load_validated_signals(asof)
+        # kompakt: DE buy_rows zaten ticker-başına tek satır; watch listesi kısalt
+        de = v["decision_engine"]
+        return {
+            "asof": asof,
+            "decision_engine": {**de, "watch_rows": de["watch_rows"][:15]},
+            "tavan_lock": v["tavan_lock"],
+            "cluster3": {**v["cluster3"],
+                         "open_candidates": v["cluster3"]["open_candidates"][:20]},
+            "not": ("Tüm hatlar kağıt-doğrulamalı tek-rejim; status alanlarına dikkat "
+                    "(NO_DE_DAY/STALE/UNAVAILABLE)."),
+        }
+    except Exception as e:
+        return {"error": f"Sinyaller okunamadı: {e}"}
