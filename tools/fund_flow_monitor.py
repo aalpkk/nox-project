@@ -97,6 +97,25 @@ def _empty_df() -> pd.DataFrame:
 # keser. Fon basina son-N satiri ROW_NUMBER ile garanti alir, fonlari 300-satir
 # butcesine sigacak batch'lere boleriz (yoksa cok fonda sessiz fon dususu olur).
 _MCP_ROW_CAP = 300
+_MCP_RETRY = 3       # toplam deneme (429 dakikalik limit icin)
+_MCP_RETRY_WAIT = 65  # saniye — sunucu "1dk sonra dene" diyor
+
+
+def _call_veri_sorgula(cli, sql: str):
+    """429 (dakikalik istek limiti) durumunda bekleyip tekrar dener."""
+    import time
+    last = None
+    for k in range(_MCP_RETRY):
+        try:
+            return cli.call_tool("veri_sorgula", {"sql": sql, "purpose": "NOX fon akis izleme"})
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if "429" in str(e) and k < _MCP_RETRY - 1:
+                print(f"  ⏳ Fintables 429 (dakikalik limit) — {_MCP_RETRY_WAIT}s bekle, tekrar {k + 1}/{_MCP_RETRY - 1}")
+                time.sleep(_MCP_RETRY_WAIT)
+                continue
+            raise
+    raise last
 
 
 def fetch_fintables(codes: list, th: dict) -> pd.DataFrame:
@@ -128,7 +147,7 @@ def fetch_fintables(codes: list, th: dict) -> pd.DataFrame:
             f" FROM ranked WHERE rn <= {per_fund}"
             f" ORDER BY fon_kodu, tarih_europe_istanbul LIMIT {limit}"
         )
-        payload = cli.call_tool("veri_sorgula", {"sql": sql, "purpose": "NOX fon akis izleme"})
+        payload = _call_veri_sorgula(cli, sql)
         if not isinstance(payload, dict):
             raise RuntimeError(f"veri_sorgula beklenmeyen tip: {type(payload)}")
         for r in _parse_markdown_table(payload.get("table") or ""):
