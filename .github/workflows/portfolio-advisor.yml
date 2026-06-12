@@ -154,16 +154,19 @@ jobs:
       - name: Run advisor
         env:
           PYTHONUNBUFFERED: "1"
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # HİBRİT MOD: CI'da LLM YOK → deterministik garanti raporu ($0).
+          # Zengin sentez lokalde headless claude -p ile (scripts/advisor_local.sh).
+          # API sentezini geri açmak için: ANTHROPIC_API_KEY secret'ını env'e
+          # ekle ve run satırını --llm-mode auto yap.
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}            # private portföy repo (PAT, repo scope)
           NOX_PORTFOLIO_REPO: aalpkk/nox-private
           ASOF: ${{ steps.select_de.outputs.asof }}
         run: |
-          # LLM hatası advisor içinde fallback'e düşer (exit 0);
-          # exit != 0 yalnızca gerçek bug/portföy-okunamadı durumudur.
-          python -u -m agent.advisor --asof "$ASOF" --notify
+          # llm-mode none: CI raporu her zaman deterministik (korkuluk flag'leri,
+          # boyutlandırılmış adaylar). exit != 0 yalnızca gerçek bug.
+          python -u -m agent.advisor --asof "$ASOF" --llm-mode none --notify
 
       - name: Upload advisory artifact
         if: always()

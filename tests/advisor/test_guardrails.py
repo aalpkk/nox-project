@@ -152,3 +152,25 @@ class TestPostValidate:
         adv = guardrails.post_validate(raw, self._pack(pre))
         assert adv["buy_candidates"] == []
         assert adv["disclaimer_tr"]  # yapısal disclaimer her zaman var
+
+
+class TestExtractJson:
+    """synthesize_via_cli'nin serbest-metin JSON çıkarımı."""
+
+    def test_plain_json(self):
+        from agent.advisor.synthesis import _extract_json
+        assert _extract_json('{"a": 1}') == {"a": 1}
+
+    def test_code_fence(self):
+        from agent.advisor.synthesis import _extract_json
+        assert _extract_json('```json\n{"a": [1, 2]}\n```') == {"a": [1, 2]}
+
+    def test_surrounding_prose(self):
+        from agent.advisor.synthesis import _extract_json
+        out = _extract_json('İşte sonuç:\n{"a": {"b": "iç {süslü} ve \\" tırnak"}}\nbitti.')
+        assert out["a"]["b"] == 'iç {süslü} ve " tırnak'
+
+    def test_no_json_raises(self):
+        from agent.advisor.synthesis import _extract_json
+        with pytest.raises(ValueError):
+            _extract_json("hiç json yok burada")

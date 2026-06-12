@@ -38,6 +38,30 @@ zinciri (NO_DE_DAY dahil), `de-v1-watchlist-{asof}` artifact'ından asof türeti
 tavan lock JSON'ını stage'ler. LLM hatası → fallback raporu yine Telegram'a gider;
 job fail = gerçek bug. Dispatch ile manuel: asof boş bırakılırsa en son DE run'ı.
 
+## Sentez yolları (HİBRİT tasarım)
+
+`--llm-mode {auto,api,cli,none}`:
+- **CI = `none`**: her akşam deterministik garanti raporu, $0 (korkuluk flag'leri +
+  boyutlandırılmış adaylar). API'ye dönmek istersen workflow'a ANTHROPIC_API_KEY
+  ekleyip `--llm-mode auto` yap (Sonnet ~$2/ay).
+- **Lokal = `cli`**: headless `claude -p --model opus` — **API key'siz, abonelikten,
+  marjinal maliyet $0**. `synthesize_via_cli()`: pack stdin'den girer, salt-JSON
+  çıkar (`_extract_json` kod-bloğu/prose toleranslı); post_validate korkulukları
+  AYNEN geçerli (sayılar yine pack'ten damgalanır). Model: `NOX_ADVISOR_CLI_MODEL`
+  (vars: opus).
+- `auto`: ANTHROPIC_API_KEY varsa api, yoksa claude CLI varsa cli, o da yoksa none.
+
+Lokal akşam cron'u (launchd):
+```bash
+cp scripts/com.nox.advisor.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.nox.advisor.plist
+# kaldırmak: launchctl unload ~/Library/LaunchAgents/com.nox.advisor.plist
+```
+`scripts/advisor_local.sh`: en güncel DE artifact'ını indirir (gh token ile) →
+`run_advisor(llm_mode="cli", notify=True)` → log `logs/advisor_local.log`.
+Mac uykudaysa koşmaz — o akşam CI'nın deterministik raporu yine gelmiştir; iki
+rapor da geldiğinde zengin olan (lokal) `advisory_latest`'i ezer, `/danis` onu görür.
+
 ## Telegram bot komutları
 
 - `/portfoy` — pozisyonlar + canlı PnL + risk

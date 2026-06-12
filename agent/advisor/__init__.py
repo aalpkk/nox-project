@@ -20,7 +20,7 @@ def resolve_asof(asof=None):
 
 
 def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
-                portfolio_path=None, publish_latest=True):
+                portfolio_path=None, publish_latest=True, llm_mode="auto"):
     from agent.advisor import signals, guardrails, context_pack, synthesis, render, scorecard
     from agent.advisor.portfolio import Portfolio, publish_advisory_latest, fetch_advisory_latest
 
@@ -70,7 +70,8 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     print(f"   pack: {pack_path}")
 
     # 6) sentez (LLM → fallback) + post-validasyon
-    advisory = synthesis.build_advisory(pack, use_llm=use_llm and not dry_run)
+    advisory = synthesis.build_advisory(pack, use_llm=use_llm and not dry_run,
+                                        llm_mode=llm_mode)
     if score_entry:
         advisory["scorecard_prev"] = score_entry
     adv_path = context_pack.persist_advisory(advisory)

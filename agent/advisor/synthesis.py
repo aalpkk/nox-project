@@ -127,6 +127,77 @@ def synthesize(pack, model=None):
     return result
 
 
+def synthesize_via_cli(pack, model=None):
+    """Headless Claude Code (`claude -p`) ile sentez — API key'siz, abonelikle.
+
+    tool_choice zorlaması CLI'da yok → model SALT-JSON çıktıya yönlendirilir;
+    bozuk çıktı zaten post_validate'te yakalanır (auto-HOLD/restamp/drop).
+    """
+    import os
+    import shutil
+    import subprocess
+
+    binary = shutil.which("claude")
+    if not binary:
+        raise RuntimeError("claude CLI bulunamadı (PATH)")
+    use_model = model or os.environ.get("NOX_ADVISOR_CLI_MODEL", "opus")
+
+    prompt = (
+        SYSTEM_PROMPT_TR
+        + "\n\nContext pack aşağıda. Portföydeki HER pozisyon için tam bir öneri ver, "
+          "AL adaylarını seç ve genel değerlendirme yaz.\n\n"
+        + f"```json\n{json.dumps(_pack_for_llm(pack), ensure_ascii=False, default=str)}\n```\n\n"
+        + "ÇIKTI KURALI: YALNIZCA tek bir JSON nesnesi yaz (öncesinde/sonrasında metin, "
+          "açıklama veya kod bloğu işareti OLMASIN). Şema:\n"
+        + json.dumps(ADVISORY_TOOL["input_schema"], ensure_ascii=False)
+    )
+    # not: tool kısıtlamaya gerek yok — headless'ta izinsiz tool çağrıları
+    # zaten reddedilir, model düz yanıta döner; istenen salt-JSON üretimi
+    proc = subprocess.run(
+        [binary, "-p", "--model", use_model, "--output-format", "json"],
+        input=prompt, capture_output=True, text=True, timeout=600,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude -p hata ({proc.returncode}): {proc.stderr[:300]}")
+    envelope = json.loads(proc.stdout)
+    text = envelope.get("result", "") if isinstance(envelope, dict) else str(envelope)
+    result = _extract_json(text)
+    result["mode"] = "llm"
+    result["model"] = f"claude-code-cli/{use_model}"
+    result["generated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    return result
+
+
+def _extract_json(text):
+    """Serbest metinden ilk dengeli JSON nesnesini çıkar (kod-bloğu toleranslı)."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        text = text[4:] if text.startswith("json") else text
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("çıktıda JSON nesnesi yok")
+    depth = 0
+    in_str = False
+    esc = False
+    for i, ch in enumerate(text[start:], start):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+        elif ch == '"' and not esc:
+            in_str = not in_str
+        elif not in_str:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(text[start:i + 1])
+    raise ValueError("dengesiz JSON")
+
+
 def deterministic_fallback(pack):
     """LLM'siz kural-tabanlı advisory — korkuluk çıktıları aynen rapora döner."""
     pre = pack["pre_check"]
@@ -162,14 +233,36 @@ def deterministic_fallback(pack):
     }
 
 
-def build_advisory(pack, use_llm=True):
-    """Sentez + post-validasyon. LLM hatasında fallback — rapor her zaman çıkar."""
+def resolve_llm_mode(llm_mode="auto"):
+    """auto: API key varsa api, yoksa claude CLI varsa cli, o da yoksa none."""
+    import os
+    import shutil
+    if llm_mode != "auto":
+        return llm_mode
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "api"
+    if shutil.which("claude"):
+        return "cli"
+    return "none"
+
+
+def build_advisory(pack, use_llm=True, llm_mode="auto"):
+    """Sentez + post-validasyon. LLM hatasında fallback — rapor her zaman çıkar.
+
+    llm_mode: auto | api (Anthropic API) | cli (headless claude -p, abonelik) | none
+    """
     raw = None
-    if use_llm:
+    mode = resolve_llm_mode(llm_mode) if use_llm else "none"
+    if mode == "api":
         try:
             raw = synthesize(pack)
         except Exception as e:
-            print(f"⚠️ LLM sentez hatası — deterministik fallback: {e}")
+            print(f"⚠️ API sentez hatası — deterministik fallback: {e}")
+    elif mode == "cli":
+        try:
+            raw = synthesize_via_cli(pack)
+        except Exception as e:
+            print(f"⚠️ CLI sentez hatası — deterministik fallback: {e}")
     if raw is None:
         raw = deterministic_fallback(pack)
     return guardrails.post_validate(raw, pack)
