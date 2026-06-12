@@ -79,19 +79,20 @@ jobs:
           fi
           python tools/fund_flow_monitor.py $ARGS 2>&1 | tee fund_flow_output.txt
 
-      - name: Commit watchlist changes (add/remove only)
-        # Fintables gecmisi her calismada yeniden cektigi icin state CSV'si
-        # commit edilmez (repo churn yok). Sadece izleme listesi (add/remove)
-        # kalici olur.
-        if: ${{ github.event.inputs.add != '' || github.event.inputs.remove != '' }}
+      - name: Commit state + watchlist
+        # State CSV her calismada commit edilir: Fintables gecmisi burada
+        # birikir, boylece Fintables 429/expiry ile borsapy fallback'ine
+        # dusuldugunde gecmis hazir olur (isinma yok). add/remove watchlist'i
+        # de kalici kilar. Degisiklik yoksa commit atlanir.
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/fund_flow_monitor.json
+          git add output/fund_flow_monitor_state.csv data/fund_flow_monitor.json || true
           if git diff --cached --quiet; then
-            echo "Watchlist degismedi — commit atlaniyor."
+            echo "Degisiklik yok — commit atlaniyor."
           else
-            git commit -m "chore(fund-monitor): watchlist guncellendi"
+            git commit -m "chore(fund-monitor): state $(date -u +%Y-%m-%d)"
             git pull --rebase --autostash origin ${{ github.ref_name }} || true
             git push origin HEAD:${{ github.ref_name }}
           fi
