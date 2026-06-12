@@ -163,7 +163,9 @@ jobs:
           NOX_MODEL_ADVISOR: claude-opus-4-8
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}            # private portföy repo (PAT, repo scope)
+          # NOT: secrets.GH_TOKEN nox-private'a erişemiyor (ilk smoke'ta 404) —
+          # ayrı classic repo-scope PAT: NOX_PRIVATE_TOKEN (2026-06-13)
+          GH_TOKEN: ${{ secrets.NOX_PRIVATE_TOKEN }}   # private portföy repo
           NOX_PORTFOLIO_REPO: aalpkk/nox-private
           ASOF: ${{ steps.select_de.outputs.asof }}
         run: |
