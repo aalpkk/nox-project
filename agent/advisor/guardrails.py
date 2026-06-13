@@ -23,7 +23,8 @@ CAND_BLOCKED_NO_REFS = "BLOCKED_MISSING_REFS"
 CAND_ADD = "ADD"  # eldeki underweight pozisyona EXECUTABLE ekleme
 
 
-def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=None):
+def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=None,
+              panel_features=None, selection_weights=None):
     """Portföy flag'leri + boyutlandırılmış AL tablosu.
 
     pf_data: portföy şema v1 dict
@@ -38,6 +39,7 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=Non
     """
     context_hits = context_hits or {}
     hw_per_ticker = hw_per_ticker or {}
+    panel_features = panel_features or {}
     settings = pf_data["settings"]
     positions = [p for p in pf_data["positions"] if p["qty"] > 0]
     cash = float(pf_data["cash_tl"])
@@ -91,9 +93,29 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=Non
     base_risk_budget = equity * settings["per_trade_risk_pct"] / 100.0
     max_notional = equity * settings["max_position_pct"] / 100.0
 
+    # backtest-doğrulanmış seçim tilt'i için feature'ları rank-normalize et
+    # (ölçek-bağımsız; havuz-içi yüzdebirlik). selection_weights yoksa sezgisel.
+    _ranks = {}
+    if selection_weights and panel_features:
+        for feat in selection_weights:
+            vals = [(r["ticker"], panel_features.get(r["ticker"], {}).get(feat))
+                    for r in de_buy_rows]
+            present = sorted([(t, v) for t, v in vals if v is not None], key=lambda x: x[1])
+            n = len(present)
+            _ranks[feat] = {t: (i / (n - 1) if n > 1 else 0.5)
+                            for i, (t, _) in enumerate(present)}
+
     def _quality(row):
-        """Bileşik kalite: DE-içi konfluens (hücre, ağırlıklı) + çapraz-tarama
-        örtüşmesi (bağlam listeleri, 4'te kırpılır — tek liste enflasyonu önler)."""
+        """Aday-sıralama tilt'i. Backtest ağırlıkları varsa (advisor_selection_backtest
+        PROCEED) rank-normalize feature ağırlıklı toplamı; yoksa sezgisel konfluens.
+        cluster3 ASLA pozitif girmez (backtest: capture-negatif). Ranking-only,
+        tek-rejim öneri-niteliğinde — kapı değil, sizing risk-bazlı kalır."""
+        if selection_weights and _ranks:
+            score = 0.0
+            for feat, w in selection_weights.items():
+                score += w * _ranks.get(feat, {}).get(row["ticker"], 0.5)
+            return score
+        # fallback (backtest yok / NO_EDGE): sezgisel konfluens + bağlam
         n_cells = row.get("n_cells") or 1
         ctx = len(context_hits.get(row["ticker"], []))
         return n_cells * 2 + min(ctx, 4)
