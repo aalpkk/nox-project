@@ -19,6 +19,25 @@ def resolve_asof(asof=None):
     return datetime.datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
 
 
+def _log_context_membership(asof, context):
+    """Günün bağlam-tarayıcı üyeliğini parquet'e yaz (idempotent, asof başına 1)."""
+    import pandas as pd
+    from pathlib import Path
+    per = context.get("per_ticker") or {}
+    if not per:
+        return
+    out = Path("output/advisor/context_log")
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{asof}.parquet"
+    if path.exists():
+        return
+    rows = [{"asof": asof, "ticker": t, "scanner": s}
+            for t, scanners in per.items() for s in scanners]
+    if rows:
+        pd.DataFrame(rows).to_parquet(path, index=False)
+        print(f"   context-log: {len(rows)} üyelik → {path.name}")
+
+
 def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                 portfolio_path=None, publish_latest=True, llm_mode="auto"):
     from agent.advisor import signals, guardrails, context_pack, synthesis, render, scorecard
@@ -63,12 +82,29 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     context = signals.load_context_signals(asof, tickers_of_interest=tickers)
     macro = signals.load_macro()
 
+    # 4b) forward-log: bağlam tarayıcı üyeliğini günlük kaydet → ileride
+    #     (alsat dahil, replay-edilemeyenler için) kendi MFE/MAE backtest'i.
+    #     Geçmiş iddiası yok, paper-track veri biriktirme.
+    if not dry_run:
+        try:
+            _log_context_membership(asof, context)
+        except Exception as e:
+            print(f"   ⚠️ context forward-log atlandı: {e}")
+
     # 5) korkuluk ön-hesap + pack — bağlam örtüşmesi kabul SIRASINI güçlendirir;
-    #    HW dönüş betimsel pozisyon-rengi (SAT_OB yumuşak 'tepe' flag'i)
+    #    HW dönüş betimsel pozisyon-rengi (SAT_OB yumuşak 'tepe' flag'i);
+    #    backtest-doğrulanmış seçim ağırlıkları (PROCEED ise) sıralamayı yönetir
     hw = validated["hw_obos"]
+    sel_w = signals.load_selection_weights()
+    cand_tickers = [r["ticker"] for r in de["buy_rows"]]
+    panel_feats = signals.load_panel_features(asof, cand_tickers) if sel_w else {}
+    if sel_w:
+        print(f"   seçim ağırlıkları (backtest PROCEED): {sel_w} · "
+              f"panel-feature {len(panel_feats)}/{len(cand_tickers)} ticker")
     pre = guardrails.pre_check(pf.data, prices, de["buy_rows"],
                                context_hits=context.get("per_ticker", {}),
-                               hw_per_ticker=hw.get("per_ticker", {}))
+                               hw_per_ticker=hw.get("per_ticker", {}),
+                               panel_features=panel_feats, selection_weights=sel_w)
     pack = context_pack.build_context_pack(asof, pf, prices, validated, context, macro, pre)
     pack_path = context_pack.persist_pack(pack)
     print(f"   pack: {pack_path}")

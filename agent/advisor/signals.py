@@ -273,6 +273,58 @@ def load_hw_obos(asof, recency_days=15, sector_map_path=None):
     }
 
 
+# ── Backtest-doğrulanmış seçim feature'ları (panel join, ranking tilt) ──
+
+SELECTION_FEATURES = ["n_concurrent_sources", "n_concurrent_families",
+                      "event_multiplicity", "price_vs_20d_high"]
+
+
+def load_panel_features(asof, tickers):
+    """ranking_lab_features_v0 panelinden asof günü seçim-feature'ları (ticker bazında).
+    advisor_selection_backtest_v0 ağırlıklarıyla _quality tilt'i için. Yoksa boş."""
+    path = OUT_DIR / "ranking_lab_features_v0.parquet"
+    if not path.exists() or not tickers:
+        return {}
+    try:
+        cols = ["ticker", "signal_date"] + SELECTION_FEATURES
+        df = pd.read_parquet(path, columns=cols)
+        df = df[df["signal_date"] == pd.Timestamp(asof)]
+        if df.empty:  # asof paneldeyse boşsa en yakın önceki güne düş
+            df2 = pd.read_parquet(path, columns=cols)
+            df2 = df2[df2["signal_date"] <= pd.Timestamp(asof)]
+            if df2.empty:
+                return {}
+            last = df2["signal_date"].max()
+            df = df2[df2["signal_date"] == last]
+        tset = {t.upper() for t in tickers}
+        out = {}
+        for _, r in df.iterrows():
+            t = str(r["ticker"]).upper()
+            if t in tset:
+                # ticker başına en güçlü konfluens satırı
+                cand = {f: _f(r.get(f)) for f in SELECTION_FEATURES}
+                prev = out.get(t)
+                if prev is None or (cand.get("event_multiplicity") or 0) > \
+                        (prev.get("event_multiplicity") or 0):
+                    out[t] = cand
+        return out
+    except Exception as e:
+        print(f"⚠️ panel feature yükleme hatası: {e}")
+        return {}
+
+
+def load_selection_weights():
+    """Backtest verdict PROCEED ise ağırlıklar; NO_EDGE/yoksa None (sezgisel fallback)."""
+    path = OUT_DIR / "advisor_selection_backtest_v0_weights.json"
+    if not path.exists():
+        return None
+    try:
+        obj = json.loads(path.read_text())
+        return obj.get("weights") if obj.get("verdict") == "PROCEED_WEIGHTS" else None
+    except Exception:
+        return None
+
+
 def load_validated_signals(asof):
     return {
         "decision_engine": load_de_watchlist(asof),

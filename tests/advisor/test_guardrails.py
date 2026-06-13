@@ -229,3 +229,30 @@ class TestAdmissionOrder:
         pre = guardrails.pre_check(pf, {}, cands, context_hits=hits)
         by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
         assert by["AAAA"] == guardrails.CAND_OK            # eşitlikte alfabe öne aldı
+
+
+class TestSelectionWeights:
+    """Backtest ağırlıkları varsa rank-tilt; yoksa sezgisel fallback."""
+
+    def test_weighted_admission_order(self):
+        pf = _pf(cash=200_000.0, max_position_pct=100.0)
+        rows = [_cand(ticker="LOWP", entry=100.0, stop=99.0, n_cells=1),
+                _cand(ticker="HIGHP", entry=100.0, stop=99.0, n_cells=1)]
+        # HIGHP 20g-zirveye yakın (price_vs_20d_high yüksek) → öne geçmeli
+        feats = {"LOWP": {"price_vs_20d_high": -0.20, "n_concurrent_sources": 1,
+                          "n_concurrent_families": 1, "event_multiplicity": 1},
+                 "HIGHP": {"price_vs_20d_high": -0.01, "n_concurrent_sources": 1,
+                           "n_concurrent_families": 1, "event_multiplicity": 1}}
+        w = {"price_vs_20d_high": 0.4, "event_multiplicity": 0.27,
+             "n_concurrent_families": 0.21, "n_concurrent_sources": 0.12}
+        pre = guardrails.pre_check(pf, {}, rows, panel_features=feats, selection_weights=w)
+        order = [c["ticker"] for c in pre["buy_table"]]
+        assert order.index("HIGHP") < order.index("LOWP")  # zirveye yakın önce
+
+    def test_heuristic_fallback_when_no_weights(self):
+        pf = _pf(cash=200_000.0, max_position_pct=100.0)
+        rows = [_cand(ticker="A", entry=100.0, stop=99.0, n_cells=1),
+                _cand(ticker="B", entry=100.0, stop=99.0, n_cells=4)]
+        pre = guardrails.pre_check(pf, {}, rows)  # weights yok → sezgisel
+        order = [c["ticker"] for c in pre["buy_table"]]
+        assert order.index("B") < order.index("A")  # daha çok hücre önce
