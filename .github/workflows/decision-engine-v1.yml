@@ -643,7 +643,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
           GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
-        run: python tools/decision_engine_v1_watchlist_generator.py --asof-date ${{ steps.resolve.outputs.asof }} --publish
+        run: python tools/decision_engine_v1_watchlist_generator.py --asof-date ${{ steps.resolve.outputs.asof }}
 
       - name: Build NO_DE_DAY advisory manifest
         if: ${{ steps.stage6_verdict.outputs.data_condition == 'true' || steps.stage8_verdict.outputs.data_condition == 'true' }}
