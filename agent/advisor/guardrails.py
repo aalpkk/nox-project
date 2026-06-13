@@ -78,9 +78,18 @@ def pre_check(pf_data, prices, de_buy_rows):
     base_risk_budget = equity * settings["per_trade_risk_pct"] / 100.0
     max_notional = equity * settings["max_position_pct"] / 100.0
 
+    def _admission_key(row):
+        """Kabul sırası KALİTE-öncelikli (alfabe değil): EXECUTABLE önce,
+        sonra çok-hücre (konfluens) ↓, Trident Tier-1 önce, risk_atr ↑."""
+        return (0 if row["section"] == "EXECUTABLE" else 1,
+                -(row.get("n_cells") or 1),
+                0 if row.get("trident_tier1") else 1,
+                row.get("risk_atr") if row.get("risk_atr") is not None else 9e9,
+                row["ticker"])
+
     buy_table = []
-    # sıra: EXECUTABLE tam bütçe → SIZE_REDUCED yarım bütçe (signals.py sıralı verir)
-    for row in de_buy_rows:
+    # sıra: kalite-öncelikli; nakit/risk bütçesini en güçlü adaylar önce kullanır
+    for row in sorted(de_buy_rows, key=_admission_key):
         cand = dict(row)
         cand["suggested_qty"] = 0
         cand["risk_tl"] = 0.0
@@ -250,7 +259,9 @@ def post_validate(advisory, pack):
         "position_recommendations": clean_recs,
         "buy_candidates": clean_buys,
         "skipped_candidates": [
-            {"ticker": c["ticker"], "status": c["cand_status"], "note": c.get("note", "")}
+            {"ticker": c["ticker"], "status": c["cand_status"], "note": c.get("note", ""),
+             "section": c.get("section"), "n_cells": c.get("n_cells"),
+             "entry_ref": c.get("entry_ref"), "stop_ref": c.get("stop_ref")}
             for c in pre["buy_table"] if c["cand_status"] not in (CAND_OK, CAND_ADD)
         ],
         "risk_summary": pre["risk"],

@@ -69,8 +69,18 @@ def render_telegram_tr(advisory):
         lines.append("🟢 Bugün korkulukları geçen AL adayı yok.")
 
     if a.get("skipped_candidates"):
-        skipped = ", ".join(f"{s['ticker']}({s['status']})" for s in a["skipped_candidates"][:8])
-        lines.append(f"⛔ Elenen adaylar: {skipped}")
+        sk = a["skipped_candidates"]
+        # kalite sırasının başındaki (nakit/limit duvarına takılan) güçlü adaylar
+        strong = [s for s in sk if s.get("section") == "EXECUTABLE"][:5]
+        if strong:
+            lines.append("👀 <b>Nakit/limit duvarına takılan güçlü adaylar</b> "
+                         "<i>(boyut yok — bilgi)</i>")
+            for s in strong:
+                cell = f" ({s['n_cells']} hücre)" if (s.get("n_cells") or 1) > 1 else ""
+                refs = (f" giriş~{s['entry_ref']:.2f} stop~{s['stop_ref']:.2f}"
+                        if s.get("entry_ref") and s.get("stop_ref") else "")
+                lines.append(f"• {s['ticker']}{cell}{refs} — {s['status']}")
+        lines.append(f"⛔ Toplam elenen: {len(sk)} aday")
     lines.append("")
 
     if a.get("scorecard_prev"):

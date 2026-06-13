@@ -174,3 +174,34 @@ class TestExtractJson:
         from agent.advisor.synthesis import _extract_json
         with pytest.raises(ValueError):
             _extract_json("hiç json yok burada")
+
+
+class TestAdmissionOrder:
+    """Kabul sırası kalite-öncelikli — alfabe değil."""
+
+    def test_multicell_beats_alphabet(self):
+        # AAAA tek hücre, ZZZZ 3 hücre — nakit sadece BİRİNE yetiyor
+        pf = _pf(cash=60_000.0, max_position_pct=100.0)
+        cands = [_cand(ticker="AAAA", entry=100.0, stop=99.0, n_cells=1),
+                 _cand(ticker="ZZZZ", entry=100.0, stop=99.0, n_cells=3)]
+        pre = guardrails.pre_check(pf, {}, cands)
+        by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
+        assert by["ZZZZ"] == guardrails.CAND_OK          # konfluens kazandı
+        assert by["AAAA"] == guardrails.CAND_BLOCKED_CASH
+
+    def test_executable_still_beats_size_reduced(self):
+        pf = _pf(cash=60_000.0, max_position_pct=100.0)
+        cands = [_cand(ticker="AAAA", section="SIZE_REDUCED", entry=100.0, stop=99.0, n_cells=5),
+                 _cand(ticker="ZZZZ", section="EXECUTABLE", entry=100.0, stop=99.0, n_cells=1)]
+        pre = guardrails.pre_check(pf, {}, cands)
+        by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
+        assert by["ZZZZ"] == guardrails.CAND_OK          # section önceliği korunur
+        assert by["AAAA"] == guardrails.CAND_BLOCKED_CASH
+
+    def test_trident_tier1_tiebreak(self):
+        pf = _pf(cash=60_000.0, max_position_pct=100.0)
+        cands = [_cand(ticker="AAAA", entry=100.0, stop=99.0, n_cells=2, trident_tier1=False),
+                 _cand(ticker="ZZZZ", entry=100.0, stop=99.0, n_cells=2, trident_tier1=True)]
+        pre = guardrails.pre_check(pf, {}, cands)
+        by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
+        assert by["ZZZZ"] == guardrails.CAND_OK
