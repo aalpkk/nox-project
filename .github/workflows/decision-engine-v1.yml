@@ -57,55 +57,45 @@ jobs:
     # workflow_dispatch through unconditionally. Skips intraday cron firings
     # of master-data-pull (14:10/14:20/14:30 UTC) and any failed upstream.
     runs-on: ubuntu-latest
+    permissions:
+      actions: read  # gate downloads the upstream master-data-pull manifest
     outputs:
       proceed: ${{ steps.check.outputs.proceed }}
     steps:
-      - name: Evaluate trigger eligibility
+      - name: Evaluate trigger eligibility (close-mode master-data-pull only)
         id: check
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_ID: ${{ github.event.workflow_run.id }}
           UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          UPSTREAM_STARTED: ${{ github.event.workflow_run.run_started_at }}
-          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "[de-v1 gate] manual workflow_dispatch — proceeding"
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # workflow_run path. We have already filtered to branch=main via
-          # the `on.workflow_run.branches` trigger config; double-check here.
-          if [ "$UPSTREAM_BRANCH" != "main" ]; then
-            echo "[de-v1 gate] SKIP: upstream branch=$UPSTREAM_BRANCH (expected main)"
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+            echo "[de-v1 gate] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION (need main+success)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ "$UPSTREAM_CONCLUSION" != "success" ]; then
-            echo "[de-v1 gate] SKIP: upstream conclusion=$UPSTREAM_CONCLUSION (expected success)"
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          # Verify the TRIGGERING run is genuinely close-mode by its manifest, NOT by
+          # the start-hour heuristic: GitHub delays intraday cron pulls past 16:00 UTC,
+          # which slipped through the old hour>=16 check and then hard-failed at
+          # source-run selection (no close run yet) → 3-4 false failure mails per day.
+          tmp=$(mktemp -d)
+          if ! gh run download "$UPSTREAM_ID" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+            echo "[de-v1 gate] SKIP: upstream run $UPSTREAM_ID has no master-data-manifest artifact"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # master-data-pull cron UTC schedule:
-          #   14:10/14:20/14:30  → intraday_1700 (skip DE)
-          #   15:30              → intraday_1700 (skip DE — günlük tarama close'u)
-          #   16:00              → close         (proceed)
-          # workflow_dispatch firings on master-data-pull may happen at any
-          # hour; we proceed iff the run started at 16:00 UTC or later
-          # (close window). This is a wide tolerance for cron skew.
-          HOUR="${UPSTREAM_STARTED:11:2}"
-          echo "[de-v1 gate] upstream: event=$UPSTREAM_EVENT conclusion=$UPSTREAM_CONCLUSION started_at=$UPSTREAM_STARTED hour_utc=$HOUR"
-          if [ -z "$HOUR" ]; then
-            echo "[de-v1 gate] SKIP: could not parse hour from started_at='$UPSTREAM_STARTED'"
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$HOUR" -ge 16 ]; then
-            echo "[de-v1 gate] PROCEED: upstream is close-mode (hour=$HOUR UTC ≥ 16)"
+          ok=$(python -c "import json;m=json.load(open('$tmp/master_data_manifest.json'));print('yes' if m.get('mode')=='close' and m.get('verdict')=='PASS' and m.get('freshness_status')=='PASS' else 'no')")
+          if [ "$ok" = "yes" ]; then
+            echo "[de-v1 gate] PROCEED: upstream $UPSTREAM_ID is close-mode verdict=PASS freshness=PASS"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "[de-v1 gate] SKIP: upstream is intraday cron (hour=$HOUR UTC < 16); DE only chains close cron"
+            echo "[de-v1 gate] SKIP: upstream $UPSTREAM_ID not close-mode-PASS (intraday or non-PASS fire)"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -633,7 +623,15 @@ jobs:
 
       - name: Stage 9 — decision_engine_v1_watchlist_generator
         if: ${{ steps.stage6_verdict.outputs.data_condition == 'false' && steps.stage8_verdict.outputs.data_condition == 'false' }}
-        run: python tools/decision_engine_v1_watchlist_generator.py --asof-date ${{ steps.resolve.outputs.asof }}
+        env:
+          # Publish the HTML watchlist to the nox-signals GH Pages repo (same as
+          # the briefing). Cross-repo push needs the PAT (secrets.GH_TOKEN), NOT
+          # the per-repo default GITHUB_TOKEN. Absent secrets → generator no-ops
+          # (push_html_to_github returns None; md/csv/html still written).
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+          GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
+        run: python tools/decision_engine_v1_watchlist_generator.py --asof-date ${{ steps.resolve.outputs.asof }} --publish
 
       - name: Build NO_DE_DAY advisory manifest
         if: ${{ steps.stage6_verdict.outputs.data_condition == 'true' || steps.stage8_verdict.outputs.data_condition == 'true' }}
@@ -729,6 +727,7 @@ jobs:
           path: |
             output/decision_engine_v1_tomorrow_watchlist_post_class_b_${{ steps.resolve.outputs.asof }}.md
             output/decision_engine_v1_tomorrow_watchlist_post_class_b_${{ steps.resolve.outputs.asof }}.csv
+            output/decision_engine_v1_tomorrow_watchlist_post_class_b_${{ steps.resolve.outputs.asof }}.html
           if-no-files-found: warn
           retention-days: 30
 
