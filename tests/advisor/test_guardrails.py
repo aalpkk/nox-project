@@ -205,3 +205,27 @@ class TestAdmissionOrder:
         pre = guardrails.pre_check(pf, {}, cands)
         by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
         assert by["ZZZZ"] == guardrails.CAND_OK
+
+    def test_context_confluence_boosts_admission(self):
+        # AAAA: DE 2 hücre, bağlam yok (kalite 4) | ZZZZ: DE 1 hücre + 4 bağlam (kalite 6)
+        pf = _pf(cash=60_000.0, max_position_pct=100.0)
+        cands = [_cand(ticker="AAAA", entry=100.0, stop=99.0, n_cells=2),
+                 _cand(ticker="ZZZZ", entry=100.0, stop=99.0, n_cells=1)]
+        hits = {"ZZZZ": ["alsat", "nox_v3_weekly", "regime_transition", "sbt"]}
+        pre = guardrails.pre_check(pf, {}, cands, context_hits=hits)
+        by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
+        assert by["ZZZZ"] == guardrails.CAND_OK            # çapraz örtüşme kazandı
+        assert by["AAAA"] == guardrails.CAND_BLOCKED_CASH
+        z = next(c for c in pre["buy_table"] if c["ticker"] == "ZZZZ")
+        assert z["context_lists"] == hits["ZZZZ"]          # rapora akar
+
+    def test_context_capped_at_four(self):
+        # bağlam 4'te kırpılır: 2-hücre+0 bağlam (k=4) > 1-hücre+10 bağlam (k=6)? hayır 6>4
+        # ama 3-hücre (k=6) == 1-hücre+4bağlam (k=6) → tier/risk_atr/alfabe tie-break
+        pf = _pf(cash=60_000.0, max_position_pct=100.0)
+        cands = [_cand(ticker="AAAA", entry=100.0, stop=99.0, n_cells=3),
+                 _cand(ticker="ZZZZ", entry=100.0, stop=99.0, n_cells=1)]
+        hits = {"ZZZZ": [f"l{i}" for i in range(10)]}      # 10 liste → 4'e kırpılır
+        pre = guardrails.pre_check(pf, {}, cands, context_hits=hits)
+        by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
+        assert by["AAAA"] == guardrails.CAND_OK            # eşitlikte alfabe öne aldı
