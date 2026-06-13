@@ -139,9 +139,13 @@ def pre_check(pf_data, prices, de_buy_rows):
         buy_table.append(cand)
 
     invested = equity - cash
+    # BIST-kolu dışı varlıklar (bilgi — boyutlandırmaya GİRMEZ, LLM anlatı bağlamı)
+    other_assets = {k: pf_data[k] for k in
+                    ("cash_usd", "funds_tl", "pending_cash_tl") if pf_data.get(k)}
     return {
         "equity_tl": round(equity, 2),
         "cash_tl": round(cash, 2),
+        "other_assets": other_assets,
         "invested_pct": round(100.0 * invested / equity, 2),
         "n_positions": n_pos,
         "positions": pos_view,
