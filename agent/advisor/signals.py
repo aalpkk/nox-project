@@ -192,12 +192,94 @@ def load_sector_rotation(asof, stale_days=5):
                 "asof": asof, "note": str(e)}
 
 
+# ── HW OB/OS çoklu-TF dönüş taraması (BETİMSEL — AL tarafı backtest'te REDDEDİLDİ) ──
+
+VALIDATION_HW = ("betimsel çoklu-TF dönüş (hwo_mtf_v1 AL_OS backtest REDDEDİLDİ — "
+                 "rastgeleden kötü, rank 0.43; SAT_OB çıkış-uyarısı izinli ama "
+                 "doğrulanmamış) — edge YOK, yalnızca rejim-rengi/breadth")
+HW_TFS = ["5h", "1d", "1w", "1mo"]
+
+
+def load_hw_obos(asof, recency_days=15, sector_map_path=None):
+    """HW OB/OS çoklu-TF dönüş olaylarını oku → ticker bazında TF haritası +
+    sektör genişlik (breadth) toplaması. EDGE YOK: AL_OS selection-negative,
+    SAT_OB doğrulanmamış çıkış-uyarısı. Yalnızca betimsel bağlam."""
+    import glob
+
+    # asof'a en yakın tarama tarihini bul (TF başına aynı tarih kullanılır)
+    dates = set()
+    for tf in HW_TFS:
+        for p in glob.glob(str(OUT_DIR / f"hw_obos_{tf}_scan_*.csv")):
+            d = p.rsplit("_", 1)[-1].replace(".csv", "")
+            if d <= asof:
+                dates.add(d)
+    if not dates:
+        return {"status": "UNAVAILABLE", "validation": VALIDATION_HW, "asof": asof,
+                "per_ticker": {}, "sector_breadth": {}}
+    scan_date = max(dates)
+
+    asof_d = datetime.date.fromisoformat(asof)
+    cutoff = asof_d - datetime.timedelta(days=recency_days)
+    per_ticker = {}
+    for tf in HW_TFS:
+        path = OUT_DIR / f"hw_obos_{tf}_scan_{scan_date}.csv"
+        if not path.exists():
+            continue
+        df = pd.read_csv(path)
+        if df.empty:
+            continue
+        df["ts"] = pd.to_datetime(df["ts"]).dt.date
+        # (ticker) başına bu TF'deki EN SON olay; recency penceresi içindeyse al
+        for tkr, grp in df.groupby("ticker"):
+            r = grp.sort_values("ts").iloc[-1]
+            if r["ts"] < cutoff:
+                continue
+            slot = per_ticker.setdefault(str(tkr).upper(),
+                                         {"AL_OS": [], "SAT_OB": [], "last_ts": None})
+            kind = "AL_OS" if r["kind"] == "AL_OS" else "SAT_OB"
+            slot[kind].append(tf)
+            slot["last_ts"] = max(slot["last_ts"], r["ts"]) if slot["last_ts"] else r["ts"]
+
+    for slot in per_ticker.values():
+        if slot["last_ts"]:
+            slot["last_ts"] = slot["last_ts"].isoformat()
+
+    # sektör genişlik toplaması
+    breadth = {}
+    try:
+        smp = Path(sector_map_path) if sector_map_path else (OUT_DIR / "bist_sector_map.csv")
+        if smp.exists():
+            sm = pd.read_csv(smp)
+            sec = dict(zip(sm["ticker"].astype(str).str.upper(), sm["sektor_id"]))
+            for tkr, slot in per_ticker.items():
+                sid = sec.get(tkr)
+                if sid is None:
+                    continue
+                b = breadth.setdefault(int(sid), {"AL_OS": [], "SAT_OB": []})
+                if slot["AL_OS"]:
+                    b["AL_OS"].append(tkr)
+                if slot["SAT_OB"]:
+                    b["SAT_OB"].append(tkr)
+    except Exception:
+        pass
+
+    gap = (asof_d - datetime.date.fromisoformat(scan_date)).days
+    return {
+        "status": "OK" if gap <= 5 else "STALE",
+        "validation": VALIDATION_HW, "asof": asof, "scan_date": scan_date,
+        "per_ticker": per_ticker, "sector_breadth": breadth,
+        "n_al_os": sum(1 for s in per_ticker.values() if s["AL_OS"]),
+        "n_sat_ob": sum(1 for s in per_ticker.values() if s["SAT_OB"]),
+    }
+
+
 def load_validated_signals(asof):
     return {
         "decision_engine": load_de_watchlist(asof),
         "tavan_lock": load_tavan_lock(asof),
         "cluster3": load_cluster3(asof),
         "sector_rotation": load_sector_rotation(asof),
+        "hw_obos": load_hw_obos(asof),
     }
 
 

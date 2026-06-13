@@ -134,3 +134,46 @@ class TestSectorRotation:
             "2026-06-01T20:30:00,2026-06-01,13500.0,IDLE,False,IDLE,False,\n")
         block = signals.load_sector_rotation("2026-06-13")
         assert block["status"] == "STALE"
+
+
+class TestHwObos:
+    def _write(self, out_dir, tf, date, rows):
+        df = pd.DataFrame(rows, columns=["ticker","tf","ts","kind","hyperwave","signal","close","volume"])
+        df.to_csv(out_dir / f"hw_obos_{tf}_scan_{date}.csv", index=False)
+
+    def test_missing_unavailable(self, out_dir):
+        assert signals.load_hw_obos("2026-06-13")["status"] == "UNAVAILABLE"
+
+    def test_recency_filter_and_tf_map(self, out_dir):
+        # taze SAT_OB (3 gün önce) + bayat AL_OS (60 gün önce, elenmeli)
+        self._write(out_dir, "1w", "2026-06-12", [
+            ["BIMAS","1w","2026-06-10","SAT_OB",85,86,500,1e6],
+            ["ESKI","1w","2026-04-10","AL_OS",15,14,10,1e6]])
+        self._write(out_dir, "1d", "2026-06-12", [
+            ["BIMAS","1d","2026-06-11","SAT_OB",82,83,500,1e6]])
+        blk = signals.load_hw_obos("2026-06-13")
+        assert blk["status"] == "OK"
+        assert set(blk["per_ticker"]["BIMAS"]["SAT_OB"]) == {"1w","1d"}  # iki TF
+        assert "ESKI" not in blk["per_ticker"]                          # recency eledi
+        assert blk["n_sat_ob"] == 1 and blk["n_al_os"] == 0
+
+    def test_sector_breadth(self, out_dir):
+        (out_dir / "bist_sector_map.csv").write_text("ticker,sektor_id\nBIMAS,10\nMGROS,10\n")
+        self._write(out_dir, "1d", "2026-06-12", [
+            ["BIMAS","1d","2026-06-11","SAT_OB",82,83,500,1e6],
+            ["MGROS","1d","2026-06-11","SAT_OB",80,81,400,1e6]])
+        blk = signals.load_hw_obos("2026-06-13")
+        assert sorted(blk["sector_breadth"][10]["SAT_OB"]) == ["BIMAS","MGROS"]
+
+
+class TestHwSoftFlag:
+    def test_sat_ob_flags_position_without_forcing_sell(self):
+        from agent.advisor import guardrails
+        from agent.advisor.portfolio import empty_portfolio
+        d = empty_portfolio(); d["cash_tl"] = 100_000.0
+        d["positions"] = [{"ticker":"BIMAS","qty":100,"avg_cost":480.0,"stop":None,"target":None}]
+        pre = guardrails.pre_check(d, {"BIMAS": 500.0}, [],
+                                   hw_per_ticker={"BIMAS": {"AL_OS": [], "SAT_OB": ["1w","1mo"]}})
+        flags = pre["positions"][0]["flags"]
+        assert any(f.startswith("HW_ROLLING_OVER") for f in flags)
+        assert "STOP_VIOLATED" not in flags                              # forced-sell tetiklemez

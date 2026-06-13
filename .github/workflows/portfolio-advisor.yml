@@ -151,6 +151,25 @@ jobs:
           find /tmp/tavan_lock -name 'tavan_lock_scan_*.json' -exec cp {} output/ \; 2>/dev/null || true
           ls output/tavan_lock_scan_*.json 2>/dev/null || echo "(tavan lock JSON yok — UNAVAILABLE olarak işlenecek)"
 
+      - name: Download HW OB/OS artifact (betimsel dönüş taraması)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: hw-obos-scan.yml
+          branch: main
+          workflow_conclusion: success
+          name: hw-obos-.*
+          name_is_regexp: true
+          path: /tmp/hw_obos
+          if_no_artifact_found: warn
+
+      - name: Stage HW OB/OS CSVs
+        continue-on-error: true
+        run: |
+          mkdir -p output
+          find /tmp/hw_obos -name 'hw_obos_*_scan_*.csv' -exec cp {} output/ \; 2>/dev/null || true
+          ls output/hw_obos_*_scan_*.csv 2>/dev/null | head -4 || echo "(HW CSV yok — UNAVAILABLE)"
+
       - name: Run advisor
         env:
           PYTHONUNBUFFERED: "1"

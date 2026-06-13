@@ -48,6 +48,14 @@ def render_telegram_tr(advisory):
             lines.append(f"   ⚡ {rot['last_bank_ignition']}")
         lines.append("")
 
+    hw = a.get("hw_obos")
+    if hw:
+        stale = " (BAYAT)" if hw.get("status") == "STALE" else ""
+        lines.append(f"〰️ HW dönüş genişliği{stale} ({hw.get('scan_date')}): "
+                     f"↓{hw.get('n_sat_ob', 0)} tepe / ↑{hw.get('n_al_os', 0)} dip "
+                     f"<i>(betimsel, edge yok)</i>")
+        lines.append("")
+
     # pozisyonlar
     if a["position_recommendations"]:
         lines.append("📊 <b>Pozisyonlar</b>")
