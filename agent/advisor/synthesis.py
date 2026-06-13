@@ -90,7 +90,13 @@ KURALLAR (ihlal post-validasyonda düzeltilir, uğraşma):
    canlı kapı KAPALI) — tek başına AL/SAT gerekçesi OLAMAZ; XU100 dip-dönüş durum
    makinesi + fren durumunu rejim rengi olarak anlatıda kullan. BANK_IGNITION görürsen
    keşifsel desenini (banka bacağı söner; ~4-8 hafta endeks + küçük taraf lehte)
-   anlatıda ve banka-ağırlıklı pozisyon gerekçelerinde İHTİYATLA anabilirsin."""
+   anlatıda ve banka-ağırlıklı pozisyon gerekçelerinde İHTİYATLA anabilirsin.
+11. hw_obos BETİMSELDİR ve AL tarafı (AL_OS) backtest'te REDDEDİLDİ (rastgeleden kötü) —
+   bir hisseyi AL_OS dönüşü yüzünden ASLA önerme veya öne alma. Yalnızca iki dürüst
+   kullanım: (a) elde tutulan pozisyonun flag'inde HW_ROLLING_OVER (SAT_OB, çoklu-TF
+   tepe) varsa TRIM/SELL gerekçesine DESTEK olarak an (zorlayıcı değil, betimsel);
+   (b) piyasa-genişlik rengi — n_sat_ob >> n_al_os ise "piyasa geneli aşağı dönüşte"
+   gibi rejim yorumu. Edge iddiası YOK."""
 
 
 MAX_BLOCKED_FOR_LLM = 10   # bloklu adaylardan LLM'e giden örnek sayısı
@@ -100,6 +106,23 @@ _DROP_CAND_FIELDS = ("reason_codes",)  # uzun, karar LLM'in değil — token tas
 
 def _slim_cand(c):
     return {k: v for k, v in c.items() if k not in _DROP_CAND_FIELDS}
+
+
+def _slim_hw(hw):
+    """HW bloğunun LLM'e giden kompakt hâli — per_ticker pozisyon flag'lerinde
+    zaten yansıyor; burada piyasa-genişlik + en yoğun sektörler (sektor_id)."""
+    if hw.get("status") not in ("OK", "STALE"):
+        return {"status": hw.get("status"), "validation": hw.get("validation")}
+    breadth = hw.get("sector_breadth", {})
+    top_sat = sorted(breadth.items(), key=lambda kv: -len(kv[1]["SAT_OB"]))[:5]
+    top_al = sorted(breadth.items(), key=lambda kv: -len(kv[1]["AL_OS"]))[:5]
+    return {
+        "status": hw["status"], "validation": hw["validation"],
+        "scan_date": hw.get("scan_date"),
+        "n_al_os": hw.get("n_al_os"), "n_sat_ob": hw.get("n_sat_ob"),
+        "top_sat_ob_sectors": {str(k): len(v["SAT_OB"]) for k, v in top_sat if v["SAT_OB"]},
+        "top_al_os_sectors": {str(k): len(v["AL_OS"]) for k, v in top_al if v["AL_OS"]},
+    }
 
 
 def _pack_for_llm(pack):
@@ -140,6 +163,7 @@ def _pack_for_llm(pack):
             "cluster3": {**pack["validated_signals"]["cluster3"],
                          "open_candidates": pack["validated_signals"]["cluster3"]["open_candidates"][:20]},
             "sector_rotation": pack["validated_signals"]["sector_rotation"],
+            "hw_obos": _slim_hw(pack["validated_signals"]["hw_obos"]),
         },
         "context_signals": {"status": ctx["status"], "validation": ctx["validation"],
                             "summary": ctx.get("summary"), "per_ticker": ctx.get("per_ticker", {})},

@@ -18,6 +18,7 @@ def build_context_pack(asof, portfolio, prices, validated, context, macro, pre):
         "tavan_lock": validated["tavan_lock"]["status"],
         "cluster3": validated["cluster3"]["status"],
         "sector_rotation": validated["sector_rotation"]["status"],
+        "hw_obos": validated["hw_obos"]["status"],
         "context_scanners": context["status"],
         "macro": macro["status"],
         "prices": "OK" if prices else "UNAVAILABLE",

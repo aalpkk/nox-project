@@ -23,7 +23,7 @@ CAND_BLOCKED_NO_REFS = "BLOCKED_MISSING_REFS"
 CAND_ADD = "ADD"  # eldeki underweight pozisyona EXECUTABLE ekleme
 
 
-def pre_check(pf_data, prices, de_buy_rows, context_hits=None):
+def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=None):
     """Portföy flag'leri + boyutlandırılmış AL tablosu.
 
     pf_data: portföy şema v1 dict
@@ -32,8 +32,12 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None):
     context_hits: {ticker: [tarayıcı adları]} — bağlam taramaları (alsat/nox_v3/
         rt/sbt/...) örtüşmesi. DE kapısını AÇMAZ (doğrulanmış hat şartı korunur),
         yalnızca kabul SIRASINI güçlendirir + raporda görünür.
+    hw_per_ticker: {ticker: {AL_OS:[tf], SAT_OB:[tf]}} — HW çoklu-TF dönüş
+        (BETİMSEL, edge YOK). SAT_OB elde tutulanda YUMUŞAK 'tepe' flag'i
+        (SELL'e ZORLAMAZ — STOP_VIOLATED gibi değil); AL_OS hiçbir şey yapmaz.
     """
     context_hits = context_hits or {}
+    hw_per_ticker = hw_per_ticker or {}
     settings = pf_data["settings"]
     positions = [p for p in pf_data["positions"] if p["qty"] > 0]
     cash = float(pf_data["cash_tl"])
@@ -62,6 +66,11 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None):
             flags.append("OVERWEIGHT")
         if p.get("stop") and last is not None and last > p["stop"]:
             open_risk_tl += p["qty"] * (last - p["stop"])
+
+        # HW çoklu-TF dönüş (betimsel, YUMUŞAK — forced-SELL tetiklemez)
+        hw = hw_per_ticker.get(p["ticker"])
+        if hw and hw.get("SAT_OB"):
+            flags.append("HW_ROLLING_OVER:" + "/".join(hw["SAT_OB"]))
 
         pos_view.append({
             "ticker": p["ticker"], "qty": p["qty"], "avg_cost": p["avg_cost"],
@@ -184,6 +193,15 @@ def _rotation_summary(pack):
              "state_explore_confirm_off", "brake_explore", "last_bank_ignition")}
 
 
+def _hw_summary(pack):
+    """HW OB/OS piyasa-genişlik özeti (betimsel — edge yok)."""
+    hw = (pack.get("validated_signals") or {}).get("hw_obos") or {}
+    if hw.get("status") not in ("OK", "STALE"):
+        return None
+    return {"status": hw["status"], "scan_date": hw.get("scan_date"),
+            "n_al_os": hw.get("n_al_os"), "n_sat_ob": hw.get("n_sat_ob")}
+
+
 def post_validate(advisory, pack):
     """LLM çıktısını zorla hizala. Sayılar pack'ten yeniden damgalanır."""
     log = list(advisory.get("guardrail_log", []))
@@ -294,6 +312,7 @@ def post_validate(advisory, pack):
         ],
         "risk_summary": pre["risk"],
         "sector_rotation": _rotation_summary(pack),
+        "hw_obos": _hw_summary(pack),
         "guardrail_log": log,
         "narrative_tr": str(advisory.get("narrative_tr", ""))[:1500],
         "disclaimer_tr": ("Tüm birincil sinyal hatları kağıt-doğrulamalı ve tek-rejim "

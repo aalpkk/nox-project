@@ -63,9 +63,12 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     context = signals.load_context_signals(asof, tickers_of_interest=tickers)
     macro = signals.load_macro()
 
-    # 5) korkuluk ön-hesap + pack — bağlam örtüşmesi kabul SIRASINI güçlendirir
+    # 5) korkuluk ön-hesap + pack — bağlam örtüşmesi kabul SIRASINI güçlendirir;
+    #    HW dönüş betimsel pozisyon-rengi (SAT_OB yumuşak 'tepe' flag'i)
+    hw = validated["hw_obos"]
     pre = guardrails.pre_check(pf.data, prices, de["buy_rows"],
-                               context_hits=context.get("per_ticker", {}))
+                               context_hits=context.get("per_ticker", {}),
+                               hw_per_ticker=hw.get("per_ticker", {}))
     pack = context_pack.build_context_pack(asof, pf, prices, validated, context, macro, pre)
     pack_path = context_pack.persist_pack(pack)
     print(f"   pack: {pack_path}")
