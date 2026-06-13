@@ -23,13 +23,17 @@ CAND_BLOCKED_NO_REFS = "BLOCKED_MISSING_REFS"
 CAND_ADD = "ADD"  # eldeki underweight pozisyona EXECUTABLE ekleme
 
 
-def pre_check(pf_data, prices, de_buy_rows):
+def pre_check(pf_data, prices, de_buy_rows, context_hits=None):
     """Portföy flag'leri + boyutlandırılmış AL tablosu.
 
     pf_data: portföy şema v1 dict
     prices : {ticker: last_close}
     de_buy_rows: signals.load_de_watchlist()["buy_rows"]
+    context_hits: {ticker: [tarayıcı adları]} — bağlam taramaları (alsat/nox_v3/
+        rt/sbt/...) örtüşmesi. DE kapısını AÇMAZ (doğrulanmış hat şartı korunur),
+        yalnızca kabul SIRASINI güçlendirir + raporda görünür.
     """
+    context_hits = context_hits or {}
     settings = pf_data["settings"]
     positions = [p for p in pf_data["positions"] if p["qty"] > 0]
     cash = float(pf_data["cash_tl"])
@@ -78,11 +82,18 @@ def pre_check(pf_data, prices, de_buy_rows):
     base_risk_budget = equity * settings["per_trade_risk_pct"] / 100.0
     max_notional = equity * settings["max_position_pct"] / 100.0
 
+    def _quality(row):
+        """Bileşik kalite: DE-içi konfluens (hücre, ağırlıklı) + çapraz-tarama
+        örtüşmesi (bağlam listeleri, 4'te kırpılır — tek liste enflasyonu önler)."""
+        n_cells = row.get("n_cells") or 1
+        ctx = len(context_hits.get(row["ticker"], []))
+        return n_cells * 2 + min(ctx, 4)
+
     def _admission_key(row):
         """Kabul sırası KALİTE-öncelikli (alfabe değil): EXECUTABLE önce,
-        sonra çok-hücre (konfluens) ↓, Trident Tier-1 önce, risk_atr ↑."""
+        sonra bileşik kalite ↓, Trident Tier-1 önce, risk_atr ↑."""
         return (0 if row["section"] == "EXECUTABLE" else 1,
-                -(row.get("n_cells") or 1),
+                -_quality(row),
                 0 if row.get("trident_tier1") else 1,
                 row.get("risk_atr") if row.get("risk_atr") is not None else 9e9,
                 row["ticker"])
@@ -91,6 +102,7 @@ def pre_check(pf_data, prices, de_buy_rows):
     # sıra: kalite-öncelikli; nakit/risk bütçesini en güçlü adaylar önce kullanır
     for row in sorted(de_buy_rows, key=_admission_key):
         cand = dict(row)
+        cand["context_lists"] = context_hits.get(row["ticker"], [])
         cand["suggested_qty"] = 0
         cand["risk_tl"] = 0.0
         cand["notional_tl"] = 0.0
@@ -240,6 +252,7 @@ def post_validate(advisory, pack):
             "entry_ref": cand["entry_ref"], "stop_ref": cand["stop_ref"],
             "atr": cand.get("atr"), "risk_atr": cand.get("risk_atr"),
             "n_cells": cand.get("n_cells"), "families": cand.get("families"),
+            "context_lists": cand.get("context_lists", []),
             "suggested_qty": cand["suggested_qty"],
             "risk_tl": cand["risk_tl"], "notional_tl": cand["notional_tl"],
             "risk_pct_equity": cand.get("risk_pct_equity"),
@@ -265,6 +278,7 @@ def post_validate(advisory, pack):
         "skipped_candidates": [
             {"ticker": c["ticker"], "status": c["cand_status"], "note": c.get("note", ""),
              "section": c.get("section"), "n_cells": c.get("n_cells"),
+             "context_lists": c.get("context_lists", []),
              "entry_ref": c.get("entry_ref"), "stop_ref": c.get("stop_ref")}
             for c in pre["buy_table"] if c["cand_status"] not in (CAND_OK, CAND_ADD)
         ],

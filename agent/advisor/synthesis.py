@@ -72,7 +72,11 @@ KURALLAR (ihlal post-validasyonda düzeltilir, uğraşma):
    Seçmediğin OK satırı varsa nedenini narrative'de belirt.
 3. Her gerekçede dayandığın sinyalin doğrulama etiketini aynen tekrarla
    (örn. "paper-track (tek-rejim)"). context-only/keşifsel etiketli bir sinyal hiçbir zaman
-   birincil AL/SAT gerekçesi olamaz — yalnızca destekleyici renk.
+   birincil AL/SAT gerekçesi olamaz — yalnızca destekleyici renk. AMA: DE-kapılı bir adayın
+   context_lists alanı doluysa (alsat/nox_v3/rt/sbt örtüşmesi) bu meşru çapraz-tarama
+   konfluensidir — gerekçede MUTLAKA an ("DE + 3 bağlam listesi: trend+breakout") ve
+   eşit koşullarda örtüşmesi yükseği tercih et; kullanıcının tek tek göremediği örtüşmeyi
+   görünür kılmak senin işin.
 4. STOP_VIOLATED flag'li pozisyonda HOLD önerme; SELL veya gerekçeli TRIM.
 5. OVERWEIGHT flag'li pozisyonda TRIM'i ciddi değerlendir.
 6. Tavan lock pick'leri pozisyon BAĞLAMIDIR (sabah 11:00 anlık görüntüsü) — akşam AL adayı değil.

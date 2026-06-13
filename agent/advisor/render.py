@@ -58,10 +58,16 @@ def render_telegram_tr(advisory):
         lines.append("🟢 <b>AL Adayları</b> <i>(DE v1, paper-track tek-rejim)</i>")
         for b in a["buy_candidates"]:
             add_tag = " (EKLEME)" if b["action"] == "ADD" else ""
+            conf_bits = []
+            if (b.get("n_cells") or 1) > 1:
+                conf_bits.append(f"DE {b['n_cells']} hücre")
+            if b.get("context_lists"):
+                conf_bits.append("+" + ",".join(b["context_lists"][:5]))
+            conf_txt = f" · 🔗 {' '.join(conf_bits)}" if conf_bits else ""
             lines.append(
                 f"🟢 <b>{b['ticker']}</b>{add_tag} {b['section']} · "
                 f"{b['suggested_qty']} adet @ {b['entry_ref']:.2f} · "
-                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL"
+                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{conf_txt}"
             )
             if b["rationale_tr"]:
                 lines.append(f"   <i>{b['rationale_tr']}</i>")
@@ -77,9 +83,10 @@ def render_telegram_tr(advisory):
                          "<i>(boyut yok — bilgi)</i>")
             for s in strong:
                 cell = f" ({s['n_cells']} hücre)" if (s.get("n_cells") or 1) > 1 else ""
+                ctx = f" +{','.join(s['context_lists'][:4])}" if s.get("context_lists") else ""
                 refs = (f" giriş~{s['entry_ref']:.2f} stop~{s['stop_ref']:.2f}"
                         if s.get("entry_ref") and s.get("stop_ref") else "")
-                lines.append(f"• {s['ticker']}{cell}{refs} — {s['status']}")
+                lines.append(f"• {s['ticker']}{cell}{ctx}{refs} — {s['status']}")
         lines.append(f"⛔ Toplam elenen: {len(sk)} aday")
     lines.append("")
 
