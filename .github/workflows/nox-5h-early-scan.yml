@@ -47,6 +47,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           UPSTREAM_ID: ${{ github.event.workflow_run.id }}
           UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
