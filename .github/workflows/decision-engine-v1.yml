@@ -61,6 +61,7 @@ jobs:
       actions: read  # gate downloads the upstream master-data-pull manifest
     outputs:
       proceed: ${{ steps.check.outputs.proceed }}
+      asof: ${{ steps.check.outputs.asof }}
     steps:
       - name: Evaluate trigger eligibility (close-mode master-data-pull only)
         id: check
@@ -92,8 +93,13 @@ jobs:
           fi
           ok=$(python -c "import json;m=json.load(open('$tmp/master_data_manifest.json'));print('yes' if m.get('mode')=='close' and m.get('verdict')=='PASS' and m.get('freshness_status')=='PASS' else 'no')")
           if [ "$ok" = "yes" ]; then
-            echo "[de-v1 gate] PROCEED: upstream $UPSTREAM_ID is close-mode verdict=PASS freshness=PASS"
+            # Export the pull's operational_target_date so the resolve step uses it
+            # as asof (matches master-data-pull's weekend→Friday target; avoids the
+            # raw-today mismatch that fails source-run selection on weekend/holiday fires).
+            asof=$(python -c "import json;print(json.load(open('$tmp/master_data_manifest.json')).get('operational_target_date') or '')")
+            echo "[de-v1 gate] PROCEED: upstream $UPSTREAM_ID is close-mode verdict=PASS freshness=PASS asof=$asof"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "asof=$asof" >> "$GITHUB_OUTPUT"
           else
             echo "[de-v1 gate] SKIP: upstream $UPSTREAM_ID not close-mode-PASS (intraday or non-PASS fire)"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
@@ -129,7 +135,13 @@ jobs:
             MODE=close
           fi
           ASOF='${{ github.event.inputs.target_date }}'
-          if [ -z "$ASOF" ]; then
+          GATE_ASOF='${{ needs.gate.outputs.asof }}'
+          if [ -z "$ASOF" ] && [ -n "$GATE_ASOF" ]; then
+            # workflow_run: use the triggering close pull's operational_target_date
+            # (already weekend/holiday-adjusted by the orchestrator) so asof always
+            # matches a real master-data-pull target.
+            ASOF="$GATE_ASOF"
+          elif [ -z "$ASOF" ]; then
             ASOF=$(TZ=Europe/Istanbul date +%Y-%m-%d)
           fi
           # ISO-date format guard
