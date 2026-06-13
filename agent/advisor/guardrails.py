@@ -174,6 +174,16 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None):
     }
 
 
+def _rotation_summary(pack):
+    """Sektör-rotasyon monitörünün rapora giden kompakt özeti (rejim rengi)."""
+    rot = (pack.get("validated_signals") or {}).get("sector_rotation") or {}
+    if rot.get("status") not in ("OK", "STALE"):
+        return None
+    return {k: rot.get(k) for k in
+            ("status", "bar_date", "state_primary_confirm_on", "brake_primary",
+             "state_explore_confirm_off", "brake_explore", "last_bank_ignition")}
+
+
 def post_validate(advisory, pack):
     """LLM çıktısını zorla hizala. Sayılar pack'ten yeniden damgalanır."""
     log = list(advisory.get("guardrail_log", []))
@@ -283,6 +293,7 @@ def post_validate(advisory, pack):
             for c in pre["buy_table"] if c["cand_status"] not in (CAND_OK, CAND_ADD)
         ],
         "risk_summary": pre["risk"],
+        "sector_rotation": _rotation_summary(pack),
         "guardrail_log": log,
         "narrative_tr": str(advisory.get("narrative_tr", ""))[:1500],
         "disclaimer_tr": ("Tüm birincil sinyal hatları kağıt-doğrulamalı ve tek-rejim "

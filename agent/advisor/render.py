@@ -37,6 +37,17 @@ def render_telegram_tr(advisory):
                      ", ".join(f"{k}={v}" for k, v in bad.items()))
         lines.append("")
 
+    rot = a.get("sector_rotation")
+    if rot:
+        fren = "fren AÇIK ⛔" if (rot.get("brake_primary") or rot.get("brake_explore")) else "fren kapalı"
+        stale = " (BAYAT)" if rot.get("status") == "STALE" else ""
+        lines.append(f"🔄 Rotasyon monitörü{stale} ({rot.get('bar_date')}): "
+                     f"primer={rot.get('state_primary_confirm_on')} · "
+                     f"keşif={rot.get('state_explore_confirm_off')} · {fren} <i>(paper)</i>")
+        if rot.get("last_bank_ignition"):
+            lines.append(f"   ⚡ {rot['last_bank_ignition']}")
+        lines.append("")
+
     # pozisyonlar
     if a["position_recommendations"]:
         lines.append("📊 <b>Pozisyonlar</b>")

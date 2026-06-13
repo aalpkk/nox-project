@@ -151,11 +151,53 @@ def load_cluster3(asof, open_window_days=30, stale_days=7):
                 "note": str(e)}
 
 
+# ── Sektör rotasyon monitörü (PAPER-FORWARD — canlı kapı KAPALI) ──
+
+VALIDATION_ROTATION = ("paper-forward monitör (trade-sistemi era-fragile FAIL, canlı kapı "
+                       "KAPALI; rotasyon overlay'i 8y stabil; BANK_IGNITION keşifsel)")
+
+
+def load_sector_rotation(asof, stale_days=5):
+    """tools/sector_rotation_monitor_v0.py log'undan durum + son olaylar.
+
+    REJİM RENGİ: iki hücre durumu (PRIMARY confirm-ON / keşifsel confirm-OFF),
+    fren bayrakları, son BANK_IGNITION. AL kapısı DEĞİL."""
+    path = OUT_DIR / "sector_rotation_monitor_log.csv"
+    if not path.exists():
+        return {"status": "UNAVAILABLE", "validation": VALIDATION_ROTATION, "asof": asof}
+    try:
+        df = pd.read_csv(path)
+        last = df.iloc[-1]
+        bar = pd.to_datetime(last["bar_date"]).date()
+        gap = (datetime.date.fromisoformat(asof) - bar).days
+        status = "OK" if gap <= stale_days else "STALE"
+
+        events = [str(e) for e in df["new_events"].dropna().tail(15) if str(e).strip()]
+        ignition = next((e for e in reversed(events) if "BANK_IGNITION" in e), None)
+        return {
+            "status": status, "validation": VALIDATION_ROTATION, "asof": asof,
+            "bar_date": bar.isoformat(), "xu100": _f(last.get("xu100")),
+            "state_primary_confirm_on": str(last.get("state_on")),
+            "brake_primary": bool(last.get("brake_on")),
+            "state_explore_confirm_off": str(last.get("state_off")),
+            "brake_explore": bool(last.get("brake_off")),
+            "recent_events": events[-6:],
+            "last_bank_ignition": ignition,
+            "note": ("BANK_IGNITION sonrası tarihsel desen (keşifsel, pre-spec'siz): "
+                     "banka bacağı söner, ~4-8 hafta endeks + küçük taraf (XHARZ/XTUMY) "
+                     "lehte; sıçrayan bankayı kovalama"),
+        }
+    except Exception as e:
+        return {"status": "UNAVAILABLE", "validation": VALIDATION_ROTATION,
+                "asof": asof, "note": str(e)}
+
+
 def load_validated_signals(asof):
     return {
         "decision_engine": load_de_watchlist(asof),
         "tavan_lock": load_tavan_lock(asof),
         "cluster3": load_cluster3(asof),
+        "sector_rotation": load_sector_rotation(asof),
     }
 
 

@@ -85,7 +85,12 @@ KURALLAR (ihlal post-validasyonda düzeltilir, uğraşma):
 8. Türkçe yaz, kısa ve operasyonel ol.
 9. ÇIKTI DİSİPLİNİ: önce position_recommendations'ı yaz (her pozisyon için MUTLAKA bir
    kayıt), sonra buy_candidates, en son narrative. Her rationale_tr en fazla 1-2 cümle
-   (~200 karakter) — uzun gerekçe çıktının kesilmesine ve alan kaybına yol açar."""
+   (~200 karakter) — uzun gerekçe çıktının kesilmesine ve alan kaybına yol açar.
+10. sector_rotation bloğu PAPER-FORWARD monitördür (trade sistemi era-fragile FAIL,
+   canlı kapı KAPALI) — tek başına AL/SAT gerekçesi OLAMAZ; XU100 dip-dönüş durum
+   makinesi + fren durumunu rejim rengi olarak anlatıda kullan. BANK_IGNITION görürsen
+   keşifsel desenini (banka bacağı söner; ~4-8 hafta endeks + küçük taraf lehte)
+   anlatıda ve banka-ağırlıklı pozisyon gerekçelerinde İHTİYATLA anabilirsin."""
 
 
 MAX_BLOCKED_FOR_LLM = 10   # bloklu adaylardan LLM'e giden örnek sayısı
@@ -134,6 +139,7 @@ def _pack_for_llm(pack):
             "tavan_lock": pack["validated_signals"]["tavan_lock"],
             "cluster3": {**pack["validated_signals"]["cluster3"],
                          "open_candidates": pack["validated_signals"]["cluster3"]["open_candidates"][:20]},
+            "sector_rotation": pack["validated_signals"]["sector_rotation"],
         },
         "context_signals": {"status": ctx["status"], "validation": ctx["validation"],
                             "summary": ctx.get("summary"), "per_ticker": ctx.get("per_ticker", {})},
