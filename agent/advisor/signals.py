@@ -162,10 +162,20 @@ def load_validated_signals(asof):
 # ── Bağlam sinyalleri (context-only) ──
 
 def load_context_signals(asof, tickers_of_interest=None):
-    """Mevcut scanner_reader havuzu — yalnızca bağlam, AL gerekçesi olamaz."""
+    """Mevcut scanner_reader havuzu — yalnızca bağlam, AL gerekçesi olamaz.
+
+    Lokal CSV yoksa (CI/bot ortamı) GH Pages latest_signals.json fallback'i
+    (agent/tools._get_signals ile aynı desen; GH_PAGES_BASE_URL gerekir)."""
     try:
-        from agent.scanner_reader import get_latest_signals, summarize_signals
-        signals = get_latest_signals()
+        from agent.scanner_reader import (get_latest_signals, summarize_signals,
+                                          fetch_signals_from_url)
+        signals, _ = get_latest_signals()
+        if not signals:
+            signals, _ = fetch_signals_from_url()
+        if not signals:
+            return {"status": "UNAVAILABLE", "validation": VALIDATION_CONTEXT,
+                    "summary": None, "per_ticker": {},
+                    "note": "lokal CSV yok + GH Pages fallback boş"}
         summary = summarize_signals(signals)
         per_ticker = {}
         for tkr in (tickers_of_interest or []):
