@@ -1,0 +1,170 @@
+name: NOX 5h Early Scan (first 5h bar)
+
+# Mid-day MB/BB scan on the 5h timeframe. Fires when the 15:00 TR intraday
+# master-data-pull completes — i.e. just after the day's FIRST 5h bar
+# (10:00–15:00 TR) closes — giving an early read on the 5h timeframe ~3.5h
+# before the 18:30 close scan (mb-scanner-daily covers the full day at close).
+#
+# INTRADAY-gated on purpose: proceeds only for the intraday_1700 pull (the 15:00
+# slot), NOT the 18:30 close. Data via the shared extfeed master (single source).
+#
+# NOTE: descriptive scanner, partial-day (first 5h bar only). NOT live, no
+# trade-edge claim — an early-warning layer, not a replacement for the close scan.
+
+on:
+  workflow_run:
+    workflows: ["master data pull"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      asof:
+        description: 'As-of date YYYY-MM-DD (boş = bugün / pull target).'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nox-5h-early-scan
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Proceed only when the upstream master-data-pull is the INTRADAY (15:00) pull
+    # (mode=intraday_1700, PASS). Manual dispatch always proceeds. Manifest-checked
+    # (not start-hour) so a delayed/close fire can't mis-trigger the early scan.
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+      asof: ${{ steps.check.outputs.asof }}
+    steps:
+      - name: Gate — intraday-mode master-data-pull PASS only
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_ID: ${{ github.event.workflow_run.id }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "[5h-gate] manual workflow_dispatch — proceed"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+            echo "[5h-gate] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          tmp=$(mktemp -d)
+          if ! gh run download "$UPSTREAM_ID" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+            echo "[5h-gate] SKIP: upstream $UPSTREAM_ID has no master-data-manifest"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          ok=$(python -c "import json;m=json.load(open('$tmp/master_data_manifest.json'));print('yes' if m.get('mode')=='intraday_1700' and m.get('verdict')=='PASS' and m.get('freshness_status')=='PASS' else 'no')")
+          asof=$(python -c "import json;print(json.load(open('$tmp/master_data_manifest.json')).get('operational_target_date') or '')")
+          if [ "$ok" = "yes" ]; then
+            echo "[5h-gate] PROCEED: upstream $UPSTREAM_ID is intraday_1700 PASS asof=$asof"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "asof=$asof" >> "$GITHUB_OUTPUT"
+          else
+            echo "[5h-gate] SKIP: upstream $UPSTREAM_ID not intraday_1700-PASS (close or non-PASS fire)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  scan:
+    needs: [gate]
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve as-of date
+        id: r
+        run: |
+          set -euo pipefail
+          ASOF='${{ github.event.inputs.asof }}'
+          [ -z "$ASOF" ] && ASOF='${{ needs.gate.outputs.asof }}'
+          [ -z "$ASOF" ] && ASOF=$(TZ=Europe/Istanbul date +%Y-%m-%d)
+          echo "asof=$ASOF" >> "$GITHUB_OUTPUT"
+          echo "5h early scan as-of: $ASOF (first 5h bar, 15:00 TR)"
+
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run mb_scanner (5h families, first 5h bar @15:00)
+        run: |
+          set -o pipefail
+          python tools/mb_scanner_run.py \
+            --asof "${{ steps.r.outputs.asof }} 15:00" \
+            --families mb_5h bb_5h \
+            2>&1 | tee mb5h_run.txt | tail -40
+
+      - name: Telegram notification (5h early)
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python - <<'PYEOF'
+          import os, sys, html as h, requests
+          sys.path.insert(0, os.getcwd())
+          asof = "${{ steps.r.outputs.asof }}"
+          lines, tot = [], 0
+          try:
+              from mb_scanner.rank import rank_family, build_cross_tf_index
+              cross = build_cross_tf_index()
+              for fam in ("mb_5h", "bb_5h"):
+                  df = rank_family(fam, cross)
+                  if df is None or df.empty:
+                      continue
+                  tot += len(df)
+                  rb = df[df["signal_state"] == "retest_bounce"].head(3)
+                  for _, r in rb.iterrows():
+                      lines.append(f"  🟡 <b>{h.escape(str(r['ticker']))}</b> · {fam} · score {r['score']:.2f}")
+              head = f"⏱ <b>5h Erken Tarama</b> · {asof} (ilk 5h bar)\n\nmb_5h + bb_5h aktif setup: <b>{tot}</b>"
+          except Exception as e:
+              head = f"⏱ <b>5h Erken Tarama</b> · {asof}\n(rank read err: {e})"
+          body = [head]
+          if lines:
+              body += ["", "Top retest_bounce (taze reclaim):"] + lines[:8]
+          body += ["", "⚠️ Descriptive · partial-day (ilk 5h bar) · NOT live · trade-edge iddiası YOK"]
+          msg = "\n".join(body)
+          token, chat = os.environ.get("TG_BOT_TOKEN", ""), os.environ.get("TG_CHAT_ID", "")
+          if token and chat:
+              r = requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat, "text": msg[:4096], "parse_mode": "HTML",
+                        "disable_web_page_preview": True},
+              )
+              print(f"  Telegram: {r.status_code}")
+          else:
+              print("  ℹ TG creds yok, mesaj:"); print(msg)
+          PYEOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nox-5h-early-${{ steps.r.outputs.asof }}-${{ github.run_number }}
+          path: |
+            mb5h_run.txt
+            output/mb_scanner_*5h*.parquet
+            output/mb_scanner_rank_*5h*.parquet
+          if-no-files-found: warn
+          retention-days: 7
