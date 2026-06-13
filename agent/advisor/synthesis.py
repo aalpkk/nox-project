@@ -118,6 +118,8 @@ def _pack_for_llm(pack):
         "portfolio": {
             "summary": {k: pack["pre_check"][k] for k in
                         ("equity_tl", "cash_tl", "invested_pct", "n_positions")},
+            # BIST-kolu dışı varlıklar: SADECE anlatı bağlamı, boyutlandırmaya girmez
+            "other_assets": pack["pre_check"].get("other_assets", {}),
             "risk": pack["pre_check"]["risk"],
             "positions": pack["pre_check"]["positions"],
         },
