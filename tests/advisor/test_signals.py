@@ -109,3 +109,28 @@ class TestOtherLoaders:
         assert block["realized_hit_rate"] == 1.0
         assert len(block["open_candidates"]) == 1        # sadece SANFM açık
         assert block["open_candidates"][0]["ticker"] == "SANFM"
+
+
+class TestSectorRotation:
+    def test_missing_unavailable(self, out_dir):
+        block = signals.load_sector_rotation("2026-06-13")
+        assert block["status"] == "UNAVAILABLE"
+
+    def test_fresh_ok_with_ignition(self, out_dir):
+        (out_dir / "sector_rotation_monitor_log.csv").write_text(
+            "run_ts,bar_date,xu100,state_on,brake_on,state_off,brake_off,new_events\n"
+            "2026-06-10T20:30:00,2026-06-10,13800.0,ARMED,False,IN_TRADE,False,\n"
+            "2026-06-12T20:30:00,2026-06-11,13938.48,ARMED,False,IN_TRADE,False,"
+            "\"[bilgi] 2026-06-11 BANK_IGNITION — XBANK 1g rel +6.4pp\"\n")
+        block = signals.load_sector_rotation("2026-06-13")
+        assert block["status"] == "OK"
+        assert block["state_primary_confirm_on"] == "ARMED"
+        assert block["brake_primary"] is False
+        assert "BANK_IGNITION" in (block["last_bank_ignition"] or "")
+
+    def test_stale(self, out_dir):
+        (out_dir / "sector_rotation_monitor_log.csv").write_text(
+            "run_ts,bar_date,xu100,state_on,brake_on,state_off,brake_off,new_events\n"
+            "2026-06-01T20:30:00,2026-06-01,13500.0,IDLE,False,IDLE,False,\n")
+        block = signals.load_sector_rotation("2026-06-13")
+        assert block["status"] == "STALE"
