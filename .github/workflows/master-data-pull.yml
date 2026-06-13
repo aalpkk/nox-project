@@ -1,32 +1,28 @@
 name: master data pull
 
 concurrency:
-  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || (github.event.schedule == '0 16 * * 1-5' && 'close' || 'intraday_1700') }}
+  group: master-data-pull-${{ github.ref }}-${{ github.event.inputs.mode || (github.event.schedule == '30 15 * * 1-5' && 'close' || 'intraday_1700') }}
   cancel-in-progress: false
 
 on:
-  # İki tür scheduled fire (mod schedule cron string'inden çözülür):
+  # İki scheduled fire (mod schedule cron string'inden çözülür). TÜM veri artık
+  # extfeed'den: close modu fintables API'sini ÇEKMEZ — rebuild_dataset_delta
+  # --source extfeed günlük EOD'yi extfeed'den türetir; fintables master yalnızca
+  # statik 10y BASE'tir (extfeed delta'sıyla uzar). Bu yüzden 19:00 "fintables
+  # yayını" timing'ine gerek kalmadı → close 18:30'a alındı (extfeed'in 18:00
+  # kapanış barı + kapanış-auction ~18:15'te kesinleşir; xu100 günlüğü de o an hazır).
+  # Eski 17:10/17:20/17:30 + 19:00 slotları kaldırıldı (SBT/scanner/screener hepsi
+  # 18:30 close'a bağlanır; 5h tarama için gün-ortası 15:00 intraday eklendi).
   #
-  # intraday_1700 (extfeed only) — 17:10/17:20/17:30 + 18:30 TR slotları.
-  #   17:10-17:30: SBT-1700 tüketicisi için (16:00–17:00 barı 17:00 TR'de
-  #   kapanır, extfeed 14:00 UTC barını yayınlar). 18:30: BIST 18:00
-  #   kapanışından SONRA günün SON 1h barını (18:00 kapanış) yakalar →
-  #   günlük BIST taramaları (regime/divergence/weekly/smart-breakout)
-  #   post-kapanış çalıştırmalarında bunun tam-gün extfeed'ini tüketir.
-  #   fintables/xu100 token bağımlılığı YOK.
-  #
-  # close (extfeed + fintables + xu100) — 19:00 TR tek slot. BIST 18:00
-  #   kapanışından sonra fintables + xu100 günlük kapanışları yayınlanınca
-  #   çekilir. decision-engine-v1 + mb-scanner/hw-obos/horizontal-base/
-  #   triangle-break/sbt1700-refresh (mode==close tüketicileri) buna bağlı.
+  # intraday_1700 (extfeed only) — 15:00 TR gün-ortası (ilk 5h bar tarama hazırlığı).
+  # close (extfeed + xu100 + EOD delta) — 18:30 TR günün tam kapanışı; TÜM tüketiciler
+  #   (decision-engine-v1 + horizontal-base/hw-obos/mb/triangle-break scanner'ları +
+  #   nox screener'ları + sbt1700-refresh) buna bağlı.
   #
   # Concurrency group modu serialize eder; delta_pull idempotent.
   schedule:
-    - cron: '10 14 * * 1-5'   # 17:10 TR  intraday_1700
-    - cron: '20 14 * * 1-5'   # 17:20 TR  intraday_1700
-    - cron: '30 14 * * 1-5'   # 17:30 TR  intraday_1700
-    - cron: '30 15 * * 1-5'   # 18:30 TR  intraday_1700 (günün tam kapanışı; günlük taramalar)
-    - cron: '0 16 * * 1-5'    # 19:00 TR  close (fintables+xu100; DE v1 + close tüketicileri)
+    - cron: '0 12 * * 1-5'    # 15:00 TR  intraday_1700 (gün-ortası; 5h bar tarama hazırlığı)
+    - cron: '30 15 * * 1-5'   # 18:30 TR  close (extfeed+xu100+EOD delta — TÜM tüketiciler)
   workflow_dispatch:
     inputs:
       mode:
@@ -66,11 +62,11 @@ jobs:
           set -euo pipefail
           MODE='${{ github.event.inputs.mode }}'
           # workflow_dispatch sets MODE; cron fires leave it empty. On cron,
-          # resolve from the schedule string: '0 16 * * 1-5' (19:00 TR) → close,
-          # all others (14:xx + 15:30) → intraday_1700.
+          # resolve from the schedule string: '30 15 * * 1-5' (18:30 TR) → close,
+          # '0 12 * * 1-5' (15:00 TR) → intraday_1700.
           if [ -z "$MODE" ]; then
             case '${{ github.event.schedule }}' in
-              '0 16 * * 1-5')
+              '30 15 * * 1-5')
                 MODE=close
                 ;;
               *)
