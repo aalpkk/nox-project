@@ -229,3 +229,14 @@ class TestAdmissionOrder:
         pre = guardrails.pre_check(pf, {}, cands, context_hits=hits)
         by = {c["ticker"]: c["cand_status"] for c in pre["buy_table"]}
         assert by["AAAA"] == guardrails.CAND_OK            # eşitlikte alfabe öne aldı
+
+
+class TestTridentPrimary:
+    def test_trident_beats_confluence(self):
+        # A: trident yok, 4 hücre konfluens | B: trident var, 1 hücre
+        pf = _pf(cash=200_000.0, max_position_pct=100.0)
+        rows = [_cand(ticker="ACONF", entry=100.0, stop=99.0, n_cells=4, trident_tier1=False),
+                _cand(ticker="ZTRID", entry=100.0, stop=99.0, n_cells=1, trident_tier1=True)]
+        pre = guardrails.pre_check(pf, {}, rows)
+        order = [c["ticker"] for c in pre["buy_table"]]
+        assert order.index("ZTRID") < order.index("ACONF")  # trident birincil

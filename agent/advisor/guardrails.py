@@ -99,11 +99,15 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=Non
         return n_cells * 2 + min(ctx, 4)
 
     def _admission_key(row):
-        """Kabul sırası KALİTE-öncelikli (alfabe değil): EXECUTABLE önce,
-        sonra bileşik kalite ↓, Trident Tier-1 önce, risk_atr ↑."""
+        """Kabul sırası: EXECUTABLE → TRIDENT TIER-1 (BİRİNCİL) → konfluens → risk_atr.
+        Sinyal-kombinasyon backtest'i (signal_combination_mfemae_v0): trident_tier1
+        temiz-koşucu %28.3 (+6.7 lift, breakout'la +12) — havuzdaki TEK güçlü ayrıştıran;
+        diğer her konfluens ≤+1.6 ya da negatif. Bu yüzden trident konfluensten ÖNCE
+        birincil ayırıcı (önceden tiebreaker'dı). MFE+MAE fırsat profili, capture yok,
+        tek-rejim öneri-nitelikli — kapı değil, sizing risk-bazlı."""
         return (0 if row["section"] == "EXECUTABLE" else 1,
-                -_quality(row),
-                0 if row.get("trident_tier1") else 1,
+                0 if row.get("trident_tier1") else 1,   # BİRİNCİL (backtest)
+                -_quality(row),                          # konfluens ikincil
                 row.get("risk_atr") if row.get("risk_atr") is not None else 9e9,
                 row["ticker"])
 
