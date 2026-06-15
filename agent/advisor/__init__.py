@@ -172,9 +172,10 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         print(f"   sektör rotasyon eşleme HATA: {e}")
         advisory["rotation_picks"] = {}
 
-    # 6d) XU100 RDP rejimi (long/flat/short) + geniş makro snapshot — BİLGİ
+    # 6d) XU100 RDP rejimi (long/flat/short) + geniş makro snapshot + tavan lock — BİLGİ
     advisory["xu100_rdp"] = signals.load_xu100_rdp(asof)
     advisory["macro_snapshot"] = (macro or {}).get("snapshot", [])
+    advisory["tavan_lock"] = validated.get("tavan_lock", {})  # sabah 11:00 lock pick'leri (pozisyon bağlamı)
     rdp = advisory["xu100_rdp"]
     print(f"   XU100 RDP: {rdp.get('regime')} ({rdp.get('date')}, {rdp.get('status')})"
           f"{' ⚠️SAT/risk-off' if rdp.get('is_sell') else ''}")
