@@ -155,7 +155,7 @@ jobs:
           path: output/
           if_no_artifact_found: warn
 
-      - name: Download tavan-scan-live artifact (kullanıcı: lock yerine canlı tarama)
+      - name: Download tavan-scan-live artifact (lock yerine canli tarama)
         continue-on-error: true
         uses: dawidd6/action-download-artifact@v6
         with:
