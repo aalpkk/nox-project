@@ -731,6 +731,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # mb_scanner_events parquet'leri (Stage 1 ürünü) — portfolio-advisor
+      # ÇAPRAZ-TF haftalık-lider çakışması + trident G3(BoS) için okur.
+      # Repoya commit edilmiyor → advisor ayrı temiz-checkout workflow'da
+      # erişemez; artifact olarak taşınır (mb 5h/1d/1w + bb_1d, ~25MB).
+      - name: Upload mb_scanner events (advisor çapraz-TF için)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-mb-scanner-${{ steps.resolve.outputs.asof }}
+          path: |
+            output/mb_scanner_events_mb_5h.parquet
+            output/mb_scanner_events_mb_1d.parquet
+            output/mb_scanner_events_mb_1w.parquet
+            output/mb_scanner_events_bb_1d.parquet
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Upload watchlist
         if: always()
         uses: actions/upload-artifact@v4
