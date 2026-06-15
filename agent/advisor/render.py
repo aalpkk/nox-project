@@ -23,6 +23,14 @@ def _tv(ticker):
             f'href="https://www.tradingview.com/chart/?symbol=BIST:{t}">{t}</a>')
 
 
+def _sec(title, body, sub="", open=True):
+    """HTML bölümünü açılır-kapanır <details> dropdown olarak sar (kullanıcı isteği)."""
+    op = " open" if open else ""
+    subh = f" <span class='sec-sub'>{sub}</span>" if sub else ""
+    return (f"<details class='sec-d'{op}><summary>{title}{subh}</summary>"
+            f"<div class='sec-body'>{body}</div></details>")
+
+
 _MACRO_CAT_ORDER = ["BIST", "US", "Kripto", "Emtia", "FX", "Faiz"]
 
 
@@ -181,6 +189,17 @@ def render_telegram_tr(advisory):
         lines.append(f"〰️ HW dönüş genişliği{stale} ({hw.get('scan_date')}): "
                      f"↓{hw.get('n_sat_ob', 0)} tepe / ↑{hw.get('n_al_os', 0)} dip "
                      f"<i>(betimsel, edge yok)</i>")
+        lines.append("")
+
+    # Tavan V1 lock pick'leri (sabah 11:00 — pozisyon bağlamı, AL adayı DEĞİL)
+    tv = a.get("tavan_lock") or {}
+    if tv.get("status") == "OK" and (tv.get("picks") or []):
+        tks = []
+        for p in (tv["picks"] or [])[:10]:
+            t = p.get("ticker") or p.get("symbol") or "?"
+            mls = p.get("ml_s") or p.get("score")
+            tks.append(f"{t}{f'({mls:.2f})' if isinstance(mls,(int,float)) else ''}")
+        lines.append("🔒 <b>Tavan V1 lock</b> <i>(11:00 paper, pozisyon bağlamı)</i>: " + ", ".join(tks))
         lines.append("")
 
     # pozisyonlar
@@ -481,9 +500,8 @@ def render_html(advisory):
     # "Makro & Rejim" bölümü: RDP/sektör/hw paragrafları VEYA makro tablosu varsa render et
     macro_html = ""
     if rdp_html or rot_html or hw_html or macro_table:
-        macro_html = (
-            "<h2 class='sec'>🌍 Makro & Rejim <span class='sec-sub'>trend + dipten/tepeden dönüş · bilgi</span></h2>"
-            f"{rdp_html}{rot_html}{hw_html}{macro_table}")
+        macro_html = _sec("🌍 Makro & Rejim", f"{rdp_html}{rot_html}{hw_html}{macro_table}",
+                          sub="trend + dipten/tepeden dönüş · bilgi")
 
     # haftalık-lider çakışma (aday-dışı) — HTML bölümü (NOX temalı)
     wlw = a.get("weekly_lead_watch") or []
@@ -494,23 +512,54 @@ def render_html(advisory):
             f"<tr><td><b>{_tv(w['ticker'])}</b></td>"
             f"<td><span class='tag tag-w'>1w</span> + {'+'.join(w.get('tf') or [])}</td></tr>"
             for w in wlw)
-        weekly_lead_html = (
-            f"<h2 class='sec'>📐 Haftalık-lider çakışma <span class='sec-sub'>aday-dışı · bilgi</span></h2>"
+        weekly_lead_html = _sec(
+            "📐 Haftalık-lider çakışma",
             f"<p class='note'>Son kapanmış haftalık barda (<b>{bar}</b>) <code>mb_1w above_mb_birth</code> + "
             f"aynı hafta günlük/5h <code>above_mb_birth</code>. DE adayı DEĞİL — çapraz-TF yapı hizalanması.</p>"
             f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Çakışan TF</th></tr></thead>"
-            f"<tbody>{wl_rows}</tbody></table></div>")
+            f"<tbody>{wl_rows}</tbody></table></div>",
+            sub="aday-dışı · bilgi")
 
     takas_html = ""
     if takas_banner or takas_rows:
         n_al = tk.get("n_alerts", 0)
-        takas_html = (f"<h2 class='sec'>Takas / AKD <span class='sec-sub'>Matriks"
-                      f"{' · '+str(n_al)+' alarm' if n_al else ''}</span></h2>{takas_banner}")
+        tk_body = takas_banner
         if takas_rows:
-            takas_html += ("<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th>"
-                           "<th>Key kurum (G/3A)</th><th>Bugün alıcı</th><th>Bugün satıcı</th>"
-                           "<th>ICE (3g)</th><th>Alarm</th></tr></thead><tbody>"
-                           + takas_rows + "</tbody></table></div>")
+            tk_body += ("<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th>"
+                        "<th>Key kurum (G/3A)</th><th>Bugün alıcı</th><th>Bugün satıcı</th>"
+                        "<th>ICE (3g)</th><th>Alarm</th></tr></thead><tbody>"
+                        + takas_rows + "</tbody></table></div>")
+        takas_html = _sec("💼 Takas / AKD", tk_body,
+                          sub=f"Matriks{' · '+str(n_al)+' alarm' if n_al else ''}")
+
+    # ── TAVAN V1 LOCK bölümü (sabah 11:00 lock pick'leri — pozisyon bağlamı, AL adayı DEĞİL) ──
+    tv = a.get("tavan_lock") or {}
+    tavan_html = ""
+    tpicks = tv.get("picks") or []
+    if tv.get("status") == "OK" and tpicks:
+        def _g(p, *ks):
+            for k in ks:
+                if isinstance(p, dict) and p.get(k) is not None:
+                    return p.get(k)
+            return None
+        trows = ""
+        for p in tpicks[:25]:
+            tkr = _g(p, "ticker", "symbol", "kod") or "?"
+            mls = _g(p, "ml_s", "lock_quality", "score", "v1q")
+            prob = _g(p, "lock_prob", "p_lock", "prob")
+            hour = _g(p, "snapshot", "hour", "snap")
+            mls_t = f"{mls:.2f}" if isinstance(mls, (int, float)) else (mls or "—")
+            prob_t = f"{prob:.0%}" if isinstance(prob, (int, float)) else (prob or "—")
+            trows += (f"<tr><td><b>{_tv(str(tkr))}</b></td><td>{mls_t}</td>"
+                      f"<td>{prob_t}</td><td>{hour or '—'}</td></tr>")
+        tavan_html = _sec(
+            "🔒 Tavan V1 lock pick'leri",
+            f"<p class='note'>Sabah 11:00 intraday lock tahmini (tek-rejim paper-track). "
+            f"AL adayı DEĞİL — elde/izlemedeki tavan adayları için bağlam. "
+            f"Çıkış: <code>{tv.get('exit_rules','—')}</code></p>"
+            f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>ml_s/kalite</th>"
+            f"<th>lock olas.</th><th>snapshot</th></tr></thead><tbody>{trows}</tbody></table></div>",
+            sub=f"{len(tpicks)} pick · pozisyon bağlamı")
 
     from core.reports import _NOX_CSS
     mode_tr = ("kural-tabanlı" if a["mode"] == "deterministic_fallback" else "LLM")
@@ -566,6 +615,19 @@ details.fulllist > summary::-webkit-details-marker {{ display:none; }}
 details.fulllist > summary:hover {{ color:var(--text-primary); }}
 details.fulllist[open] > summary {{ border-bottom:1px solid var(--border-subtle); }}
 details.fulllist .note {{ padding:10px 16px 0; }}
+/* açılır-kapanır bölüm başlıkları (tüm section'lar dropdown) */
+details.sec-d {{ margin:14px 0; border:1px solid var(--border-subtle); border-radius:12px;
+  background:rgba(13,13,16,0.4); overflow:hidden; }}
+details.sec-d > summary {{ cursor:pointer; list-style:none; padding:12px 16px; font-family:var(--font-display);
+  font-weight:700; font-size:1.08rem; color:var(--text-primary); user-select:none;
+  display:flex; align-items:baseline; gap:10px; }}
+details.sec-d > summary::-webkit-details-marker {{ display:none; }}
+details.sec-d > summary::before {{ content:'▸'; color:var(--nox-gold); font-size:0.8em; transition:transform .15s; }}
+details.sec-d[open] > summary::before {{ transform:rotate(90deg); }}
+details.sec-d > summary:hover {{ color:var(--nox-gold); }}
+details.sec-d[open] > summary {{ border-bottom:1px solid var(--border-subtle); }}
+details.sec-d .sec-body {{ padding:12px 16px; }}
+details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
 </style></head><body>
 <div class="aurora-bg"><div class="aurora-layer aurora-layer-1"></div>
 <div class="aurora-layer aurora-layer-2"></div><div class="aurora-layer aurora-layer-3"></div></div>
@@ -586,28 +648,27 @@ details.fulllist .note {{ padding:10px 16px 0; }}
 
   {macro_html}
 
-  <h2 class="sec">Girdi durumu</h2>
-  <ul class="inputs">{inputs}</ul>
+  {_sec("📋 Girdi durumu", f"<ul class='inputs'>{inputs}</ul>")}
 
-  <h2 class="sec">Pozisyon önerileri</h2>
-  <div class="nox-table-wrap"><table><thead><tr><th>Hisse</th><th>Aksiyon</th><th>Güven</th>
-  <th>Adet</th><th>Maliyet</th><th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th>
-  </tr></thead><tbody>{pos_rows}</tbody></table></div>
+  {_sec("📊 Pozisyon önerileri",
+        "<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Aksiyon</th><th>Güven</th>"
+        "<th>Adet</th><th>Maliyet</th><th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th>"
+        f"</tr></thead><tbody>{pos_rows}</tbody></table></div>")}
 
   {takas_html}
 
-  <h2 class="sec">AL adayları <span class="sec-sub">DE v1 · paper-track tek-rejim</span></h2>
-  <div class="nox-table-wrap"><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>
-  <th>🔗 Tüm çakışma</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>
-  </tr></thead><tbody>{buy_rows}</tbody></table></div>
+  {_sec("🟢 AL adayları",
+        "<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>"
+        "<th>🔗 Tüm çakışma</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>"
+        f"</tr></thead><tbody>{buy_rows}</tbody></table></div>", sub="DE v1 · paper-track tek-rejim")}
 
   {weekly_lead_html}
 
-  <h2 class="sec">Genel değerlendirme</h2>
-  <div class="narrative">{a.get('narrative_tr', '') or '—'}</div>
+  {tavan_html}
 
-  <h2 class="sec">Korkuluk müdahaleleri</h2>
-  <ul class="guard">{guard or '<li>yok</li>'}</ul>
+  {_sec("🧭 Genel değerlendirme", f"<div class='narrative'>{a.get('narrative_tr', '') or '—'}</div>")}
+
+  {_sec("🛡 Korkuluk müdahaleleri", f"<ul class='guard'>{guard or '<li>yok</li>'}</ul>", open=False)}
 
   <details class="fulllist">
     <summary>📋 Bütçe kısıtı olmasa — TÜM liste ({len(full_items)}) ▾</summary>
