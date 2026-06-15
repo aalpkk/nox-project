@@ -119,22 +119,58 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         print(f"   haftalık-lider çakışma HATA: {e}")
         advisory["weekly_lead_watch"] = []
 
-    # 6c) cluster3 ÇAKIŞMA: DE adayı aynı zamanda açık cluster3 arketip-paper adayı mı?
-    #     context_lists'e "cluster3" ekle → _full_confluence raporda gösterir.
+    # 6c) ÇAPRAZ SİNYAL ÇAKIŞMA → context_lists (→ _full_confluence raporda gösterir):
+    #     (a) cluster3 (açık arketip-paper havuzu örtüşmesi)
+    #     (b) triangle_break + horizontal_break (DE family'sinde YOK, event parquet'ten)
     try:
+        all_tk = [b["ticker"] for b in advisory.get("buy_candidates", [])]
         c3 = validated.get("cluster3", {})
         c3_open = {str(c["ticker"]).upper() for c in (c3.get("open_candidates") or [])}
-        n_hit = 0
+        xsig = signals.cross_signal_membership(asof, all_tk)  # {tkr: [triangle_break, horizontal_break]}
+        n_c3 = n_tr = n_hb = 0
         for b in advisory.get("buy_candidates", []):
+            cl = list(b.get("context_lists") or [])
+            tags = []
             if b["ticker"] in c3_open:
-                cl = list(b.get("context_lists") or [])
-                if "cluster3" not in cl:
-                    cl.append("cluster3")
-                b["context_lists"] = cl
-                n_hit += 1
-        print(f"   cluster3 çakışma: {n_hit} aday (açık c3 havuzu {len(c3_open)})")
+                tags.append("cluster3"); n_c3 += 1
+            for tg in xsig.get(b["ticker"], []):
+                tags.append(tg)
+                n_tr += (tg == "triangle_break"); n_hb += (tg == "horizontal_break")
+            for tg in tags:
+                if tg not in cl:
+                    cl.append(tg)
+            b["context_lists"] = cl
+        print(f"   çapraz çakışma: cluster3={n_c3} triangle={n_tr} horizontal={n_hb} "
+              f"(açık c3 havuzu {len(c3_open)})")
     except Exception as e:
-        print(f"   cluster3 çakışma HATA: {e}")
+        print(f"   çapraz çakışma HATA: {e}")
+
+    # 6c2) SEKTÖR ROTASYON operasyonelleştirme: öne çıkan sektörler → o sektördeki
+    #      DE adayların. Sektör/zaman seçimi DOĞRULANMIŞ edge; sektör-İÇİ hisse seçimi
+    #      robust DEĞİL → eşit-ağırlık/bilgi (PR #81/#86 anatomi + #109 faktör araştırması).
+    try:
+        smap = signals.load_sector_map()
+        rot = validated.get("sector_rotation", {})
+        fav = set(rot.get("favorable_sectors") or [])
+        sec_lookup = {s["kod"]: s for s in (rot.get("sectors") or [])}
+        picks = {}  # sector_index → [ticker...]
+        for b in advisory.get("buy_candidates", []):
+            si, sname = smap.get(b["ticker"], (None, None))
+            b["sector_index"] = si
+            b["sector_name"] = sname
+            if si and si in fav:
+                b["sector_favorable"] = True
+                picks.setdefault(si, []).append(b["ticker"])
+        advisory["rotation_picks"] = {
+            si: {"tickers": tk,
+                 "durum": sec_lookup.get(si, {}).get("durum"),
+                 "dipten_pct": sec_lookup.get(si, {}).get("dipten_pct")}
+            for si, tk in sorted(picks.items())}
+        print(f"   sektör rotasyon: öne çıkan {sorted(fav)} → eşleşen aday {sum(len(v) for v in picks.values())} "
+              f"({len(picks)} sektörde)")
+    except Exception as e:
+        print(f"   sektör rotasyon eşleme HATA: {e}")
+        advisory["rotation_picks"] = {}
 
     # 6d) XU100 RDP rejimi (long/flat/short) + geniş makro snapshot — BİLGİ
     advisory["xu100_rdp"] = signals.load_xu100_rdp(asof)
