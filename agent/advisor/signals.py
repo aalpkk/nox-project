@@ -139,6 +139,15 @@ def _parse_de_csv(path, asof, status="OK"):
             row = _row(best)
             row["n_cells"] = int(len(grp))  # konfluens: kaç hücre (family) tetikledi
             row["families"] = ";".join(sorted(grp["family"].astype(str).unique()))
+            # ÇOKLU-TF birth çakışması: above_mb_birth hangi FARKLI timeframe'lerde
+            # (haftalık birth + 5h/1d birth = iç-içe yapı hizalanması, kullanıcı isteği;
+            # backtest n_concurrent_timeframes OOS-pozitif)
+            fam = grp["family"].astype(str)
+            birth = grp[fam.str.contains("above_mb_birth", na=False)]
+            mtf = sorted(birth["timeframe"].astype(str).unique(),
+                         key=lambda t: {"5h": 0, "1d": 1, "1w": 2, "1mo": 3}.get(t, 9))
+            row["mtf_birth"] = mtf            # örn. ['5h','1d']
+            row["n_tf_birth"] = len(mtf)      # çoklu-TF birth derinliği
             buy_rows.append(row)
 
     for _, r in df[df["section"].astype(str).str.startswith("WAIT")].iterrows():

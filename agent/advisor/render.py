@@ -16,6 +16,47 @@ def _fmt_tl(v):
     return f"{v:,.0f}".replace(",", ".") if v is not None else "—"
 
 
+def _full_confluence(b):
+    """Bir adayın TÜM sinyal çakışması (AL kararı olmasa da): DE-tarafı families
+    (mb/bb çoklu-TF birth/retest, triangle_break, hb, paper — TAZE) + çapraz tarayıcılar
+    (RT/sbt/nox_v3/alsat/tavan — latest_signals snapshot'ından) + cluster3/trident/HW."""
+    parts = []
+    # DE-tarafı families → okunur kod (kaynak[tf'ler])
+    fams = (b.get("families") or "").split(";") if b.get("families") else []
+    de = {}
+    for f in fams:
+        if "__" not in f:
+            continue
+        head, state = f.split("__", 1)
+        # head: mb_5h / bb_1d / tr_1d / hb / line_tr / paper...
+        bits = head.split("_")
+        tf = next((x for x in bits if x in ("5h", "1d", "1w", "1mo")), "")
+        if head.startswith("tr"):
+            key = "triangle"
+        elif head.startswith(("mb", "bb")):
+            key = "mb-birth" if "above_mb_birth" in state else \
+                  ("mb-retest" if "retest" in state else "mb-mit")
+        elif head.startswith("hb"):
+            key = "horizontal_base"
+        elif "paper" in head:
+            key = "paper"
+        else:
+            key = head
+        de.setdefault(key, set())
+        if tf:
+            de[key].add(tf)
+    for k, tfs in de.items():
+        tford = sorted(tfs, key=lambda t: {"5h": 0, "1d": 1, "1w": 2, "1mo": 3}.get(t, 9))
+        parts.append(f"{k}[{','.join(tford)}]" if tford else k)
+    # çapraz tarayıcılar (context)
+    for c in (b.get("context_lists") or []):
+        parts.append(c)
+    # özel hatlar
+    if b.get("trident_geo"):
+        parts.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else ""))
+    return parts
+
+
 def render_telegram_tr(advisory):
     a = advisory
     ps = a["portfolio_summary"]
@@ -90,22 +131,17 @@ def render_telegram_tr(advisory):
         for b in a["buy_candidates"]:
             add_tag = " (EKLEME)" if b["action"] == "ADD" else ""
             trid = "🔱 " if b.get("trident_geo") else ""
-            conf_bits = []
-            if b.get("trident_geo"):
-                conf_bits.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else "-geo"))
-            nc = b.get("n_cells") or 1
-            if nc > 1:
-                conf_bits.append(f"{nc} hücre konfluens")  # NOT timeframe — kaç sinyal birlikte
-            if b.get("context_lists"):
-                conf_bits.append("+" + ",".join(b["context_lists"][:5]))
-            conf_txt = f" · 🔗 {' '.join(conf_bits)}" if conf_bits else ""
-            # tf = GERÇEK zaman dilimi (5h/1d/1w/1mo); state = setup tipi
+            # TÜM sinyal çakışması (AL kararı olmasa da) — kırpmadan
+            conf = _full_confluence(b)
+            mtf = b.get("mtf_birth") or []
+            mtf_txt = f" · çoklu-TF birth: {'+'.join(mtf)}" if len(mtf) > 1 else ""
+            conf_txt = f"\n   🔗 çakışma: {', '.join(conf)}" if conf else ""
             tf = b.get("timeframe") or "?"
             st = (b.get("state") or "").replace("_", " ")[:18]
             lines.append(
                 f"🟢 {trid}<b>{b['ticker']}</b>{add_tag} [{tf}{' '+st if st else ''}] · "
                 f"{b['suggested_qty']} adet @ {b['entry_ref']:.2f} · "
-                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{conf_txt}"
+                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{mtf_txt}{conf_txt}"
             )
             if b["rationale_tr"]:
                 lines.append(f"   <i>{b['rationale_tr']}</i>")
