@@ -1,0 +1,37 @@
+name: master-data-pull watchdog
+
+# cron-job.org (harici güvenilir cron) bunu hafta içi ~18:50 TR'de workflow_dispatch
+# ile tetikler. GitHub Actions'ın kendi scheduled cron'u close koşusunu DÜŞÜRÜRSE
+# (best-effort, garantili değil — 2026-06-15'te oldu) bu watchdog yakalar:
+# master-data-pull BUGÜN koşmadıysa close-mode dispatch eder, koştuysa no-op (çift yok).
+# Sunucu-tarafı (Mac gerekmez). cron-job.org çağrı adresi:
+#   POST https://api.github.com/repos/aalpkk/nox-project/actions/workflows/masterpull-watchdog.yml/dispatches
+#   body: {"ref":"main"}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: master-data-pull bugün koştu mu — koşmadıysa close tetikle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          today=$(TZ=Europe/Istanbul date +%F)
+          n=$(gh run list --repo "${{ github.repository }}" \
+                --workflow=master-data-pull.yml --created="$today" \
+                --json databaseId --jq 'length')
+          echo "Bugün ($today) master-data-pull koşu sayısı: $n"
+          if [ "$n" -eq 0 ]; then
+            echo "Koşu YOK → GitHub cron kaçırmış, close-mode tetikleniyor"
+            gh workflow run master-data-pull.yml --repo "${{ github.repository }}" -f mode=close
+          else
+            echo "Bugün koşu VAR → watchdog no-op (çift koşu önlendi)"
+          fi
