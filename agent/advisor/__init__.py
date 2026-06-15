@@ -63,6 +63,14 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     context = signals.load_context_signals(asof, tickers_of_interest=tickers)
     macro = signals.load_macro()
 
+    # 4c) takas/AKD — elde tutulan pozisyonlar için Matriks akışı (graceful;
+    #     API hata verirse status=MATRIKS_ERROR, raporda kırmızı uyarı → kullanıcı güncellesin)
+    from agent.advisor import takas as takas_mod
+    takas = takas_mod.load_takas(pf.tickers())
+    print(f"   takas: {takas['status']}" +
+          (f" ({takas.get('n_alerts', 0)} alarm)" if takas['status'] == 'OK'
+           else f" — {takas.get('note') or takas.get('error', '')}"))
+
     # 5) korkuluk ön-hesap + pack — bağlam örtüşmesi kabul SIRASINI güçlendirir;
     #    HW dönüş betimsel pozisyon-rengi (SAT_OB yumuşak 'tepe' flag'i)
     hw = validated["hw_obos"]
@@ -78,6 +86,8 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                                         llm_mode=llm_mode)
     if score_entry:
         advisory["scorecard_prev"] = score_entry
+    advisory["takas"] = takas  # pozisyon takas özeti + Matriks durum (render banner)
+    advisory["inputs_status"]["takas"] = takas["status"]
     adv_path = context_pack.persist_advisory(advisory)
     print(f"   advisory: {adv_path} (mode={advisory['mode']})")
 
