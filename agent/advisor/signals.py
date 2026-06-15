@@ -57,11 +57,31 @@ def load_de_watchlist(asof, lookback_days=5):
             "buy_rows": [], "watch_rows": [], "held_rows": []}
 
 
+def _trident_sil_p33(default=-10.49):
+    """Trident SIL 33-yüzdebirlik (derin eşiği) — probe parquet'inden, cache'li.
+    backtest ile aynı kohort eşiği. probe yoksa son bilinen sabit."""
+    if not hasattr(_trident_sil_p33, "_v"):
+        try:
+            p = pd.read_parquet(OUT_DIR / "trident_probe_mb_3y.parquet",
+                                columns=["structural_invalidation_pct_below_B"])
+            _trident_sil_p33._v = float(p["structural_invalidation_pct_below_B"].quantile(0.33))
+        except Exception:
+            _trident_sil_p33._v = default
+    return _trident_sil_p33._v
+
+
 def _parse_de_csv(path, asof, status="OK"):
     df = pd.read_csv(path)
     df["ticker"] = df["ticker"].astype(str).str.upper()
+    sil_p33 = _trident_sil_p33()
 
     def _row(r):
+        # trident_geo = G1(D_pct∈[20,30)) ∧ G2(SIL≤p33 derin) — G4 (XU100 rejim) YOK,
+        # G3 (BoS) watchlist CSV'sinde yok → 2/3 geometrik proxy. Backtest (G1∧G2∧G3,
+        # G4'süz) trident'i birincil ayrıştıran gösterdi; rejim-yukarı şartı (G4) yok.
+        d = _f(r.get("trident_D_pct")); s = _f(r.get("trident_SIL_pct_below_B"))
+        trident_geo = (d is not None and 20.0 <= d < 30.0 and
+                       s is not None and s <= sil_p33)
         return {
             "ticker": r["ticker"], "section": r["section"],
             "family": r.get("family", ""), "timeframe": str(r.get("timeframe", "")),
@@ -70,6 +90,8 @@ def _parse_de_csv(path, asof, status="OK"):
             "atr": _f(r.get("atr")), "risk_atr": _f(r.get("risk_atr")),
             "reason_codes": r.get("reason_codes", ""),
             "trident_tier1": str(r.get("trident_tier1_active", "")).lower() in ("true", "1"),
+            "trident_geo": bool(trident_geo),  # G4'süz (rejim-bağımsız) geometri
+            "trident_D_pct": d, "trident_sil": s,
         }
 
     buy_rows, watch_rows = [], []

@@ -105,9 +105,12 @@ def pre_check(pf_data, prices, de_buy_rows, context_hits=None, hw_per_ticker=Non
         diğer her konfluens ≤+1.6 ya da negatif. Bu yüzden trident konfluensten ÖNCE
         birincil ayırıcı (önceden tiebreaker'dı). MFE+MAE fırsat profili, capture yok,
         tek-rejim öneri-nitelikli — kapı değil, sizing risk-bazlı."""
+        # BİRİNCİL = trident_geo (G4'süz geometri, rejim-bağımsız) — kullanıcı:
+        # 'G4 kapalıyken de sinyal üret'. trident_tier1 (G4-dahil) ikincil teyit.
         return (0 if row["section"] == "EXECUTABLE" else 1,
-                0 if row.get("trident_tier1") else 1,   # BİRİNCİL (backtest)
-                -_quality(row),                          # konfluens ikincil
+                0 if (row.get("trident_geo") or row.get("trident_tier1")) else 1,  # BİRİNCİL
+                0 if row.get("trident_tier1") else 1,    # G4-dahil olan daha öne
+                -_quality(row),                          # konfluens
                 row.get("risk_atr") if row.get("risk_atr") is not None else 9e9,
                 row["ticker"])
 
@@ -285,7 +288,9 @@ def post_validate(advisory, pack):
             "atr": cand.get("atr"), "risk_atr": cand.get("risk_atr"),
             "n_cells": cand.get("n_cells"), "families": cand.get("families"),
             "context_lists": cand.get("context_lists", []),
-            "trident_tier1": bool(cand.get("trident_tier1")),  # backtest birincil sinyali
+            "trident_tier1": bool(cand.get("trident_tier1")),  # G4-dahil (rejim-yukarı)
+            "trident_geo": bool(cand.get("trident_geo")),      # G4'süz geometri (birincil)
+            "trident_D_pct": cand.get("trident_D_pct"),
             "suggested_qty": cand["suggested_qty"],
             "risk_tl": cand["risk_tl"], "notional_tl": cand["notional_tl"],
             "risk_pct_equity": cand.get("risk_pct_equity"),

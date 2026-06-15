@@ -72,15 +72,16 @@ def render_telegram_tr(advisory):
         lines.append("📊 Açık pozisyon yok.")
     lines.append("")
 
-    # Trident Tier-1 durumu (backtest BİRİNCİL sinyali — her zaman raporla)
-    n_trident = sum(1 for b in a["buy_candidates"] if b.get("trident_tier1"))
-    if n_trident:
-        trd_names = [b["ticker"] for b in a["buy_candidates"] if b.get("trident_tier1")]
-        lines.append(f"🔱 <b>Trident Tier-1: {n_trident} aktif</b> — {', '.join(trd_names[:10])} "
-                     "<i>(backtest birincil: temiz-koşucu +6.7)</i>")
+    # Trident durumu (backtest BİRİNCİL — her zaman raporla). trident_geo = G4'süz
+    # geometri (rejim-bağımsız, RISK_OFF'ta da fırlar); trident_tier1 = G4-dahil teyit.
+    geo = [b["ticker"] for b in a["buy_candidates"] if b.get("trident_geo")]
+    t1 = set(b["ticker"] for b in a["buy_candidates"] if b.get("trident_tier1"))
+    if geo:
+        marked = [f"{t}{'✓G4' if t in t1 else ''}" for t in geo[:12]]
+        lines.append(f"🔱 <b>Trident geo (G4'süz): {len(geo)} aday</b> — {', '.join(marked)} "
+                     "<i>(D∈20-30 ∧ SIL-derin; backtest birincil +6.7; ✓G4=rejim teyitli)</i>")
     else:
-        lines.append("🔱 <i>Trident Tier-1: bugün aktif aday yok (G4 rejim-yukarı kapısı; "
-                     "RISK_OFF'ta pasif — normal).</i>")
+        lines.append("🔱 <i>Trident: bugün geometri adayı yok (D∈20-30 ∧ SIL-derin koşulu).</i>")
     lines.append("")
 
     # AL adayları
@@ -88,10 +89,10 @@ def render_telegram_tr(advisory):
         lines.append("🟢 <b>AL Adayları</b> <i>(DE v1, paper-track tek-rejim)</i>")
         for b in a["buy_candidates"]:
             add_tag = " (EKLEME)" if b["action"] == "ADD" else ""
-            trid = "🔱 " if b.get("trident_tier1") else ""
+            trid = "🔱 " if b.get("trident_geo") else ""
             conf_bits = []
-            if b.get("trident_tier1"):
-                conf_bits.append("TRİDENT-T1")
+            if b.get("trident_geo"):
+                conf_bits.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else "-geo"))
             if (b.get("n_cells") or 1) > 1:
                 conf_bits.append(f"DE {b['n_cells']} hücre")
             if b.get("context_lists"):
