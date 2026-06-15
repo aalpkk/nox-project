@@ -142,6 +142,19 @@ jobs:
           path: output/
           if_no_artifact_found: warn
 
+      # mb_scanner_events parquet'leri (aynı DE run'ından) — advisor ÇAPRAZ-TF
+      # haftalık-lider çakışması + trident G3(BoS) için okur. Yoksa bu özellikler
+      # sessizce boş üretir (haftalık-lider bar=None) — bu yüzden best-effort indir.
+      - name: Download mb_scanner events (çapraz-TF için)
+        if: steps.select_de.outputs.run_id != ''
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.select_de.outputs.run_id }}
+          name: de-v1-mb-scanner-${{ steps.select_de.outputs.asof }}
+          path: output/
+          if_no_artifact_found: warn
+
       - name: Download tavan lock artifact (varsa, en son scan)
         continue-on-error: true
         uses: dawidd6/action-download-artifact@v6
