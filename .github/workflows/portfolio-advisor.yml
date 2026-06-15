@@ -155,24 +155,24 @@ jobs:
           path: output/
           if_no_artifact_found: warn
 
-      - name: Download tavan lock artifact (varsa, en son scan)
+      - name: Download tavan-scan-live artifact (kullanıcı: lock yerine canlı tarama)
         continue-on-error: true
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: tavan-lock-system.yml
+          workflow: tavan-scan-live.yml
           branch: main
           workflow_conclusion: success
-          name: tavan-lock-scan-.*
+          name: tavan-scan-.*
           name_is_regexp: true
-          path: /tmp/tavan_lock
+          path: /tmp/tavan_live
           if_no_artifact_found: warn
 
-      - name: Stage tavan lock JSON
+      - name: Stage tavan-scan-live candidates CSV
         continue-on-error: true
         run: |
           mkdir -p output
-          find /tmp/tavan_lock -name 'tavan_lock_scan_*.json' -exec cp {} output/ \; 2>/dev/null || true
-          ls output/tavan_lock_scan_*.json 2>/dev/null || echo "(tavan lock JSON yok — UNAVAILABLE olarak işlenecek)"
+          find /tmp/tavan_live -name 'tavan_scan_live_candidates_*.csv' -exec cp {} output/ \; 2>/dev/null || true
+          ls output/tavan_scan_live_candidates_*.csv 2>/dev/null | tail -2 || echo "(tavan-scan-live CSV yok — UNAVAILABLE)"
 
       - name: Download HW OB/OS artifact (betimsel dönüş taraması)
         continue-on-error: true
@@ -210,6 +210,9 @@ jobs:
           # MATRİKS HATASI banner'ı çıkar (kullanıcı oturumu yeniler)
           MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
           MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          # Sektör rotasyon: BIST sektör endeksleri Fintables'tan (yfinance N/A döner).
+          # FALLBACK İŞY. Token yoksa İŞY'ye düşer (lokalde çalışabilir).
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
           # NOT: secrets.GH_TOKEN nox-private'a erişemiyor (ilk smoke'ta 404) —
           # ayrı classic repo-scope PAT: NOX_PRIVATE_TOKEN (2026-06-13)
           GH_TOKEN: ${{ secrets.NOX_PRIVATE_TOKEN }}   # private portföy repo

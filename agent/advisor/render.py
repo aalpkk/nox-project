@@ -191,15 +191,24 @@ def render_telegram_tr(advisory):
                      f"<i>(betimsel, edge yok)</i>")
         lines.append("")
 
-    # Tavan V1 lock pick'leri (sabah 11:00 — pozisyon bağlamı, AL adayı DEĞİL)
+    # Tavan V1 canlı tarama (tavan-scan-live — izleme bağlamı, AL adayı DEĞİL)
     tv = a.get("tavan_lock") or {}
-    if tv.get("status") == "OK" and (tv.get("picks") or []):
+    if tv.get("status") in ("OK", "STALE") and (tv.get("picks") or []):
+        st = " BAYAT" if tv.get("status") == "STALE" else ""
         tks = []
         for p in (tv["picks"] or [])[:10]:
-            t = p.get("ticker") or p.get("symbol") or "?"
-            mls = p.get("ml_s") or p.get("score")
-            tks.append(f"{t}{f'({mls:.2f})' if isinstance(mls,(int,float)) else ''}")
-        lines.append("🔒 <b>Tavan V1 lock</b> <i>(11:00 paper, pozisyon bağlamı)</i>: " + ", ".join(tks))
+            t = p.get("ticker") or "?"
+            ml = p.get("ml_s")
+            tav = "🟥" if p.get("at_tavan") else ""
+            tks.append(f"{t}{tav}{f'({ml:.2f})' if isinstance(ml,(int,float)) else ''}")
+        lines.append(f"🔒 <b>Tavan V1 canlı</b>{st} <i>(scan-live, izleme bağlamı)</i>: " + ", ".join(tks))
+        lines.append("")
+
+    # cluster3 açık adaylar (arketip forward-paper — bilgi)
+    c3o = a.get("cluster3_open") or []
+    if c3o:
+        names = [f"{c['ticker']}{'🎯' if c.get('in_de') else ''}" for c in c3o[:12]]
+        lines.append(f"🧬 <b>cluster3 açık</b> <i>(paper, bilgi)</i>: " + ", ".join(names))
         lines.append("")
 
     # pozisyonlar
@@ -532,34 +541,51 @@ def render_html(advisory):
         takas_html = _sec("💼 Takas / AKD", tk_body,
                           sub=f"Matriks{' · '+str(n_al)+' alarm' if n_al else ''}")
 
-    # ── TAVAN V1 LOCK bölümü (sabah 11:00 lock pick'leri — pozisyon bağlamı, AL adayı DEĞİL) ──
+    # ── TAVAN V1 CANLI (tavan-scan-live) bölümü — tavan izleme bağlamı, AL adayı DEĞİL ──
     tv = a.get("tavan_lock") or {}
     tavan_html = ""
     tpicks = tv.get("picks") or []
-    if tv.get("status") == "OK" and tpicks:
-        def _g(p, *ks):
-            for k in ks:
-                if isinstance(p, dict) and p.get(k) is not None:
-                    return p.get(k)
-            return None
+    if tv.get("status") in ("OK", "STALE") and tpicks:
+        def _pf(x, fmt):
+            return fmt.format(x) if isinstance(x, (int, float)) else (x if x else "—")
+        st = " · BAYAT" if tv.get("status") == "STALE" else ""
         trows = ""
-        for p in tpicks[:25]:
-            tkr = _g(p, "ticker", "symbol", "kod") or "?"
-            mls = _g(p, "ml_s", "lock_quality", "score", "v1q")
-            prob = _g(p, "lock_prob", "p_lock", "prob")
-            hour = _g(p, "snapshot", "hour", "snap")
-            mls_t = f"{mls:.2f}" if isinstance(mls, (int, float)) else (mls or "—")
-            prob_t = f"{prob:.0%}" if isinstance(prob, (int, float)) else (prob or "—")
-            trows += (f"<tr><td><b>{_tv(str(tkr))}</b></td><td>{mls_t}</td>"
-                      f"<td>{prob_t}</td><td>{hour or '—'}</td></tr>")
+        for p in tpicks[:30]:
+            tkr = p.get("ticker") or "?"
+            ml = p.get("ml_s")
+            v1 = "✓" if p.get("v1_candidate") else ""
+            tav = "🟥tavanda" if p.get("at_tavan") else ("vurdu" if p.get("hit_tavan") else "")
+            ml_c = "#7a9e7a" if (isinstance(ml, (int, float)) and ml >= 0.65) else "var(--text-primary)"
+            trows += (f"<tr><td><b>{_tv(str(tkr))}</b></td>"
+                      f"<td style='color:{ml_c}'>{_pf(ml, '{:.2f}')}</td><td>{v1}</td>"
+                      f"<td>{_pf(p.get('close'), '{:.2f}')}</td>"
+                      f"<td>{_pf(p.get('pct_from_prev'), '{:+.1f}%')}</td><td>{tav}</td></tr>")
         tavan_html = _sec(
-            "🔒 Tavan V1 lock pick'leri",
-            f"<p class='note'>Sabah 11:00 intraday lock tahmini (tek-rejim paper-track). "
-            f"AL adayı DEĞİL — elde/izlemedeki tavan adayları için bağlam. "
+            "🔒 Tavan V1 canlı tarama",
+            f"<p class='note'>Tavan V1 canlı aday taraması (<code>tavan-scan-live</code>, "
+            f"scan {tv.get('scan_asof','?')}{st}). ml_s = V1 kalite (≥0.65 yeşil), ✓=v1_candidate, "
+            f"🟥=şu an tavanda. AL adayı DEĞİL — tavan izleme bağlamı (paper tek-rejim). "
             f"Çıkış: <code>{tv.get('exit_rules','—')}</code></p>"
-            f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>ml_s/kalite</th>"
-            f"<th>lock olas.</th><th>snapshot</th></tr></thead><tbody>{trows}</tbody></table></div>",
-            sub=f"{len(tpicks)} pick · pozisyon bağlamı")
+            f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>ml_s</th><th>v1</th>"
+            f"<th>Kapanış</th><th>Δ önceki</th><th>Tavan</th></tr></thead>"
+            f"<tbody>{trows}</tbody></table></div>",
+            sub=f"{len(tpicks)} aday · izleme bağlamı")
+
+    # ── cluster3 STANDALONE bölümü (açık arketip-paper havuzu — örtüşmese de) ──
+    c3o = a.get("cluster3_open") or []
+    cluster3_html = ""
+    if c3o:
+        c3rows = "".join(
+            f"<tr><td><b>{_tv(c['ticker'])}</b>{' 🎯DE' if c.get('in_de') else ''}</td>"
+            f"<td>{c.get('signal_date') or '—'}</td></tr>" for c in c3o)
+        cluster3_html = _sec(
+            "🧬 cluster3 açık adaylar",
+            f"<p class='note'>cluster3 arketip forward-paper havuzu (son 30g açık, henüz "
+            f"realize olmamış). 🎯DE = aynı zamanda bugünkü DE adayı. Backtest'te zayıf/negatif "
+            f"edge → bilgi/paper-track.</p>"
+            f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Sinyal tarihi</th>"
+            f"</tr></thead><tbody>{c3rows}</tbody></table></div>",
+            sub=f"{len(c3o)} açık aday · bilgi", open=False)
 
     from core.reports import _NOX_CSS
     mode_tr = ("kural-tabanlı" if a["mode"] == "deterministic_fallback" else "LLM")
@@ -665,6 +691,8 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
   {weekly_lead_html}
 
   {tavan_html}
+
+  {cluster3_html}
 
   {_sec("🧭 Genel değerlendirme", f"<div class='narrative'>{a.get('narrative_tr', '') or '—'}</div>")}
 
