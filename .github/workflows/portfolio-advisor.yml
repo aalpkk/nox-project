@@ -112,16 +112,26 @@ jobs:
             fi
             run_id="$rid"; break
           done
+          skip="false"
           if [ -z "$run_id" ]; then
-            echo "::warning::uygun DE artifact'ı bulunamadı — advisor DE'siz (UNAVAILABLE) koşacak"
             asof="${ASOF_INPUT:-$(TZ=Europe/Istanbul date +%F)}"
             de_status="UNAVAILABLE"
+            # workflow_run intraday-mode DE'den geldiyse taze watchlist YOK →
+            # advisor ATLA (eski/STALE rapor gönderme; taze close-DE zinciri zaten
+            # kendi advisor'ını çalıştırdı). dispatch'te koş (manuel/walk-back).
+            if [ "$EVENT_NAME" = "workflow_run" ]; then
+              echo "::notice::Bu DE koşusunda taze watchlist/no-de-day yok (intraday mode?) — advisor ATLANIYOR (STALE önleme)"
+              skip="true"
+            else
+              echo "::warning::uygun DE artifact'ı yok — dispatch: DE'siz UNAVAILABLE koşacak"
+            fi
           fi
           echo "run_id=$run_id"     >> "$GITHUB_OUTPUT"
           echo "asof=$asof"         >> "$GITHUB_OUTPUT"
           echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
           echo "de_status=$de_status" >> "$GITHUB_OUTPUT"
-          echo "selected: run=$run_id asof=$asof artifact=$artifact status=$de_status"
+          echo "skip=$skip"         >> "$GITHUB_OUTPUT"
+          echo "selected: run=$run_id asof=$asof artifact=$artifact status=$de_status skip=$skip"
 
       - name: Download DE artifact
         if: steps.select_de.outputs.artifact != ''
@@ -171,6 +181,7 @@ jobs:
           ls output/hw_obos_*_scan_*.csv 2>/dev/null | head -4 || echo "(HW CSV yok — UNAVAILABLE)"
 
       - name: Run advisor
+        if: steps.select_de.outputs.skip != 'true'
         env:
           PYTHONUNBUFFERED: "1"
           # OPUS AKTİF (kullanıcı kararı 2026-06-13): tek çağrı/gün, inceltilmiş
@@ -197,7 +208,7 @@ jobs:
           python -u -m agent.advisor --asof "$ASOF" --llm-mode auto --notify
 
       - name: Upload advisory artifact
-        if: always()
+        if: steps.select_de.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: advisor-${{ steps.select_de.outputs.asof }}-${{ github.run_number }}
