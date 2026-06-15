@@ -23,6 +23,46 @@ def _tv(ticker):
             f'href="https://www.tradingview.com/chart/?symbol=BIST:{t}">{t}</a>')
 
 
+_MACRO_CAT_ORDER = ["BIST", "US", "Kripto", "Emtia", "FX", "Faiz"]
+
+
+def _rdp_text(rdp):
+    """XU100 RDP rejim satırı (BİLGİ). long DIŞI = risk-off/SAT uyarısı."""
+    if not rdp or rdp.get("status") == "UNAVAILABLE" or not rdp.get("regime"):
+        return None
+    reg = rdp.get("regime")
+    stale = " (BAYAT)" if rdp.get("status") == "STALE" else ""
+    if rdp.get("is_sell"):
+        return (f"🔴 <b>XU100 RDP: {reg.upper()}</b>{stale} ({rdp.get('date')}) — "
+                f"risk-OFF/SAT rejimi <i>(RDP overlay, canlı kapı kapalı, bilgi)</i>")
+    return (f"🟢 XU100 RDP: {reg}{stale} ({rdp.get('date')}) — risk-ON "
+            f"<i>(RDP overlay, bilgi)</i>")
+
+
+def _macro_groups(snapshot):
+    """category → [satır dict] (sıralı). reversal/trend etiketli."""
+    by = {}
+    for m in snapshot or []:
+        by.setdefault(m.get("category", "?"), []).append(m)
+    out = []
+    for cat in _MACRO_CAT_ORDER + [c for c in by if c not in _MACRO_CAT_ORDER]:
+        if cat in by:
+            out.append((cat, by[cat]))
+    return out
+
+
+def _macro_inst_txt(m):
+    """Tek enstrüman özet metni: ad chg1d/chg5d trend [dip↗/tepe↘]."""
+    def pct(v):
+        return f"{v:+.1f}%" if isinstance(v, (int, float)) else "—"
+    rev = m.get("reversal") or ""
+    rev_tag = f" <b>{rev}</b>" if rev else ""
+    rsi = m.get("rsi")
+    rsi_t = f" RSI{rsi:.0f}" if isinstance(rsi, (int, float)) else ""
+    return (f"{m.get('name')}: {pct(m.get('chg_1d'))} (5g {pct(m.get('chg_5d'))}) "
+            f"· {m.get('trend', '?')}{rsi_t}{rev_tag}")
+
+
 def _full_confluence(b):
     """Bir adayın TÜM sinyal çakışması (AL kararı olmasa da): DE-tarafı families
     (mb/bb çoklu-TF birth/retest, triangle_break, hb, paper — TAZE) + çapraz tarayıcılar
@@ -88,6 +128,12 @@ def render_telegram_tr(advisory):
                      ", ".join(f"{k}={v}" for k, v in bad.items()))
         lines.append("")
 
+    # XU100 RDP rejimi (risk-ON/OFF) — en üstte, makro pusula
+    rdp_t = _rdp_text(a.get("xu100_rdp"))
+    if rdp_t:
+        lines.append(rdp_t)
+        lines.append("")
+
     rot = a.get("sector_rotation")
     if rot:
         fren = "fren AÇIK ⛔" if (rot.get("brake_primary") or rot.get("brake_explore")) else "fren kapalı"
@@ -97,6 +143,19 @@ def render_telegram_tr(advisory):
                      f"keşif={rot.get('state_explore_confirm_off')} · {fren} <i>(paper)</i>")
         if rot.get("last_bank_ignition"):
             lines.append(f"   ⚡ {rot['last_bank_ignition']}")
+        lines.append("")
+
+    # GENİŞ MAKRO — NASDAQ/S&P, layer1 kripto, XAU/XAG/metaller, FX, faiz (BİLGİ)
+    msnap = a.get("macro_snapshot") or []
+    if msnap:
+        lines.append("🌍 <b>Makro</b> <i>(trend + dipten/tepeden dönüş, bilgi)</i>")
+        for cat, items in _macro_groups(msnap):
+            rev = [m for m in items if m.get("reversal")]
+            head = ", ".join(_macro_inst_txt(m).replace(" <b>", " ").replace("</b>", "")
+                             for m in items[:6])
+            lines.append(f"• <b>{cat}</b>: {head}")
+            for m in rev:
+                lines.append(f"    {m.get('reversal')} {m.get('name')}")
         lines.append("")
 
     hw = a.get("hw_obos")
@@ -328,6 +387,64 @@ def render_html(advisory):
                        f"<td>{info.get('top_seller', '—')}</td>"
                        f"<td>{info.get('ice', '—')}</td>"
                        f"<td style='color:#f85149'>{al}</td></tr>")
+    # ── MAKRO & REJİM HTML bölümü (RDP + sektör rotasyon + geniş makro) ──
+    rdp = a.get("xu100_rdp") or {}
+    rdp_html = ""
+    if rdp.get("regime"):
+        sell = rdp.get("is_sell")
+        color = "#f85149" if sell else "#7a9e7a"
+        tag = "risk-OFF / SAT" if sell else "risk-ON"
+        st = " · BAYAT" if rdp.get("status") == "STALE" else ""
+        rdp_html = (f"<div style='border-left:3px solid {color};background:var(--bg-card);"
+                    f"border:1px solid var(--border-subtle);border-radius:10px;padding:10px 14px;"
+                    f"margin:8px 0'><b style='color:{color}'>XU100 RDP: {rdp['regime'].upper()}</b> "
+                    f"— {tag} <span class='meta'>({rdp.get('date')}{st} · RDP overlay, canlı kapı "
+                    f"kapalı, bilgi)</span></div>")
+    rot = a.get("sector_rotation") or {}
+    rot_html = ""
+    if rot.get("bar_date"):
+        fren = "fren AÇIK ⛔" if (rot.get("brake_primary") or rot.get("brake_explore")) else "fren kapalı"
+        st = " · BAYAT" if rot.get("status") == "STALE" else ""
+        ign = (f"<br>⚡ {rot['last_bank_ignition']}" if rot.get("last_bank_ignition") else "")
+        rot_html = (f"<p class='note'>🔄 <b>Sektör rotasyon monitörü</b> ({rot.get('bar_date')}{st}): "
+                    f"primer=<b>{rot.get('state_primary_confirm_on')}</b> · "
+                    f"keşif=<b>{rot.get('state_explore_confirm_off')}</b> · {fren} "
+                    f"<i>(paper-forward, canlı kapı kapalı)</i>{ign}</p>")
+    hw = a.get("hw_obos") or {}
+    hw_html = ""
+    if hw.get("scan_date"):
+        st = " · BAYAT" if hw.get("status") == "STALE" else ""
+        hw_html = (f"<p class='note'>〰️ <b>HW dönüş genişliği</b> ({hw.get('scan_date')}{st}): "
+                   f"↓{hw.get('n_sat_ob', 0)} tepe / ↑{hw.get('n_al_os', 0)} dip "
+                   f"<i>(betimsel, edge yok)</i></p>")
+    msnap = a.get("macro_snapshot") or []
+    macro_html = ""
+    if msnap:
+        def _pct(v):
+            return f"{v:+.1f}%" if isinstance(v, (int, float)) else "—"
+        mrows = ""
+        for cat, items in _macro_groups(msnap):
+            for i, m in enumerate(items):
+                rev = m.get("reversal") or ""
+                rev_c = "#7a9e7a" if rev == "dip↗" else ("#f85149" if rev == "tepe↘" else "")
+                rev_h = f"<span style='color:{rev_c};font-weight:700'>{rev}</span>" if rev else ""
+                c1 = m.get("chg_1d"); c1c = "#7a9e7a" if (c1 or 0) >= 0 else "#f85149"
+                cat_cell = (f"<td rowspan='{len(items)}' style='vertical-align:top'>"
+                            f"<b>{cat}</b></td>") if i == 0 else ""
+                rsi = m.get("rsi")
+                mrows += (f"<tr>{cat_cell}<td>{m.get('name')}</td>"
+                          f"<td>{m.get('price') if m.get('price') is not None else '—'}</td>"
+                          f"<td style='color:{c1c}'>{_pct(c1)}</td><td>{_pct(m.get('chg_5d'))}</td>"
+                          f"<td>{_pct(m.get('chg_1m'))}</td>"
+                          f"<td>{f'{rsi:.0f}' if isinstance(rsi,(int,float)) else '—'}</td>"
+                          f"<td>{m.get('trend','?')}</td><td>{rev_h}</td></tr>")
+        macro_html = (
+            "<h2 class='sec'>🌍 Makro & Rejim <span class='sec-sub'>trend + dipten/tepeden dönüş · bilgi</span></h2>"
+            f"{rdp_html}{rot_html}{hw_html}"
+            "<div class='nox-table-wrap'><table><thead><tr><th>Kategori</th><th>Enstrüman</th>"
+            "<th>Fiyat</th><th>1g</th><th>5g</th><th>1a</th><th>RSI</th><th>Trend</th><th>Dönüş</th>"
+            f"</tr></thead><tbody>{mrows}</tbody></table></div>")
+
     # haftalık-lider çakışma (aday-dışı) — HTML bölümü (NOX temalı)
     wlw = a.get("weekly_lead_watch") or []
     weekly_lead_html = ""
@@ -426,6 +543,8 @@ details.fulllist .note {{ padding:10px 16px 0; }}
     <div class="adv-stat"><div class="lbl">Yatırımda</div><div class="val">%{inv:.1f}</div></div>
     <div class="adv-stat"><div class="lbl">Açık risk</div><div class="val{' warn' if risk_pct > cap else ''}">%{risk_pct:.1f} <span style="font-size:0.6rem;color:var(--text-muted)">/ %{cap}</span></div></div>
   </div>
+
+  {macro_html}
 
   <h2 class="sec">Girdi durumu</h2>
   <ul class="inputs">{inputs}</ul>

@@ -119,6 +119,30 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         print(f"   haftalık-lider çakışma HATA: {e}")
         advisory["weekly_lead_watch"] = []
 
+    # 6c) cluster3 ÇAKIŞMA: DE adayı aynı zamanda açık cluster3 arketip-paper adayı mı?
+    #     context_lists'e "cluster3" ekle → _full_confluence raporda gösterir.
+    try:
+        c3 = validated.get("cluster3", {})
+        c3_open = {str(c["ticker"]).upper() for c in (c3.get("open_candidates") or [])}
+        n_hit = 0
+        for b in advisory.get("buy_candidates", []):
+            if b["ticker"] in c3_open:
+                cl = list(b.get("context_lists") or [])
+                if "cluster3" not in cl:
+                    cl.append("cluster3")
+                b["context_lists"] = cl
+                n_hit += 1
+        print(f"   cluster3 çakışma: {n_hit} aday (açık c3 havuzu {len(c3_open)})")
+    except Exception as e:
+        print(f"   cluster3 çakışma HATA: {e}")
+
+    # 6d) XU100 RDP rejimi (long/flat/short) + geniş makro snapshot — BİLGİ
+    advisory["xu100_rdp"] = signals.load_xu100_rdp(asof)
+    advisory["macro_snapshot"] = (macro or {}).get("snapshot", [])
+    rdp = advisory["xu100_rdp"]
+    print(f"   XU100 RDP: {rdp.get('regime')} ({rdp.get('date')}, {rdp.get('status')})"
+          f"{' ⚠️SAT/risk-off' if rdp.get('is_sell') else ''}")
+
     adv_path = context_pack.persist_advisory(advisory)
     print(f"   advisory: {adv_path} (mode={advisory['mode']})")
 

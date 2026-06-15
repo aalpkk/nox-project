@@ -745,6 +745,7 @@ jobs:
             output/mb_scanner_events_mb_1d.parquet
             output/mb_scanner_events_mb_1w.parquet
             output/mb_scanner_events_bb_1d.parquet
+            output/regime_labels_daily_rdp_v1.csv
           if-no-files-found: warn
           retention-days: 30
 
