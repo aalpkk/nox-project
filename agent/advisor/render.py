@@ -72,19 +72,33 @@ def render_telegram_tr(advisory):
         lines.append("📊 Açık pozisyon yok.")
     lines.append("")
 
+    # Trident Tier-1 durumu (backtest BİRİNCİL sinyali — her zaman raporla)
+    n_trident = sum(1 for b in a["buy_candidates"] if b.get("trident_tier1"))
+    if n_trident:
+        trd_names = [b["ticker"] for b in a["buy_candidates"] if b.get("trident_tier1")]
+        lines.append(f"🔱 <b>Trident Tier-1: {n_trident} aktif</b> — {', '.join(trd_names[:10])} "
+                     "<i>(backtest birincil: temiz-koşucu +6.7)</i>")
+    else:
+        lines.append("🔱 <i>Trident Tier-1: bugün aktif aday yok (G4 rejim-yukarı kapısı; "
+                     "RISK_OFF'ta pasif — normal).</i>")
+    lines.append("")
+
     # AL adayları
     if a["buy_candidates"]:
         lines.append("🟢 <b>AL Adayları</b> <i>(DE v1, paper-track tek-rejim)</i>")
         for b in a["buy_candidates"]:
             add_tag = " (EKLEME)" if b["action"] == "ADD" else ""
+            trid = "🔱 " if b.get("trident_tier1") else ""
             conf_bits = []
+            if b.get("trident_tier1"):
+                conf_bits.append("TRİDENT-T1")
             if (b.get("n_cells") or 1) > 1:
                 conf_bits.append(f"DE {b['n_cells']} hücre")
             if b.get("context_lists"):
                 conf_bits.append("+" + ",".join(b["context_lists"][:5]))
             conf_txt = f" · 🔗 {' '.join(conf_bits)}" if conf_bits else ""
             lines.append(
-                f"🟢 <b>{b['ticker']}</b>{add_tag} {b['section']} · "
+                f"🟢 {trid}<b>{b['ticker']}</b>{add_tag} {b['section']} · "
                 f"{b['suggested_qty']} adet @ {b['entry_ref']:.2f} · "
                 f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{conf_txt}"
             )

@@ -285,6 +285,7 @@ def post_validate(advisory, pack):
             "atr": cand.get("atr"), "risk_atr": cand.get("risk_atr"),
             "n_cells": cand.get("n_cells"), "families": cand.get("families"),
             "context_lists": cand.get("context_lists", []),
+            "trident_tier1": bool(cand.get("trident_tier1")),  # backtest birincil sinyali
             "suggested_qty": cand["suggested_qty"],
             "risk_tl": cand["risk_tl"], "notional_tl": cand["notional_tl"],
             "risk_pct_equity": cand.get("risk_pct_equity"),
