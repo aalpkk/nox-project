@@ -16,6 +16,13 @@ def _fmt_tl(v):
     return f"{v:,.0f}".replace(",", ".") if v is not None else "—"
 
 
+def _tv(ticker):
+    """Ticker'ı TradingView grafik linkine çevir (HTML; .tv-link _NOX_CSS'te)."""
+    t = str(ticker)
+    return (f'<a class="tv-link" target="_blank" '
+            f'href="https://www.tradingview.com/chart/?symbol=BIST:{t}">{t}</a>')
+
+
 def _full_confluence(b):
     """Bir adayın TÜM sinyal çakışması (AL kararı olmasa da): DE-tarafı families
     (mb/bb çoklu-TF birth/retest, triangle_break, hb, paper — TAZE) + çapraz tarayıcılar
@@ -240,7 +247,7 @@ def render_html(advisory):
             cells = ""
             for c in cols:
                 v = it.get(c, "")
-                cells += f"<td><b>{v}</b></td>" if c == "ticker" else f"<td>{v}</td>"
+                cells += f"<td><b>{_tv(v)}</b></td>" if c == "ticker" else f"<td>{v}</td>"
             out += f"<tr>{cells}</tr>"
         return out
 
@@ -272,6 +279,26 @@ def render_html(advisory):
     buy_rows = rows(buy_view,
                     ["ticker", "timeframe", "state", "confluence", "section",
                      "suggested_qty", "entry_ref", "stop_ref", "risk_tl"])
+
+    # BÜTÇE-KISITSIZ TAM LİSTE: buy + skipped (nakit/limit duvarına takılanlar) —
+    # portföy bütçesi olmasaymış gibi TÜM DE adayları. Altta <details> ile açılır.
+    skipped = a.get("skipped_candidates") or []
+    full_items = []
+    for b in a["buy_candidates"]:
+        full_items.append({**b, "_durum": "ALINABİLİR"})
+    for s in skipped:
+        full_items.append({**s, "_durum": f"⛔ {s.get('status', 'bütçe-dışı')}"})
+    full_rows = ""
+    for it in full_items:
+        mtf = it.get("mtf_birth") or []
+        mtf_p = f"çoklu-TF birth:{'+'.join(mtf)}; " if len(mtf) > 1 else ""
+        conf = mtf_p + ", ".join(_full_confluence(it))
+        full_rows += (
+            f"<tr><td><b>{_tv(it['ticker'])}</b></td>"
+            f"<td>{it.get('timeframe', '')}</td><td>{it.get('state', '')}</td>"
+            f"<td>{conf}</td><td>{it.get('section', '')}</td>"
+            f"<td>{_r2(it.get('entry_ref'))}</td><td>{_r2(it.get('stop_ref'))}</td>"
+            f"<td>{it.get('_durum')}</td></tr>")
     inputs = "".join(f"<li>{k}: {_STATUS_EMOJI.get(v, '')} {v}</li>"
                      for k, v in a["inputs_status"].items())
     guard = "".join(f"<li>{g}</li>" for g in a.get("guardrail_log", []))
@@ -292,10 +319,10 @@ def render_html(advisory):
     takas_rows = ""
     for tkr, info in (tk.get("per_ticker") or {}).items():
         if "mark" not in info:
-            takas_rows += (f"<tr><td>{tkr}</td><td colspan='4'>{info.get('durum','—')}</td></tr>")
+            takas_rows += (f"<tr><td>{_tv(tkr)}</td><td colspan='4'>{info.get('durum','—')}</td></tr>")
             continue
         al = "<br>".join(info.get("alerts", [])) or "—"
-        takas_rows += (f"<tr><td>{info['mark']} {tkr}</td>"
+        takas_rows += (f"<tr><td>{info['mark']} {_tv(tkr)}</td>"
                        f"<td>{' | '.join(info.get('key', [])) or '—'}</td>"
                        f"<td>{info.get('top_buyer', '—')}</td>"
                        f"<td>{info.get('top_seller', '—')}</td>"
@@ -307,7 +334,7 @@ def render_html(advisory):
     if wlw:
         bar = a.get("weekly_lead_bar") or "?"
         wl_rows = "".join(
-            f"<tr><td><b>{w['ticker']}</b></td>"
+            f"<tr><td><b>{_tv(w['ticker'])}</b></td>"
             f"<td><span class='tag tag-w'>1w</span> + {'+'.join(w.get('tf') or [])}</td></tr>"
             for w in wlw)
         weekly_lead_html = (
@@ -374,6 +401,14 @@ ul.guard {{ font-size:0.76rem; color:var(--text-secondary); line-height:1.6; pad
 .disclaimer {{ color:var(--nox-orange); font-size:0.72rem; margin-top:28px; line-height:1.5;
   border-top:1px solid var(--border-subtle); padding-top:14px; }}
 td b {{ color:var(--text-primary); }}
+details.fulllist {{ margin-top:26px; border:1px solid var(--border-subtle); border-radius:12px;
+  background:var(--bg-card); padding:0 4px; }}
+details.fulllist > summary {{ cursor:pointer; list-style:none; padding:14px 16px; font-family:var(--font-display);
+  font-weight:700; font-size:1.0rem; color:var(--nox-gold); user-select:none; }}
+details.fulllist > summary::-webkit-details-marker {{ display:none; }}
+details.fulllist > summary:hover {{ color:var(--text-primary); }}
+details.fulllist[open] > summary {{ border-bottom:1px solid var(--border-subtle); }}
+details.fulllist .note {{ padding:10px 16px 0; }}
 </style></head><body>
 <div class="aurora-bg"><div class="aurora-layer aurora-layer-1"></div>
 <div class="aurora-layer aurora-layer-2"></div><div class="aurora-layer aurora-layer-3"></div></div>
@@ -414,6 +449,16 @@ td b {{ color:var(--text-primary); }}
 
   <h2 class="sec">Korkuluk müdahaleleri</h2>
   <ul class="guard">{guard or '<li>yok</li>'}</ul>
+
+  <details class="fulllist">
+    <summary>📋 Bütçe kısıtı olmasa — TÜM liste ({len(full_items)}) ▾</summary>
+    <p class="note">Portföy nakit/limit kısıtı dikkate alınmadan TÜM DE adayları
+    (alınabilir + bütçe duvarına takılanlar). Durum kolonu hangisinin bütçeyle
+    elendiğini gösterir.</p>
+    <div class="nox-table-wrap"><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>
+    <th>🔗 Tüm çakışma</th><th>Bölüm</th><th>Giriş</th><th>Stop</th><th>Durum</th>
+    </tr></thead><tbody>{full_rows}</tbody></table></div>
+  </details>
 
   <p class="disclaimer">⚠️ {a['disclaimer_tr']}</p>
 </div>
