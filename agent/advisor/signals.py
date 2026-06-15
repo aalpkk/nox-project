@@ -98,14 +98,21 @@ def _trident_bos(asof):
     return _trident_bos._v
 
 
-def mb_birth_xtf(asof, lower_offset_days=4):
-    """Çapraz-TF above_mb_birth çakışması — DE CSV'den DEĞİL, mb_scanner_events
+def mb_birth_xtf(asof):
+    """Çapraz-TF above_mb TAZE çakışması — DE CSV'den DEĞİL, mb_scanner_events
     parquet'lerinden (point-in-time, event_bar_date ≤ asof).
 
-    HAFTALIK-LİDER çakışma (kullanıcı isteği): son KAPANMIŞ haftalık barda mb_1w
-    above_mb_birth + aynı hafta(+bugüne kadar) günlük/5h above_mb_birth. DE watchlist
-    haftalık STATE'i o günün aday-satırı olarak emit ETMEZ → bu çakışma DE CSV'sinde
-    GÖRÜNMEZ; burada parquet'ten kurtarılır (cache'li).
+    HAFTALIK-LİDER çakışma (kullanıcı isteği): her TF'de mb above_mb_birth'ün
+    **SON BARDA + TAZE** olması — son KAPANMIŞ haftalık barda mb_1w above + SON
+    günlük/5h barda mb_1d/mb_5h above. "Taze" = ticker'ın o TF'deki EN SON olayı
+    above_mb_birth (sonradan mit_touch ile bölgeye geri DÜŞMEMİŞ) VE o TF'nin SON
+    barında. Eski 4-günlük pencere KULLANILMAZ — doğup geri düşen sinyali saymaz.
+    DE watchlist haftalık STATE'i aday-satırı olarak emit etmez → DE CSV'de GÖRÜNMEZ;
+    parquet'ten kurtarılır (cache'li).
+
+    NOT: parquet son bar = master-data tarihi (örn. Cuma 06-12). asof Pazartesi
+    olsa da hafta-sonu BIST kapalı; canlı gün-içi (yeni iş günü) barlar bu veride
+    YOK → "son bar" = son master barı.
 
     Döner: {"weekly_bar": "YYYY-MM-DD",
             "per_ticker": {T: {"weekly_bar","tf":[...],"weekly_lead":bool}}}
@@ -117,42 +124,45 @@ def mb_birth_xtf(asof, lower_offset_days=4):
 
     asof_ts = pd.Timestamp(asof)
 
-    def _births(tf):
+    def _fresh_above(tf, bar_cap):
+        """(set(taze-above ticker), son_bar) — ticker'ın EN SON olayı bar_cap'a
+        kadar above_mb_birth VE o TF'nin SON barında ise TAZE sayılır."""
         p = OUT_DIR / f"mb_scanner_events_mb_{tf}.parquet"
         if not p.exists():
-            return pd.DataFrame(columns=["tkr", "d"])
+            return set(), None
         df = pd.read_parquet(p, columns=["ticker", "event_type", "event_bar_date"])
-        df = df[df["event_type"] == "above_mb_birth"].copy()
         df["d"] = pd.to_datetime(df["event_bar_date"])
-        df = df[df["d"] <= asof_ts]
+        df = df[df["d"] <= bar_cap].copy()
+        if df.empty:
+            return set(), None
         df["tkr"] = df["ticker"].astype(str).str.upper()
-        return df[["tkr", "d"]]
+        last_bar = df["d"].max()
+        # ticker başına EN SON olay; above_mb_birth VE son barda mı?
+        latest = df.sort_values("d").groupby("tkr").tail(1)
+        fresh = latest[(latest["d"] == last_bar) &
+                       (latest["event_type"] == "above_mb_birth")]
+        return set(fresh["tkr"]), last_bar
 
-    # KAPANMIŞ haftalık bar (W-FRI etiketleme): asof'un HAFTASI henüz oluşuyor olabilir.
-    # asof Cuma/Cmt/Pzr ise o haftanın Cuma'sı kapandı; Pzt-Per ise önceki Cuma son
-    # kapanmış bar. Ham max(bar) ALMA → hafta-ortası koşuda provizyonel/gelecek-Cuma
-    # barını seçer (right-edge maturation riski, DE v1 ile aynı).
-    wd = asof_ts.weekday()                                  # Pzt=0 ... Cuma=4 ... Pzr=6
-    days_since_fri = (wd - 4) % 7                           # son Cuma'ya kaç gün
+    # KAPANMIŞ haftalık bar (W-FRI): asof'un HAFTASI oluşuyor olabilir → provizyonel
+    # Cuma'yı düş (Pzt-Per → önceki Cuma; Cuma/hafta-sonu → o hafta).
+    wd = asof_ts.weekday()
+    days_since_fri = (wd - 4) % 7
     last_closed_fri = (asof_ts - pd.Timedelta(days=days_since_fri)).normalize()
 
     try:
-        w, dd, h = _births("1w"), _births("1d"), _births("5h")
-        w = w[w["d"] <= last_closed_fri]                   # provizyonel/oluşan haftayı düş
-        if w.empty:
-            out = {"weekly_bar": None, "per_ticker": {}}
+        w_set, w_bar = _fresh_above("1w", last_closed_fri)
+        d_set, _ = _fresh_above("1d", asof_ts)
+        h_set, _ = _fresh_above("5h", asof_ts)
+        if not w_set or w_bar is None:
+            out = {"weekly_bar": str(w_bar.date()) if w_bar is not None else None,
+                   "per_ticker": {}}
         else:
-            last_w = sorted(w["d"].unique())[-1]           # son KAPANMIŞ haftalık bar
-            w_set = set(w[w["d"] == last_w]["tkr"])         # o barda haftalık doğum
-            lo = last_w - pd.Timedelta(days=lower_offset_days)  # o haftanın başı
-            d_set = set(dd[dd["d"] >= lo]["tkr"])
-            h_set = set(h[h["d"] >= lo]["tkr"])
             per = {}
-            for t in w_set:
-                tf = ([("1d")] if t in d_set else []) + (["5h"] if t in h_set else [])
-                per[t] = {"weekly_bar": str(pd.Timestamp(last_w).date()),
-                          "tf": tf, "weekly_lead": bool(tf)}
-            out = {"weekly_bar": str(pd.Timestamp(last_w).date()), "per_ticker": per}
+            for t in w_set:                               # haftalık TAZE above şart
+                tf = (["1d"] if t in d_set else []) + (["5h"] if t in h_set else [])
+                per[t] = {"weekly_bar": str(pd.Timestamp(w_bar).date()),
+                          "tf": tf, "weekly_lead": bool(tf)}  # + 1d|5h TAZE
+            out = {"weekly_bar": str(pd.Timestamp(w_bar).date()), "per_ticker": per}
     except Exception as e:
         out = {"weekly_bar": None, "per_ticker": {}, "error": str(e)}
 
