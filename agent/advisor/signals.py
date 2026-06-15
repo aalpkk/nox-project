@@ -128,8 +128,17 @@ def mb_birth_xtf(asof, lower_offset_days=4):
         df["tkr"] = df["ticker"].astype(str).str.upper()
         return df[["tkr", "d"]]
 
+    # KAPANMIŞ haftalık bar (W-FRI etiketleme): asof'un HAFTASI henüz oluşuyor olabilir.
+    # asof Cuma/Cmt/Pzr ise o haftanın Cuma'sı kapandı; Pzt-Per ise önceki Cuma son
+    # kapanmış bar. Ham max(bar) ALMA → hafta-ortası koşuda provizyonel/gelecek-Cuma
+    # barını seçer (right-edge maturation riski, DE v1 ile aynı).
+    wd = asof_ts.weekday()                                  # Pzt=0 ... Cuma=4 ... Pzr=6
+    days_since_fri = (wd - 4) % 7                           # son Cuma'ya kaç gün
+    last_closed_fri = (asof_ts - pd.Timedelta(days=days_since_fri)).normalize()
+
     try:
         w, dd, h = _births("1w"), _births("1d"), _births("5h")
+        w = w[w["d"] <= last_closed_fri]                   # provizyonel/oluşan haftayı düş
         if w.empty:
             out = {"weekly_bar": None, "per_ticker": {}}
         else:
