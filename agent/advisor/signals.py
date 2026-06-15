@@ -309,6 +309,27 @@ def load_sector_rotation(asof, stale_days=5):
 
         events = [str(e) for e in df["new_events"].dropna().tail(15) if str(e).strip()]
         ignition = next((e for e in reversed(events) if "BANK_IGNITION" in e), None)
+
+        # ÖNE ÇIKAN SEKTÖRLER: her sektörün kendi-dibi taraması (sector_scan, fiyat-only,
+        # backtest'siz BİLGİ). durum TETİK = dipten taze dönüş; dipten% = dipten kazanç.
+        # _fetch_isy_single ~8 sektör endeksi çeker (hafif). Hata → sektörsüz devam.
+        sectors, favorable = [], []
+        try:
+            from tools.sector_rotation_monitor_v0 import sector_scan
+            sc = sector_scan()
+            for kod, r in sc.iterrows():
+                dipten = float(r.get("dipten")) if pd.notna(r.get("dipten")) else None
+                durum = str(r.get("durum"))
+                row = {"kod": kod, "durum": durum,
+                       "dipten_pct": round(dipten * 100, 1) if dipten is not None else None,
+                       "dd_pct": round(float(r["dd"]) * 100, 1) if pd.notna(r.get("dd")) else None}
+                sectors.append(row)
+                # favori = taze tetik (TETİK) VEYA dipten anlamlı dönüş (>+3%)
+                if durum == "TETİK" or (dipten is not None and dipten > 0.03):
+                    favorable.append(kod)
+        except Exception:
+            pass
+
         return {
             "status": status, "validation": VALIDATION_ROTATION, "asof": asof,
             "bar_date": bar.isoformat(), "xu100": _f(last.get("xu100")),
@@ -318,6 +339,8 @@ def load_sector_rotation(asof, stale_days=5):
             "brake_explore": bool(last.get("brake_off")),
             "recent_events": events[-6:],
             "last_bank_ignition": ignition,
+            "sectors": sectors,            # her sektör durumu (TETİK/ARMED/TREND + dipten%)
+            "favorable_sectors": favorable,  # öne çıkan sektör endeksleri (TETİK/dipten>3%)
             "note": ("BANK_IGNITION sonrası tarihsel desen (keşifsel, pre-spec'siz): "
                      "banka bacağı söner, ~4-8 hafta endeks + küçük taraf (XHARZ/XTUMY) "
                      "lehte; sıçrayan bankayı kovalama"),
@@ -325,6 +348,68 @@ def load_sector_rotation(asof, stale_days=5):
     except Exception as e:
         return {"status": "UNAVAILABLE", "validation": VALIDATION_ROTATION,
                 "asof": asof, "note": str(e)}
+
+
+def cross_signal_membership(asof, tickers, recent_days=15):
+    """triangle_break + horizontal_base CROSS-tag — DE aday-family'sinde tr/hb YOK
+    (adaylar yalnız mb/bb taşıyor), bu yüzden event parquet'lerinden okunur. DE üretir,
+    CI'da de-v1-mb-scanner artifact'ı ile taşınır. Döner {ticker: [tag...]}.
+
+    Yalnız BİLGİ/çakışma — bu sinyaller advisor AL-kapısı değil. recent_days içinde
+    (son ~3 hafta) event'i olan ticker tag'lenir (triangle/hb yavaş kurulum sinyalleri).
+    """
+    asof_ts = pd.Timestamp(asof)
+    lo = asof_ts - pd.Timedelta(days=recent_days)
+    want = {str(t).upper() for t in (tickers or [])}
+    out = {}
+    if not want:
+        return out
+    # triangle_break (yön=long/up yanlısı)
+    try:
+        p = OUT_DIR / "decision_engine_lab_triangle_break_events_3y.parquet"
+        if p.exists():
+            df = pd.read_parquet(p, columns=["ticker", "signal_date", "side"])
+            df["d"] = pd.to_datetime(df["signal_date"])
+            df = df[(df["d"] >= lo) & (df["d"] <= asof_ts)].copy()
+            if "side" in df.columns:
+                sd = df["side"].astype(str).str.lower()
+                df = df[sd.isin(("long", "up", "bull", "buy", "")) | sd.str.contains("long|up|bull", na=False)]
+            for t in {str(x).upper() for x in df["ticker"]} & want:
+                out.setdefault(t, []).append("triangle_break")
+    except Exception:
+        pass
+    # horizontal_base (breakout/above/bounce durumları)
+    try:
+        p = OUT_DIR / "horizontal_base_event_v1.parquet"
+        if p.exists():
+            df = pd.read_parquet(p, columns=["ticker", "bar_date", "signal_state"])
+            df["d"] = pd.to_datetime(df["bar_date"])
+            df = df[(df["d"] >= lo) & (df["d"] <= asof_ts)].copy()
+            if "signal_state" in df.columns:
+                # 'trigger' = yatay-taban kırılımı (ana sinyal), 'retest_bounce' = retest;
+                # 'extended' (kırılım üstü uzamış/eski) HARİÇ → taze kırılım/retest tag'le.
+                ss = df["signal_state"].astype(str).str.lower()
+                df = df[ss.str.contains("trigger|break|above|bounce|retest|birth", na=False)]
+            for t in {str(x).upper() for x in df["ticker"]} & want:
+                out.setdefault(t, []).append("horizontal_break")
+    except Exception:
+        pass
+    return out
+
+
+def load_sector_map():
+    """ticker → sector_index eşlemesi (tools/sector_map.json, KAP kaynaklı, cache'li)."""
+    if not hasattr(load_sector_map, "_v"):
+        try:
+            import json as _json
+            p = Path("tools/sector_map.json")
+            m = _json.loads(p.read_text(encoding="utf-8"))
+            load_sector_map._v = {
+                t.upper(): (info.get("sector_index"), info.get("sector"))
+                for t, info in (m.get("tickers") or {}).items()}
+        except Exception:
+            load_sector_map._v = {}
+    return load_sector_map._v
 
 
 # ── HW OB/OS çoklu-TF dönüş taraması (BETİMSEL — AL tarafı backtest'te REDDEDİLDİ) ──

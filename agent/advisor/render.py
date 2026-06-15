@@ -143,6 +143,23 @@ def render_telegram_tr(advisory):
                      f"keşif={rot.get('state_explore_confirm_off')} · {fren} <i>(paper)</i>")
         if rot.get("last_bank_ignition"):
             lines.append(f"   ⚡ {rot['last_bank_ignition']}")
+        # ÖNE ÇIKAN SEKTÖRLER + o sektördeki DE adayların
+        fav = rot.get("favorable_sectors") or []
+        sec_l = {s["kod"]: s for s in (rot.get("sectors") or [])}
+        if fav:
+            def _sdesc(k):
+                s = sec_l.get(k, {})
+                dp = s.get("dipten_pct")
+                return f"{k}({s.get('durum','?')}{f' dipten+{dp}%' if dp else ''})"
+            lines.append("   📈 öne çıkan sektörler: " + ", ".join(_sdesc(k) for k in fav))
+            rp = a.get("rotation_picks") or {}
+            if rp:
+                for si, info in rp.items():
+                    lines.append(f"      → <b>{si}</b>: {', '.join(info['tickers'])}")
+                lines.append("   <i>(sektör/zaman seçimi doğrulanmış; sektör-içi hisse seçimi "
+                             "robust DEĞİL → eşit-ağırlık/bilgi)</i>")
+            else:
+                lines.append("   <i>(bu sektörlerde bugün DE adayı yok)</i>")
         lines.append("")
 
     # GENİŞ MAKRO — NASDAQ/S&P, layer1 kripto, XAU/XAG/metaller, FX, faiz (BİLGİ)
@@ -410,6 +427,25 @@ def render_html(advisory):
                     f"primer=<b>{rot.get('state_primary_confirm_on')}</b> · "
                     f"keşif=<b>{rot.get('state_explore_confirm_off')}</b> · {fren} "
                     f"<i>(paper-forward, canlı kapı kapalı)</i>{ign}</p>")
+        fav = rot.get("favorable_sectors") or []
+        sec_l = {s["kod"]: s for s in (rot.get("sectors") or [])}
+        rp = a.get("rotation_picks") or {}
+        if fav:
+            pick_rows = ""
+            for k in fav:
+                s = sec_l.get(k, {})
+                dp = s.get("dipten_pct")
+                tks = (rp.get(k) or {}).get("tickers") or []
+                tlinks = ", ".join(_tv(t) for t in tks) if tks else "<span class='meta'>bugün DE adayı yok</span>"
+                pick_rows += (f"<tr><td><b>{k}</b></td>"
+                              f"<td>{s.get('durum','?')}{f' · dipten +{dp}%' if dp else ''}</td>"
+                              f"<td>{tlinks}</td></tr>")
+            rot_html += (
+                "<p class='note'>📈 <b>Rotasyonda öne çıkan sektörler → o sektördeki DE adayların</b> "
+                "<i>(sektör/zaman seçimi DOĞRULANMIŞ edge; sektör-içi hisse seçimi robust DEĞİL "
+                "→ eşit-ağırlık/bilgi)</i></p>"
+                "<div class='nox-table-wrap'><table><thead><tr><th>Sektör</th><th>Durum</th>"
+                f"<th>DE adayların</th></tr></thead><tbody>{pick_rows}</tbody></table></div>")
     hw = a.get("hw_obos") or {}
     hw_html = ""
     if hw.get("scan_date"):
@@ -418,7 +454,7 @@ def render_html(advisory):
                    f"↓{hw.get('n_sat_ob', 0)} tepe / ↑{hw.get('n_al_os', 0)} dip "
                    f"<i>(betimsel, edge yok)</i></p>")
     msnap = a.get("macro_snapshot") or []
-    macro_html = ""
+    macro_table = ""
     if msnap:
         def _pct(v):
             return f"{v:+.1f}%" if isinstance(v, (int, float)) else "—"
@@ -438,12 +474,16 @@ def render_html(advisory):
                           f"<td>{_pct(m.get('chg_1m'))}</td>"
                           f"<td>{f'{rsi:.0f}' if isinstance(rsi,(int,float)) else '—'}</td>"
                           f"<td>{m.get('trend','?')}</td><td>{rev_h}</td></tr>")
-        macro_html = (
-            "<h2 class='sec'>🌍 Makro & Rejim <span class='sec-sub'>trend + dipten/tepeden dönüş · bilgi</span></h2>"
-            f"{rdp_html}{rot_html}{hw_html}"
+        macro_table = (
             "<div class='nox-table-wrap'><table><thead><tr><th>Kategori</th><th>Enstrüman</th>"
             "<th>Fiyat</th><th>1g</th><th>5g</th><th>1a</th><th>RSI</th><th>Trend</th><th>Dönüş</th>"
             f"</tr></thead><tbody>{mrows}</tbody></table></div>")
+    # "Makro & Rejim" bölümü: RDP/sektör/hw paragrafları VEYA makro tablosu varsa render et
+    macro_html = ""
+    if rdp_html or rot_html or hw_html or macro_table:
+        macro_html = (
+            "<h2 class='sec'>🌍 Makro & Rejim <span class='sec-sub'>trend + dipten/tepeden dönüş · bilgi</span></h2>"
+            f"{rdp_html}{rot_html}{hw_html}{macro_table}")
 
     # haftalık-lider çakışma (aday-dışı) — HTML bölümü (NOX temalı)
     wlw = a.get("weekly_lead_watch") or []
