@@ -70,18 +70,49 @@ def _trident_sil_p33(default=-10.49):
     return _trident_sil_p33._v
 
 
+def _trident_bos(asof):
+    """G3 için: (ticker→en son ≤asof mb/bb_1d event BoS) + events BoS p67 eşiği.
+    BoS canlı DE CSV'sinde YOK → mb_scanner_events parquet'inden join (güncel kaynak,
+    eşik de aynı dağılımdan = iç-tutarlı). cache'li."""
+    if not hasattr(_trident_bos, "_v"):
+        try:
+            frames = []
+            for f in ("mb_scanner_events_mb_1d", "mb_scanner_events_bb_1d"):
+                p = OUT_DIR / f"{f}.parquet"
+                if p.exists():
+                    frames.append(pd.read_parquet(
+                        p, columns=["ticker", "event_bar_date", "bos_distance_atr_at_event"]))
+            ev = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            if ev.empty:
+                _trident_bos._v = ({}, 0.573)
+            else:
+                ev["event_bar_date"] = pd.to_datetime(ev["event_bar_date"])
+                ev["tkr"] = ev["ticker"].astype(str).str.upper()
+                p67 = float(ev["bos_distance_atr_at_event"].quantile(0.67))
+                ev = ev[ev["event_bar_date"] <= pd.Timestamp(asof)].copy()
+                latest = ev.sort_values("event_bar_date").groupby("tkr").tail(1)
+                bmap = dict(zip(latest["tkr"], latest["bos_distance_atr_at_event"]))
+                _trident_bos._v = (bmap, p67)
+        except Exception:
+            _trident_bos._v = ({}, 0.573)
+    return _trident_bos._v
+
+
 def _parse_de_csv(path, asof, status="OK"):
     df = pd.read_csv(path)
     df["ticker"] = df["ticker"].astype(str).str.upper()
     sil_p33 = _trident_sil_p33()
+    bos_map, bos_p67 = _trident_bos(asof)
 
     def _row(r):
-        # trident_geo = G1(D_pct∈[20,30)) ∧ G2(SIL≤p33 derin) — G4 (XU100 rejim) YOK,
-        # G3 (BoS) watchlist CSV'sinde yok → 2/3 geometrik proxy. Backtest (G1∧G2∧G3,
+        # trident_geo = G1(D∈[20,30)) ∧ G2(SIL≤p33) ∧ G3(BoS≥p67) — G4 (XU100 rejim) YOK.
+        # G1/G2 DE CSV'den; G3 BoS mb_scanner_events'ten join. Backtest (G1∧G2∧G3,
         # G4'süz) trident'i birincil ayrıştıran gösterdi; rejim-yukarı şartı (G4) yok.
         d = _f(r.get("trident_D_pct")); s = _f(r.get("trident_SIL_pct_below_B"))
-        trident_geo = (d is not None and 20.0 <= d < 30.0 and
-                       s is not None and s <= sil_p33)
+        b = bos_map.get(r["ticker"])
+        g1 = d is not None and 20.0 <= d < 30.0
+        g2 = s is not None and s <= sil_p33
+        g3 = b is not None and b >= bos_p67
         return {
             "ticker": r["ticker"], "section": r["section"],
             "family": r.get("family", ""), "timeframe": str(r.get("timeframe", "")),
@@ -90,8 +121,9 @@ def _parse_de_csv(path, asof, status="OK"):
             "atr": _f(r.get("atr")), "risk_atr": _f(r.get("risk_atr")),
             "reason_codes": r.get("reason_codes", ""),
             "trident_tier1": str(r.get("trident_tier1_active", "")).lower() in ("true", "1"),
-            "trident_geo": bool(trident_geo),  # G4'süz (rejim-bağımsız) geometri
-            "trident_D_pct": d, "trident_sil": s,
+            "trident_geo": bool(g1 and g2 and g3),  # tam G1∧G2∧G3 (G4'süz)
+            "trident_gates": f"{'G1' if g1 else '-'}{'G2' if g2 else '-'}{'G3' if g3 else '-'}",
+            "trident_D_pct": d, "trident_sil": s, "trident_bos": b,
         }
 
     buy_rows, watch_rows = [], []
