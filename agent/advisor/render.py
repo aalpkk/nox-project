@@ -237,7 +237,11 @@ def render_html(advisory):
     def rows(items, cols):
         out = ""
         for it in items:
-            out += "<tr>" + "".join(f"<td>{it.get(c, '')}</td>" for c in cols) + "</tr>"
+            cells = ""
+            for c in cols:
+                v = it.get(c, "")
+                cells += f"<td><b>{v}</b></td>" if c == "ticker" else f"<td>{v}</td>"
+            out += f"<tr>{cells}</tr>"
         return out
 
     pos_rows = rows(a["position_recommendations"],
@@ -297,55 +301,122 @@ def render_html(advisory):
                        f"<td>{info.get('top_seller', '—')}</td>"
                        f"<td>{info.get('ice', '—')}</td>"
                        f"<td style='color:#f85149'>{al}</td></tr>")
-    # haftalık-lider çakışma (aday-dışı) — HTML bölümü
+    # haftalık-lider çakışma (aday-dışı) — HTML bölümü (NOX temalı)
     wlw = a.get("weekly_lead_watch") or []
     weekly_lead_html = ""
     if wlw:
         bar = a.get("weekly_lead_bar") or "?"
-        wl_rows = "".join(f"<tr><td>{w['ticker']}</td><td>1w + {'+'.join(w.get('tf') or [])}</td></tr>"
-                          for w in wlw)
+        wl_rows = "".join(
+            f"<tr><td><b>{w['ticker']}</b></td>"
+            f"<td><span class='tag tag-w'>1w</span> + {'+'.join(w.get('tf') or [])}</td></tr>"
+            for w in wlw)
         weekly_lead_html = (
-            f"<h2>📐 Haftalık-lider çakışma — aday-dışı (bilgi)</h2>"
-            f"<p class='meta'>Son kapanmış haftalık barda ({bar}) mb_1w above_mb_birth + "
-            f"aynı hafta günlük/5h above_mb_birth. DE adayı DEĞİL, çapraz-TF yapı hizalanması.</p>"
-            f"<table><tr><th>Hisse</th><th>Çakışan TF</th></tr>{wl_rows}</table>")
+            f"<h2 class='sec'>📐 Haftalık-lider çakışma <span class='sec-sub'>aday-dışı · bilgi</span></h2>"
+            f"<p class='note'>Son kapanmış haftalık barda (<b>{bar}</b>) <code>mb_1w above_mb_birth</code> + "
+            f"aynı hafta günlük/5h <code>above_mb_birth</code>. DE adayı DEĞİL — çapraz-TF yapı hizalanması.</p>"
+            f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Çakışan TF</th></tr></thead>"
+            f"<tbody>{wl_rows}</tbody></table></div>")
 
     takas_html = ""
     if takas_banner or takas_rows:
         n_al = tk.get("n_alerts", 0)
-        takas_html = (f"<h2>Takas / AKD (Matriks){' — '+str(n_al)+' alarm' if n_al else ''}</h2>"
-                      f"{takas_banner}")
+        takas_html = (f"<h2 class='sec'>Takas / AKD <span class='sec-sub'>Matriks"
+                      f"{' · '+str(n_al)+' alarm' if n_al else ''}</span></h2>{takas_banner}")
         if takas_rows:
-            takas_html += ("<table><tr><th>Hisse</th><th>Key kurum (G/3A)</th>"
-                           "<th>Bugün alıcı</th><th>Bugün satıcı</th><th>ICE (3g)</th>"
-                           "<th>Alarm</th></tr>" + takas_rows + "</table>")
+            takas_html += ("<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th>"
+                           "<th>Key kurum (G/3A)</th><th>Bugün alıcı</th><th>Bugün satıcı</th>"
+                           "<th>ICE (3g)</th><th>Alarm</th></tr></thead><tbody>"
+                           + takas_rows + "</tbody></table></div>")
 
-    html = f"""<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">
-<title>NOX Danışman {a['asof']}</title>
+    from core.reports import _NOX_CSS
+    mode_tr = ("kural-tabanlı" if a["mode"] == "deterministic_fallback" else "LLM")
+    inv = ps["invested_pct"]
+    risk_pct = ps["open_risk_pct"]
+    cap = a["risk_summary"]["cap_pct"]
+
+    html = f"""<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nyx Portföy Tavsiye Ekranı — {a['asof']}</title>
 <style>
-body{{font-family:-apple-system,Segoe UI,sans-serif;background:#0d1117;color:#e6edf3;margin:24px}}
-h1,h2{{color:#58a6ff}} table{{border-collapse:collapse;width:100%;margin:12px 0}}
-td,th{{border:1px solid #30363d;padding:6px 10px;font-size:13px;text-align:left}}
-th{{background:#161b22}} .meta{{color:#8b949e;font-size:13px}}
-.disclaimer{{color:#f0883e;font-size:12px;margin-top:24px}}
+{_NOX_CSS}
+.adv-wrap {{ position:relative; z-index:1; max-width:1180px; margin:0 auto; padding:20px 18px 48px; }}
+.adv-header {{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
+  gap:12px; padding:18px 0 16px; margin-bottom:18px; border-bottom:1px solid var(--border-subtle); }}
+.adv-logo {{ font-family:var(--font-display); font-size:1.7rem; font-weight:800; letter-spacing:-0.03em;
+  background:linear-gradient(135deg,#c9a96e,#e8dcc8,#a8876a); -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent; background-clip:text; line-height:1.05; }}
+.adv-logo .sub {{ display:block; font-size:0.42em; font-weight:600; letter-spacing:0.18em;
+  text-transform:uppercase; -webkit-text-fill-color:var(--text-muted); margin-top:3px; }}
+.adv-meta {{ text-align:right; font-size:0.78rem; color:var(--text-muted); font-family:var(--font-mono); line-height:1.6; }}
+.adv-meta b {{ color:var(--nox-gold); }}
+.adv-stats {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:22px; }}
+.adv-stat {{ background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:14px;
+  padding:10px 16px; min-width:130px; }}
+.adv-stat .lbl {{ font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; }}
+.adv-stat .val {{ font-family:var(--font-mono); font-size:1.05rem; font-weight:700; color:var(--text-primary); margin-top:2px; }}
+.adv-stat .val.gold {{ color:var(--nox-gold); }}
+.adv-stat .val.warn {{ color:var(--nox-red); }}
+h2.sec {{ font-family:var(--font-display); font-size:1.1rem; font-weight:700; color:var(--text-primary);
+  margin:26px 0 10px; display:flex; align-items:baseline; gap:10px; }}
+h2.sec .sec-sub {{ font-size:0.7rem; font-weight:500; color:var(--text-muted); text-transform:uppercase;
+  letter-spacing:0.06em; font-family:var(--font-mono); }}
+.note {{ font-size:0.76rem; color:var(--text-secondary); line-height:1.5; margin-bottom:10px; }}
+.note code, td code {{ font-family:var(--font-mono); color:var(--nox-gold); font-size:0.92em; }}
+ul.inputs {{ list-style:none; display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }}
+ul.inputs li {{ background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:20px;
+  padding:5px 12px; font-size:0.72rem; font-family:var(--font-mono); color:var(--text-secondary); }}
+ul.guard {{ font-size:0.76rem; color:var(--text-secondary); line-height:1.6; padding-left:18px; }}
+.tag {{ display:inline-block; padding:1px 6px; border-radius:4px; font-size:0.66rem; font-weight:600;
+  font-family:var(--font-mono); background:var(--nox-gold-dim); color:var(--nox-gold); }}
+.tag-w {{ background:rgba(138,122,158,0.14); color:#a89ec0; }}
+.narrative {{ background:var(--bg-card); border:1px solid var(--border-subtle); border-left:3px solid var(--nox-gold);
+  border-radius:10px; padding:14px 18px; font-size:0.85rem; line-height:1.6; color:var(--text-primary); }}
+.disclaimer {{ color:var(--nox-orange); font-size:0.72rem; margin-top:28px; line-height:1.5;
+  border-top:1px solid var(--border-subtle); padding-top:14px; }}
+td b {{ color:var(--text-primary); }}
 </style></head><body>
-<h1>NOX Portföy Danışmanı — {a['asof']}</h1>
-<p class="meta">mod: {a['mode']} · model: {a.get('model') or '—'} · portföy rev: {a.get('portfolio_rev') or 'lokal'}</p>
-<p>Varlık <b>{_fmt_tl(ps['equity_tl'])} TL</b> · Nakit {_fmt_tl(ps['cash_tl'])} TL ·
-Yatırımda %{ps['invested_pct']:.1f} · Açık risk %{ps['open_risk_pct']:.1f}
-(tavan %{a['risk_summary']['cap_pct']})</p>
-<h2>Girdi durumu</h2><ul>{inputs}</ul>
-<h2>Pozisyon önerileri</h2>
-<table><tr><th>Hisse</th><th>Aksiyon</th><th>Güven</th><th>Adet</th><th>Maliyet</th>
-<th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th></tr>{pos_rows}</table>
-{takas_html}
-<h2>AL adayları</h2>
-<table><tr><th>Hisse</th><th>TF</th><th>Setup</th><th>🔗 TÜM ÇAKIŞMA (DE çoklu-TF + RT/sbt/nox_v3/alsat/triangle...)</th>
-<th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk TL</th></tr>{buy_rows}</table>
-{weekly_lead_html}
-<h2>Genel değerlendirme</h2><p>{a.get('narrative_tr', '')}</p>
-<h2>Korkuluk müdahaleleri</h2><ul>{guard or '<li>yok</li>'}</ul>
-<p class="disclaimer">⚠️ {a['disclaimer_tr']}</p>
+<div class="aurora-bg"><div class="aurora-layer aurora-layer-1"></div>
+<div class="aurora-layer aurora-layer-2"></div><div class="aurora-layer aurora-layer-3"></div></div>
+<div class="mesh-overlay"></div>
+<div class="adv-wrap">
+  <header class="adv-header">
+    <div class="adv-logo">NYX<span class="sub">Portföy Tavsiye Ekranı</span></div>
+    <div class="adv-meta"><b>{a['asof']}</b> · mod: {mode_tr}<br>
+      model: {a.get('model') or '—'} · rev: {a.get('portfolio_rev') or 'lokal'}</div>
+  </header>
+
+  <div class="adv-stats">
+    <div class="adv-stat"><div class="lbl">Varlık</div><div class="val gold">{_fmt_tl(ps['equity_tl'])} ₺</div></div>
+    <div class="adv-stat"><div class="lbl">Nakit</div><div class="val">{_fmt_tl(ps['cash_tl'])} ₺</div></div>
+    <div class="adv-stat"><div class="lbl">Yatırımda</div><div class="val">%{inv:.1f}</div></div>
+    <div class="adv-stat"><div class="lbl">Açık risk</div><div class="val{' warn' if risk_pct > cap else ''}">%{risk_pct:.1f} <span style="font-size:0.6rem;color:var(--text-muted)">/ %{cap}</span></div></div>
+  </div>
+
+  <h2 class="sec">Girdi durumu</h2>
+  <ul class="inputs">{inputs}</ul>
+
+  <h2 class="sec">Pozisyon önerileri</h2>
+  <div class="nox-table-wrap"><table><thead><tr><th>Hisse</th><th>Aksiyon</th><th>Güven</th>
+  <th>Adet</th><th>Maliyet</th><th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th>
+  </tr></thead><tbody>{pos_rows}</tbody></table></div>
+
+  {takas_html}
+
+  <h2 class="sec">AL adayları <span class="sec-sub">DE v1 · paper-track tek-rejim</span></h2>
+  <div class="nox-table-wrap"><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>
+  <th>🔗 Tüm çakışma</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>
+  </tr></thead><tbody>{buy_rows}</tbody></table></div>
+
+  {weekly_lead_html}
+
+  <h2 class="sec">Genel değerlendirme</h2>
+  <div class="narrative">{a.get('narrative_tr', '') or '—'}</div>
+
+  <h2 class="sec">Korkuluk müdahaleleri</h2>
+  <ul class="guard">{guard or '<li>yok</li>'}</ul>
+
+  <p class="disclaimer">⚠️ {a['disclaimer_tr']}</p>
+</div>
 </body></html>"""
     ADVISOR_DIR.mkdir(parents=True, exist_ok=True)
     path = ADVISOR_DIR / f"advisor_report_{a['asof']}.html"
