@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NOX master-data-pull watchdog — hafta içi 18:50 TR; GitHub cron kaçırırsa tetikler.
+     Kurulum: cp scripts/com.nox.masterpull.plist ~/Library/LaunchAgents/ &&
+              launchctl load ~/Library/LaunchAgents/com.nox.masterpull.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.nox.masterpull</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/zsh</string><string>-lc</string>
+    <string>~/Projects/nox_project/scripts/masterpull_watchdog.sh</string></array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>50</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>50</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>50</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>50</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>50</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>/tmp/com.nox.masterpull.out</string>
+  <key>StandardErrorPath</key><string>/tmp/com.nox.masterpull.err</string>
+</dict></plist>
