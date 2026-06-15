@@ -140,19 +140,29 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                 if tg not in cl:
                     cl.append(tg)
             b["context_lists"] = cl
+        # cluster3 STANDALONE liste (örtüşmese de raporla — aday-dışı c3 açık havuzu)
+        cand_set = set(all_tk)
+        advisory["cluster3_open"] = sorted(
+            ({"ticker": str(c["ticker"]).upper(),
+              "signal_date": c.get("signal_date"),
+              "in_de": str(c["ticker"]).upper() in cand_set}
+             for c in (c3.get("open_candidates") or [])),
+            key=lambda x: (not x["in_de"], x["ticker"]))[:40]
         print(f"   çapraz çakışma: cluster3={n_c3} triangle={n_tr} horizontal={n_hb} "
               f"(açık c3 havuzu {len(c3_open)})")
     except Exception as e:
         print(f"   çapraz çakışma HATA: {e}")
+        advisory["cluster3_open"] = []
 
     # 6c2) SEKTÖR ROTASYON operasyonelleştirme: öne çıkan sektörler → o sektördeki
     #      DE adayların. Sektör/zaman seçimi DOĞRULANMIŞ edge; sektör-İÇİ hisse seçimi
     #      robust DEĞİL → eşit-ağırlık/bilgi (PR #81/#86 anatomi + #109 faktör araştırması).
     try:
         smap = signals.load_sector_map()
-        rot = validated.get("sector_rotation", {})
-        fav = set(rot.get("favorable_sectors") or [])
-        sec_lookup = {s["kod"]: s for s in (rot.get("sectors") or [])}
+        strength = signals.load_sector_strength(asof)  # BİRİNCİL Fintables, FALLBACK İŞY
+        sectors = strength.get("sectors") or []
+        fav = set(strength.get("favorable_sectors") or [])
+        sec_lookup = {s["kod"]: s for s in sectors}
         picks = {}  # sector_index → [ticker...]
         for b in advisory.get("buy_candidates", []):
             si, sname = smap.get(b["ticker"], (None, None))
@@ -161,13 +171,17 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
             if si and si in fav:
                 b["sector_favorable"] = True
                 picks.setdefault(si, []).append(b["ticker"])
+        advisory.setdefault("sector_rotation", {})
+        advisory["sector_rotation"]["sectors"] = sectors
+        advisory["sector_rotation"]["favorable_sectors"] = sorted(fav)
+        advisory["sector_rotation"]["strength_source"] = strength.get("source")
         advisory["rotation_picks"] = {
-            si: {"tickers": tk,
-                 "durum": sec_lookup.get(si, {}).get("durum"),
+            si: {"tickers": tk, "durum": sec_lookup.get(si, {}).get("durum"),
                  "dipten_pct": sec_lookup.get(si, {}).get("dipten_pct")}
             for si, tk in sorted(picks.items())}
-        print(f"   sektör rotasyon: öne çıkan {sorted(fav)} → eşleşen aday {sum(len(v) for v in picks.values())} "
-              f"({len(picks)} sektörde)")
+        print(f"   sektör rotasyon [{strength.get('source')}]: öne çıkan {sorted(fav)} → "
+              f"eşleşen aday {sum(len(v) for v in picks.values())} ({len(picks)} sektörde, "
+              f"{len(sectors)} sektör taranmış)")
     except Exception as e:
         print(f"   sektör rotasyon eşleme HATA: {e}")
         advisory["rotation_picks"] = {}
@@ -175,7 +189,7 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     # 6d) XU100 RDP rejimi (long/flat/short) + geniş makro snapshot + tavan lock — BİLGİ
     advisory["xu100_rdp"] = signals.load_xu100_rdp(asof)
     advisory["macro_snapshot"] = (macro or {}).get("snapshot", [])
-    advisory["tavan_lock"] = validated.get("tavan_lock", {})  # sabah 11:00 lock pick'leri (pozisyon bağlamı)
+    advisory["tavan_lock"] = signals.load_tavan_scan_live(asof)  # tavan-scan-live (kullanıcı: lock yerine bu)
     rdp = advisory["xu100_rdp"]
     print(f"   XU100 RDP: {rdp.get('regime')} ({rdp.get('date')}, {rdp.get('status')})"
           f"{' ⚠️SAT/risk-off' if rdp.get('is_sell') else ''}")

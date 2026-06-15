@@ -397,6 +397,124 @@ def cross_signal_membership(asof, tickers, recent_days=15):
     return out
 
 
+_SECTOR_CODES = ["XBANK", "XHOLD", "XUSIN", "XKMYA", "XELKT", "XGIDA", "XSGRT",
+                 "XMESY", "XUTEK", "XGMYO", "XUMAL", "XTRZM", "XMADN", "XINSA"]
+
+
+def _sector_states_from_closes(by):
+    """{kod: [eski→yeni kapanış]} → (sectors[], favorable[]). durum dip↗/TREND↑/nötr/tepe↘."""
+    sectors, fav = [], []
+    for kod, cl in by.items():
+        if len(cl) < 20:
+            continue
+        s = pd.Series([float(x) for x in cl])
+        last = s.iloc[-1]
+        chg5 = (last / s.iloc[-6] - 1) * 100 if len(s) >= 6 else None
+        chg20 = (last / s.iloc[-21] - 1) * 100 if len(s) >= 21 else None
+        d = s.diff()
+        up = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+        dn = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+        rsi = 100 - 100 / (1 + up / dn.replace(0, 1e-9))
+        rsi_now, rsi_prev = float(rsi.iloc[-1]), float(rsi.iloc[-2])
+        rsi_min5 = float(rsi.iloc[-5:].min())
+        rsi_max5 = float(rsi.iloc[-5:].max())
+        ema10 = float(s.ewm(span=10).mean().iloc[-1])
+        trend_up = last > ema10 and (chg5 or 0) > 0
+        dip = rsi_min5 < 40 and rsi_now > rsi_prev and last > s.iloc[-2]
+        tepe = rsi_max5 > 72 and rsi_now < rsi_prev and last < s.iloc[-2]
+        durum = "dip↗" if dip else ("TREND↑" if trend_up else "tepe↘" if tepe else "nötr")
+        sectors.append({"kod": kod, "durum": durum,
+                        "dipten_pct": round(chg5, 1) if chg5 is not None else None,
+                        "dd_pct": round(chg20, 1) if chg20 is not None else None,
+                        "rsi": round(rsi_now, 0)})
+        if dip or trend_up:
+            fav.append(kod)
+    sectors.sort(key=lambda x: -(x.get("dipten_pct") or -99))
+    return sectors, fav
+
+
+def load_sector_strength(asof, n_bars=40):
+    """Sektör gücü/öne-çıkanlar — BİRİNCİL Fintables (endeks_mumlar_gunluk_gh, CI'da
+    FINTABLES_MCP_TOKEN), FALLBACK İŞY (sector_scan, lokal/monitör ortamı). yfinance
+    BIST alt-sektör endekslerini N/A döndürdüğü için kullanılmaz.
+
+    Döner: {"source", "sectors":[{kod,durum,dipten_pct,...}], "favorable_sectors":[...]}.
+    """
+    # 1) Fintables (birincil)
+    try:
+        from nyxexpansion.intraday.fetchers.fintables import (
+            FintablesMCPClient, _parse_markdown_table)
+        cli = FintablesMCPClient()
+        by = {}
+        codes = _SECTOR_CODES
+        for i in range(0, len(codes), 7):
+            batch = codes[i:i + 7]
+            inc = ", ".join(f"'{c}'" for c in batch)
+            sql = (f"WITH r AS (SELECT kod, zaman_utc, kapanis, ROW_NUMBER() OVER "
+                   f"(PARTITION BY kod ORDER BY zaman_utc DESC) rn FROM endeks_mumlar_gunluk_gh "
+                   f"WHERE kod IN ({inc})) SELECT kod, zaman_utc, kapanis FROM r "
+                   f"WHERE rn <= {n_bars} ORDER BY kod, zaman_utc ASC LIMIT 300")
+            payload = cli.call_tool("veri_sorgula", {"sql": sql, "purpose": "NOX sektör rotasyon"})
+            for row in _parse_markdown_table((payload or {}).get("table") or ""):
+                if row.get("kapanis"):
+                    by.setdefault(row["kod"], []).append(row["kapanis"])
+        if by:
+            sectors, fav = _sector_states_from_closes(by)
+            if sectors:
+                return {"source": "fintables", "sectors": sectors, "favorable_sectors": fav}
+    except Exception as e:
+        print(f"   [sektör] Fintables başarısız ({str(e)[:60]}) → İŞY fallback")
+
+    # 2) İŞY fallback (sector_scan)
+    try:
+        from tools.sector_rotation_monitor_v0 import sector_scan
+        sc = sector_scan()
+        sectors, fav = [], []
+        for kod, r in sc.iterrows():
+            dipten = float(r.get("dipten")) if pd.notna(r.get("dipten")) else None
+            durum = str(r.get("durum"))
+            sectors.append({"kod": kod, "durum": durum,
+                            "dipten_pct": round(dipten * 100, 1) if dipten is not None else None,
+                            "dd_pct": round(float(r["dd"]) * 100, 1) if pd.notna(r.get("dd")) else None})
+            if durum == "TETİK" or (dipten is not None and dipten > 0.03):
+                fav.append(kod)
+        return {"source": "isy", "sectors": sectors, "favorable_sectors": fav}
+    except Exception as e:
+        return {"source": "none", "sectors": [], "favorable_sectors": [], "note": str(e)}
+
+
+def load_tavan_scan_live(asof, stale_days=4):
+    """Tavan V1 CANLI aday taraması (tavan-scan-live.yml → tavan_scan_live_candidates_*.csv).
+    Kullanıcı isteği: lock-system yerine bu. ml_s (v1 kalite), v1_candidate, tavan'da-mı,
+    tavan-vurdu-mu, prev-close'dan %. AL adayı DEĞİL — tavan izleme bağlamı (paper tek-rejim).
+    """
+    import glob
+    paths = sorted(glob.glob(str(OUT_DIR / "tavan_scan_live_candidates_*.csv")))
+    if not paths:
+        return {"status": "UNAVAILABLE", "validation": VALIDATION_TAVAN, "asof": asof, "picks": []}
+    try:
+        df = pd.read_csv(paths[-1])
+        df = df.sort_values("ml_s", ascending=False)
+        scan_asof = str(df["asof"].iloc[0])[:10] if "asof" in df.columns and len(df) else asof
+        gap = (datetime.date.fromisoformat(asof) - datetime.date.fromisoformat(scan_asof)).days \
+            if scan_asof else 0
+        picks = [{"ticker": str(r["ticker"]).upper(),
+                  "ml_s": _f(r.get("ml_s")),
+                  "v1_candidate": bool(r.get("v1_candidate")),
+                  "at_tavan": bool(r.get("is_currently_at_tavan")),
+                  "hit_tavan": bool(r.get("hit_tavan_intraday")),
+                  "pct_from_prev": _f(r.get("pct_from_prev_close")),
+                  "close": _f(r.get("today_close")),
+                  "tavan_target": _f(r.get("tavan_target"))}
+                 for _, r in df.iterrows()]
+        return {"status": "STALE" if gap > stale_days else "OK", "validation": VALIDATION_TAVAN,
+                "asof": asof, "scan_asof": scan_asof, "picks": picks,
+                "exit_rules": TAVAN_V1_EXIT, "scan_tag": str(df.get("scan_tag", pd.Series([""])).iloc[0])}
+    except Exception as e:
+        return {"status": "UNAVAILABLE", "validation": VALIDATION_TAVAN, "asof": asof,
+                "picks": [], "note": str(e)}
+
+
 def load_sector_map():
     """ticker → sector_index eşlemesi (tools/sector_map.json, KAP kaynaklı, cache'li)."""
     if not hasattr(load_sector_map, "_v"):

@@ -21,11 +21,9 @@ MACRO_TICKERS = {
     # BIST
     "XU100.IS":   {"name": "BIST 100", "category": "BIST"},
     "XU030.IS":   {"name": "BIST 30", "category": "BIST"},
+    # NOT: BIST alt-sektör endeksleri (XHOLD/XELKT/XKMYA...) yfinance'te N/A döner →
+    # sektör verisi Fintables'tan (load_sector_strength). Burada sadece ana endeksler.
     "XBANK.IS":   {"name": "BIST Banka", "category": "BIST"},
-    "XUTEK.IS":   {"name": "BIST Teknoloji", "category": "BIST"},
-    "XHOLD.IS":   {"name": "BIST Holding", "category": "BIST"},
-    "XELKT.IS":   {"name": "BIST Elektrik", "category": "BIST"},
-    "XTRZM.IS":   {"name": "BIST Turizm", "category": "BIST"},
     # US
     "SPY":        {"name": "S&P 500 (SPY)", "category": "US"},
     "QQQ":        {"name": "NASDAQ 100 (QQQ)", "category": "US"},
@@ -197,6 +195,7 @@ def fetch_macro_snapshot(period="6mo"):
                 "ticker": ticker,
                 "name": info["name"],
                 "category": info["category"],
+                "sektor": info.get("sektor"),
                 "price": last_price,
                 "chg_1d": _calc_change_pct(close, 1),
                 "chg_5d": _calc_change_pct(close, 5),
