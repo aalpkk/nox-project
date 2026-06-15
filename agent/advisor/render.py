@@ -93,13 +93,17 @@ def render_telegram_tr(advisory):
             conf_bits = []
             if b.get("trident_geo"):
                 conf_bits.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else "-geo"))
-            if (b.get("n_cells") or 1) > 1:
-                conf_bits.append(f"DE {b['n_cells']} hücre")
+            nc = b.get("n_cells") or 1
+            if nc > 1:
+                conf_bits.append(f"{nc} hücre konfluens")  # NOT timeframe — kaç sinyal birlikte
             if b.get("context_lists"):
                 conf_bits.append("+" + ",".join(b["context_lists"][:5]))
             conf_txt = f" · 🔗 {' '.join(conf_bits)}" if conf_bits else ""
+            # tf = GERÇEK zaman dilimi (5h/1d/1w/1mo); state = setup tipi
+            tf = b.get("timeframe") or "?"
+            st = (b.get("state") or "").replace("_", " ")[:18]
             lines.append(
-                f"🟢 {trid}<b>{b['ticker']}</b>{add_tag} {b['section']} · "
+                f"🟢 {trid}<b>{b['ticker']}</b>{add_tag} [{tf}{' '+st if st else ''}] · "
                 f"{b['suggested_qty']} adet @ {b['entry_ref']:.2f} · "
                 f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{conf_txt}"
             )
@@ -189,8 +193,8 @@ def render_html(advisory):
                     ["ticker", "action", "confidence", "qty", "avg_cost", "last",
                      "weight_pct", "pnl_pct", "flags", "rationale_tr"])
     buy_rows = rows(a["buy_candidates"],
-                    ["ticker", "section", "suggested_qty", "entry_ref", "stop_ref",
-                     "risk_tl", "rationale_tr"])
+                    ["ticker", "timeframe", "state", "n_cells", "section",
+                     "suggested_qty", "entry_ref", "stop_ref", "risk_tl", "rationale_tr"])
     inputs = "".join(f"<li>{k}: {_STATUS_EMOJI.get(v, '')} {v}</li>"
                      for k, v in a["inputs_status"].items())
     guard = "".join(f"<li>{g}</li>" for g in a.get("guardrail_log", []))
@@ -250,7 +254,7 @@ Yatırımda %{ps['invested_pct']:.1f} · Açık risk %{ps['open_risk_pct']:.1f}
 <th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th></tr>{pos_rows}</table>
 {takas_html}
 <h2>AL adayları</h2>
-<table><tr><th>Hisse</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th>
+<table><tr><th>Hisse</th><th>TF (5h/1d/1w)</th><th>Setup</th><th>Hücre</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th>
 <th>Risk TL</th><th>Gerekçe</th></tr>{buy_rows}</table>
 <h2>Genel değerlendirme</h2><p>{a.get('narrative_tr', '')}</p>
 <h2>Korkuluk müdahaleleri</h2><ul>{guard or '<li>yok</li>'}</ul>

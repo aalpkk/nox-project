@@ -287,6 +287,7 @@ def post_validate(advisory, pack):
             "entry_ref": cand["entry_ref"], "stop_ref": cand["stop_ref"],
             "atr": cand.get("atr"), "risk_atr": cand.get("risk_atr"),
             "n_cells": cand.get("n_cells"), "families": cand.get("families"),
+            "timeframe": cand.get("timeframe"), "state": cand.get("state"),
             "context_lists": cand.get("context_lists", []),
             "trident_tier1": bool(cand.get("trident_tier1")),  # G4-dahil (rejim-yukarı)
             "trident_geo": bool(cand.get("trident_geo")),      # G4'süz geometri (birincil)
