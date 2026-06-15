@@ -190,6 +190,9 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     advisory["xu100_rdp"] = signals.load_xu100_rdp(asof)
     advisory["macro_snapshot"] = (macro or {}).get("snapshot", [])
     advisory["tavan_lock"] = signals.load_tavan_scan_live(asof)  # tavan-scan-live (kullanıcı: lock yerine bu)
+    _tsl = advisory["tavan_lock"]
+    print(f"   tavan-scan-live: {_tsl.get('status')} ({len(_tsl.get('picks') or [])} aday, "
+          f"scan={_tsl.get('scan_asof')})")
     rdp = advisory["xu100_rdp"]
     print(f"   XU100 RDP: {rdp.get('regime')} ({rdp.get('date')}, {rdp.get('status')})"
           f"{' ⚠️SAT/risk-off' if rdp.get('is_sell') else ''}")

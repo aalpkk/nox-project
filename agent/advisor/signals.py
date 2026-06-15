@@ -268,6 +268,9 @@ def load_cluster3(asof, open_window_days=30, stale_days=7):
 
         cutoff = d - datetime.timedelta(days=open_window_days)
         open_df = df[(df["y20_50_realized"].isna()) & (df["signal_date"] >= cutoff)]
+        # ticker başına TEK satır (en güncel signal_date) — snapshot tekrarlarını düş
+        open_df = (open_df.sort_values("signal_date")
+                   .drop_duplicates("ticker", keep="last"))
         cands = [{"ticker": str(r["ticker"]).upper(),
                   "signal_date": r["signal_date"].isoformat(),
                   "entry_close": _f(r.get("entry_close"))}
@@ -401,15 +404,20 @@ _SECTOR_CODES = ["XBANK", "XHOLD", "XUSIN", "XKMYA", "XELKT", "XGIDA", "XSGRT",
                  "XMESY", "XUTEK", "XGMYO", "XUMAL", "XTRZM", "XMADN", "XINSA"]
 
 
-def _sector_states_from_closes(by):
-    """{kod: [eski→yeni kapanış]} → (sectors[], favorable[]). durum dip↗/TREND↑/nötr/tepe↘."""
-    sectors, fav = [], []
+def _sector_states_from_closes(by, top_frac=0.30):
+    """{kod: [eski→yeni kapanış]} → (sectors[], favorable[]).
+
+    favorable GÖRELİ seçicidir (boğada her şey 'trend↑' olur, ayrışmaz): en güçlü
+    ~%30 5-gün momentum (LİDER sektörler) VEYA taze dip↗ dönüş. durum: dip↗/TREND↑/
+    tepe↘/nötr; favori olanlar 'LİDER↑' işaretlenir.
+    """
+    rows = []
     for kod, cl in by.items():
         if len(cl) < 20:
             continue
         s = pd.Series([float(x) for x in cl])
         last = s.iloc[-1]
-        chg5 = (last / s.iloc[-6] - 1) * 100 if len(s) >= 6 else None
+        chg5 = (last / s.iloc[-6] - 1) * 100 if len(s) >= 6 else 0.0
         chg20 = (last / s.iloc[-21] - 1) * 100 if len(s) >= 21 else None
         d = s.diff()
         up = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
@@ -418,18 +426,26 @@ def _sector_states_from_closes(by):
         rsi_now, rsi_prev = float(rsi.iloc[-1]), float(rsi.iloc[-2])
         rsi_min5 = float(rsi.iloc[-5:].min())
         rsi_max5 = float(rsi.iloc[-5:].max())
-        ema10 = float(s.ewm(span=10).mean().iloc[-1])
-        trend_up = last > ema10 and (chg5 or 0) > 0
         dip = rsi_min5 < 40 and rsi_now > rsi_prev and last > s.iloc[-2]
         tepe = rsi_max5 > 72 and rsi_now < rsi_prev and last < s.iloc[-2]
-        durum = "dip↗" if dip else ("TREND↑" if trend_up else "tepe↘" if tepe else "nötr")
-        sectors.append({"kod": kod, "durum": durum,
-                        "dipten_pct": round(chg5, 1) if chg5 is not None else None,
-                        "dd_pct": round(chg20, 1) if chg20 is not None else None,
-                        "rsi": round(rsi_now, 0)})
-        if dip or trend_up:
-            fav.append(kod)
-    sectors.sort(key=lambda x: -(x.get("dipten_pct") or -99))
+        rows.append({"kod": kod, "chg5": chg5, "chg20": chg20, "rsi": rsi_now,
+                     "dip": dip, "tepe": tepe})
+    if not rows:
+        return [], []
+    rows.sort(key=lambda x: -x["chg5"])
+    n_top = max(1, round(len(rows) * top_frac))
+    leaders = {r["kod"] for r in rows[:n_top]}
+    sectors, fav = [], []
+    for r in rows:
+        is_fav = r["kod"] in leaders or r["dip"]
+        durum = ("dip↗" if r["dip"] else "LİDER↑" if r["kod"] in leaders
+                 else "tepe↘" if r["tepe"] else "TREND" if r["chg5"] > 0 else "zayıf")
+        sectors.append({"kod": r["kod"], "durum": durum,
+                        "dipten_pct": round(r["chg5"], 1),
+                        "dd_pct": round(r["chg20"], 1) if r["chg20"] is not None else None,
+                        "rsi": round(r["rsi"], 0)})
+        if is_fav:
+            fav.append(r["kod"])
     return sectors, fav
 
 
