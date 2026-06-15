@@ -99,4 +99,12 @@ def load_takas(tickers, key_buyers=None):
             and not any("mark" in v for v in per.values()):
         return {"status": "MATRIKS_ERROR", "error": hard_err,
                 "per_ticker": per, "n_alerts": 0}
+    # HİÇBİR ticker gerçek veri alamadı (hepsi "veri yok") VE client JSON-RPC/HTTP
+    # hatası kaydetti (örn. HTTP 500 "Management API service unavailable") → API ölü.
+    # "veri yok" tablosu yerine MATRİKS HATASI banner'ı (kullanıcı oturumu yenilesin).
+    api_err = getattr(client, "last_error", None)
+    if api_err and not any("mark" in v for v in per.values()):
+        return {"status": "MATRIKS_ERROR",
+                "error": f"Matriks API yanıt vermedi: {api_err}",
+                "per_ticker": per, "n_alerts": 0}
     return {"status": "OK", "per_ticker": per, "n_alerts": n_alerts}

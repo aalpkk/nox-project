@@ -51,6 +51,7 @@ class MatriksClient:
         self._last_call = 0.0
         self._initialized = False
         self._partial_results: Optional[dict] = None  # timeout'ta kısmi veri kurtarma
+        self.last_error: Optional[str] = None  # son JSON-RPC/HTTP hata mesajı (API ölü tespiti)
         # Debug: credentials doğrulama
         key_preview = self.api_key[:12] + "..." if len(self.api_key) > 12 else self.api_key
         print(f"  [Matriks] Client-ID: {self.client_id[:8]}..., Key: {key_preview}")
@@ -192,6 +193,12 @@ class MatriksClient:
         }
         resp = self._send(msg)
         if not resp:
+            return None
+
+        # JSON-RPC hata (örn. HTTP 500 "Management API service unavailable") —
+        # boş result döndürmek yerine hatayı KAYDET ki çağıran API ölü mü ayırt etsin.
+        if isinstance(resp, dict) and resp.get("error"):
+            self.last_error = (resp.get("error") or {}).get("message", "JSON-RPC error")
             return None
 
         # JSON-RPC result → content text parse
