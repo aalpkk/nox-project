@@ -108,12 +108,17 @@ def main():
                     keys = [max(cand, key=lambda x: x.get("3 Aylık Fark", 0))["Aracı Kurum"].upper()]
 
             alerts, key_txt = [], []
-            for k in find(keys):
+            found_keys = find(keys)
+            agg_g = sum(k.get("Günlük Fark", 0) for k in found_keys)
+            agg_q = sum(max(k.get("3 Aylık Fark", 0), 0) for k in found_keys)
+            for k in found_keys:
                 g = k.get("Günlük Fark", 0); q = k.get("3 Aylık Fark", 0)
-                nm = k.get("Aracı Kurum", "?")[:14]
-                key_txt.append(f"{nm} G{fmt(g)}/3A{fmt(q)}")
-                if g < -100_000 and g < -0.05 * max(q, 0):
-                    alerts.append(f"🔴 EL DÖNÜŞÜ: {nm} bugün net satıcı (G{fmt(g)})")
+                key_txt.append(f"{k.get('Aracı Kurum','?')[:14]} G{fmt(g)}/3A{fmt(q)}")
+            # EL DÖNÜŞÜ = toplayıcı GRUBUN toplamı net satıcı (tek ismin offset'lenen
+            # düşük günü tetiklemez; grup >%10 kümülatifi bir günde geri verirse)
+            if found_keys and agg_g < -100_000 and agg_g < -0.10 * agg_q:
+                alerts.append(f"🔴 EL DÖNÜŞÜ: key_buyer grubu net satıcı "
+                              f"(toplam G{fmt(agg_g)} / 3A{fmt(agg_q)})")
 
             buyers = sorted(kur, key=lambda x: -x.get("Günlük Fark", 0))[:1]
             sellers = sorted(kur, key=lambda x: x.get("Günlük Fark", 0))[:1]
