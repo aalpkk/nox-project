@@ -182,6 +182,10 @@ jobs:
           NOX_MODEL_ADVISOR: claude-opus-4-8
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # Takas/AKD katmanı (Matriks) — hata verirse advisor çökmez, HTML'de
+          # MATRİKS HATASI banner'ı çıkar (kullanıcı oturumu yeniler)
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
           # NOT: secrets.GH_TOKEN nox-private'a erişemiyor (ilk smoke'ta 404) —
           # ayrı classic repo-scope PAT: NOX_PRIVATE_TOKEN (2026-06-13)
           GH_TOKEN: ${{ secrets.NOX_PRIVATE_TOKEN }}   # private portföy repo

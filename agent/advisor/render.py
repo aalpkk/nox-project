@@ -130,6 +130,19 @@ def render_telegram_tr(advisory):
         if sc:
             lines.append(sc)
             lines.append("")
+    # takas/AKD özeti + Matriks hata uyarısı
+    tk = a.get("takas") or {}
+    if tk.get("status") == "MATRIKS_ERROR":
+        lines.append(f"🔴 <b>MATRİKS HATASI</b> — takas güncellenemedi: {tk.get('error','?')} "
+                     "(oturumu yenile, HTML'de detay)")
+        lines.append("")
+    elif tk.get("status") == "OK":
+        alarmlı = [f"{info['mark']} {t}" for t, info in tk.get("per_ticker", {}).items()
+                   if info.get("alerts")]
+        if alarmlı:
+            lines.append("💼 <b>Takas alarmı:</b> " + ", ".join(alarmlı) +
+                         " <i>(detay HTML)</i>")
+            lines.append("")
     if a.get("narrative_tr"):
         lines.append(f"🧭 {a['narrative_tr']}")
     if a.get("guardrail_log"):
@@ -182,6 +195,41 @@ def render_html(advisory):
                      for k, v in a["inputs_status"].items())
     guard = "".join(f"<li>{g}</li>" for g in a.get("guardrail_log", []))
 
+    # ── TAKAS/AKD bölümü + Matriks hata banner'ı ──
+    tk = a.get("takas") or {}
+    takas_banner = ""
+    if tk.get("status") == "MATRIKS_ERROR":
+        takas_banner = (f'<div style="background:#5a1a1a;border:1px solid #f85149;color:#ffb3ab;'
+                        f'padding:12px;border-radius:6px;margin:12px 0;font-weight:bold">'
+                        f'⚠️ MATRİKS API HATASI — takas verisi güncellenemedi: '
+                        f'{tk.get("error","?")}<br>→ Matriks oturumunu/anahtarını yenile, '
+                        f'takas bilgisi bu raporda EKSİK.</div>')
+    elif tk.get("status") == "DISABLED":
+        takas_banner = ('<div style="background:#3a3a1a;border:1px solid #d29922;color:#e3d18a;'
+                        'padding:10px;border-radius:6px;margin:12px 0">'
+                        'ℹ️ Takas kapalı (MATRIKS_API_KEY yok).</div>')
+    takas_rows = ""
+    for tkr, info in (tk.get("per_ticker") or {}).items():
+        if "mark" not in info:
+            takas_rows += (f"<tr><td>{tkr}</td><td colspan='4'>{info.get('durum','—')}</td></tr>")
+            continue
+        al = "<br>".join(info.get("alerts", [])) or "—"
+        takas_rows += (f"<tr><td>{info['mark']} {tkr}</td>"
+                       f"<td>{' | '.join(info.get('key', [])) or '—'}</td>"
+                       f"<td>{info.get('top_buyer', '—')}</td>"
+                       f"<td>{info.get('top_seller', '—')}</td>"
+                       f"<td>{info.get('ice', '—')}</td>"
+                       f"<td style='color:#f85149'>{al}</td></tr>")
+    takas_html = ""
+    if takas_banner or takas_rows:
+        n_al = tk.get("n_alerts", 0)
+        takas_html = (f"<h2>Takas / AKD (Matriks){' — '+str(n_al)+' alarm' if n_al else ''}</h2>"
+                      f"{takas_banner}")
+        if takas_rows:
+            takas_html += ("<table><tr><th>Hisse</th><th>Key kurum (G/3A)</th>"
+                           "<th>Bugün alıcı</th><th>Bugün satıcı</th><th>ICE (3g)</th>"
+                           "<th>Alarm</th></tr>" + takas_rows + "</table>")
+
     html = f"""<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">
 <title>NOX Danışman {a['asof']}</title>
 <style>
@@ -200,6 +248,7 @@ Yatırımda %{ps['invested_pct']:.1f} · Açık risk %{ps['open_risk_pct']:.1f}
 <h2>Pozisyon önerileri</h2>
 <table><tr><th>Hisse</th><th>Aksiyon</th><th>Güven</th><th>Adet</th><th>Maliyet</th>
 <th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th></tr>{pos_rows}</table>
+{takas_html}
 <h2>AL adayları</h2>
 <table><tr><th>Hisse</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th>
 <th>Risk TL</th><th>Gerekçe</th></tr>{buy_rows}</table>

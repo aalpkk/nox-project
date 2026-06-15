@@ -177,3 +177,23 @@ class TestHwSoftFlag:
         flags = pre["positions"][0]["flags"]
         assert any(f.startswith("HW_ROLLING_OVER") for f in flags)
         assert "STOP_VIOLATED" not in flags                              # forced-sell tetiklemez
+
+
+class TestTakas:
+    def test_disabled_without_key(self, monkeypatch):
+        monkeypatch.delenv("MATRIKS_API_KEY", raising=False)
+        from agent.advisor import takas
+        r = takas.load_takas(["BIMAS"])
+        assert r["status"] == "DISABLED" and r["per_ticker"] == {}
+
+    def test_render_matriks_error_banner(self):
+        from agent.advisor.render import render_html
+        adv = {"asof":"2026-06-12","mode":"llm","model":"x","portfolio_rev":"r",
+               "inputs_status":{"takas":"MATRIKS_ERROR"},
+               "portfolio_summary":{"equity_tl":1,"cash_tl":1,"invested_pct":0,"open_risk_pct":0,"n_positions":0},
+               "position_recommendations":[],"buy_candidates":[],"risk_summary":{"cap_pct":6},
+               "guardrail_log":[],"narrative_tr":"","disclaimer_tr":"d",
+               "takas":{"status":"MATRIKS_ERROR","error":"401 unauthorized","per_ticker":{}}}
+        path = render_html(adv)
+        html = open(path, encoding="utf-8").read()
+        assert "MATRİKS API HATASI" in html and "401 unauthorized" in html
