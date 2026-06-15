@@ -1,0 +1,33 @@
+# NOX Portföy — günlük takas/AKD advisor kaynağı
+# Fiyat: extfeed 1h master son barından (canlı-ish, CI'da master-data-pull tazeler)
+# Takas: Matriks AKD
+# cost = ort. alım fiyatı | lot = opsiyonel (boyut ağırlığı, null=eşit)
+# key_buyers = ev-DIŞI ana toplayıcı el (el-dönüşü alarmı bunları izler)
+# house = arz aracı kurumu (custody şişer, sinyal sayılmaz)
+# Sat → pozisyonu listeden çıkar. Sembol ekle → yeni blok.
+positions:
+  - ticker: GENKM
+    cost: 19.42
+    lot: null
+    key_buyers: [BANK-OF-AMERICA]
+    house: DENIZ
+  - ticker: AKHAN
+    cost: 33.69
+    lot: null
+    key_buyers: [INVESTAZ, PIRAMIT, BANK-OF-AMERICA]
+    house: HALK
+  - ticker: ATATR
+    cost: 20.19
+    lot: null
+    key_buyers: [BANK-OF-AMERICA]
+    house: TERA
+  - ticker: EKDMR
+    cost: 65.79
+    lot: null
+    key_buyers: [BANK-OF-AMERICA]
+    house: A1 CAPITAL
+  - ticker: ESCOM
+    cost: 5.39
+    lot: null
+    key_buyers: [DENIZ]
+    house: ""

@@ -1,0 +1,28 @@
+name: Portföy Takas/AKD Advisor (hafta içi 18:45 TR)
+on:
+  schedule:
+    - cron: '45 15 * * 1-5'   # 18:45 TR — master-data-pull intraday_1700 sonrası
+  workflow_dispatch:
+
+jobs:
+  advisor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pandas pyarrow pyyaml python-dotenv
+      - name: Restore fresh extfeed master (fiyat kaynağı)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
+      - name: Run portfolio advisor
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PYTHONPATH: .
+        run: python tools/portfolio_takas_advisor.py
