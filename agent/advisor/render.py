@@ -228,9 +228,31 @@ def render_html(advisory):
     pos_rows = rows(a["position_recommendations"],
                     ["ticker", "action", "confidence", "qty", "avg_cost", "last",
                      "weight_pct", "pnl_pct", "flags", "rationale_tr"])
-    buy_rows = rows(a["buy_candidates"],
-                    ["ticker", "timeframe", "state", "n_cells", "section",
-                     "suggested_qty", "entry_ref", "stop_ref", "risk_tl", "rationale_tr"])
+    # her adaya TAM çakışma string'i + formatlı sayılar (HTML kolonu için);
+    # advisory dict'ini MUTASYON YAPMA — Telegram render aynı dict'i sonra kullanıyor.
+    def _r2(x):
+        try:
+            return f"{float(x):,.2f}"
+        except Exception:
+            return x
+    def _ri(x):
+        try:
+            return f"{float(x):,.0f}"
+        except Exception:
+            return x
+    buy_view = []
+    for b in a["buy_candidates"]:
+        mtf = b.get("mtf_birth") or []
+        mtf_p = f"çoklu-TF birth:{'+'.join(mtf)}; " if len(mtf) > 1 else ""
+        buy_view.append({**b,
+                         "confluence": mtf_p + ", ".join(_full_confluence(b)),
+                         "entry_ref": _r2(b.get("entry_ref")),
+                         "stop_ref": _r2(b.get("stop_ref")),
+                         "risk_tl": _ri(b.get("risk_tl")),
+                         "suggested_qty": _ri(b.get("suggested_qty"))})
+    buy_rows = rows(buy_view,
+                    ["ticker", "timeframe", "state", "confluence", "section",
+                     "suggested_qty", "entry_ref", "stop_ref", "risk_tl"])
     inputs = "".join(f"<li>{k}: {_STATUS_EMOJI.get(v, '')} {v}</li>"
                      for k, v in a["inputs_status"].items())
     guard = "".join(f"<li>{g}</li>" for g in a.get("guardrail_log", []))
@@ -290,8 +312,8 @@ Yatırımda %{ps['invested_pct']:.1f} · Açık risk %{ps['open_risk_pct']:.1f}
 <th>Son</th><th>Ağırlık %</th><th>PnL %</th><th>Flag</th><th>Gerekçe</th></tr>{pos_rows}</table>
 {takas_html}
 <h2>AL adayları</h2>
-<table><tr><th>Hisse</th><th>TF (5h/1d/1w)</th><th>Setup</th><th>Hücre</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th>
-<th>Risk TL</th><th>Gerekçe</th></tr>{buy_rows}</table>
+<table><tr><th>Hisse</th><th>TF</th><th>Setup</th><th>🔗 TÜM ÇAKIŞMA (DE çoklu-TF + RT/sbt/nox_v3/alsat/triangle...)</th>
+<th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk TL</th></tr>{buy_rows}</table>
 <h2>Genel değerlendirme</h2><p>{a.get('narrative_tr', '')}</p>
 <h2>Korkuluk müdahaleleri</h2><ul>{guard or '<li>yok</li>'}</ul>
 <p class="disclaimer">⚠️ {a['disclaimer_tr']}</p>
