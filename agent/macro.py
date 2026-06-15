@@ -30,13 +30,19 @@ MACRO_TICKERS = {
     "SPY":        {"name": "S&P 500 (SPY)", "category": "US"},
     "QQQ":        {"name": "NASDAQ 100 (QQQ)", "category": "US"},
     "^VIX":       {"name": "VIX", "category": "US"},
-    # Emtia
-    "GC=F":       {"name": "Altın (Gold)", "category": "Emtia"},
-    "CL=F":       {"name": "WTI Petrol", "category": "Emtia"},
+    # Emtia — değerli + sanayi metalleri
+    "GC=F":       {"name": "Altın (XAU)", "category": "Emtia"},
+    "SI=F":       {"name": "Gümüş (XAG)", "category": "Emtia"},
+    "PL=F":       {"name": "Platin (XPT)", "category": "Emtia"},
+    "PA=F":       {"name": "Paladyum (XPD)", "category": "Emtia"},
     "HG=F":       {"name": "Bakır (Copper)", "category": "Emtia"},
-    # Kripto
+    "CL=F":       {"name": "WTI Petrol", "category": "Emtia"},
+    # Kripto — BTC/ETH + layer-1
     "BTC-USD":    {"name": "Bitcoin", "category": "Kripto"},
     "ETH-USD":    {"name": "Ethereum", "category": "Kripto"},
+    "SOL-USD":    {"name": "Solana (L1)", "category": "Kripto"},
+    "AVAX-USD":   {"name": "Avalanche (L1)", "category": "Kripto"},
+    "BNB-USD":    {"name": "BNB (L1)", "category": "Kripto"},
     # Faiz
     "^TNX":       {"name": "US 10Y Faiz", "category": "Faiz"},
 }
@@ -165,10 +171,27 @@ def fetch_macro_snapshot(period="6mo"):
             if isinstance(close, pd.DataFrame):
                 close = close.iloc[:, 0]
             ema21 = _calc_ema(close, 21)
+            ema50 = _calc_ema(close, 50)
+            rsi = _calc_rsi(close, 14)
             last_val = float(close.iloc[-1])
             ema_val = float(ema21.iloc[-1])
             last_price = round(last_val, 4)
             above_ema = last_val > ema_val
+            rsi_now = float(rsi.iloc[-1]) if len(rsi.dropna()) else None
+            rsi_min5 = float(rsi.iloc[-5:].min()) if len(rsi.dropna()) >= 5 else None
+            rsi_max5 = float(rsi.iloc[-5:].max()) if len(rsi.dropna()) >= 5 else None
+            rsi_prev = float(rsi.iloc[-2]) if len(rsi.dropna()) >= 2 else None
+
+            # DİPTEN DÖNÜŞ / TEPEDEN DÖNÜŞ (betimsel, edge iddiası YOK):
+            #  dip↗ = son ~5 günde aşırı-satım (rsi<35) görülmüş + rsi yükseliyor + bugün +
+            #  tepe↘ = aşırı-alım (rsi>70) + rsi düşüyor + bugün -
+            chg1 = _calc_change_pct(close, 1) or 0.0
+            reversal = ""
+            if rsi_now is not None and rsi_prev is not None:
+                if rsi_min5 is not None and rsi_min5 < 35 and rsi_now > rsi_prev and chg1 > 0:
+                    reversal = "dip↗"
+                elif rsi_max5 is not None and rsi_max5 > 70 and rsi_now < rsi_prev and chg1 < 0:
+                    reversal = "tepe↘"
 
             snapshot.append({
                 "ticker": ticker,
@@ -179,6 +202,9 @@ def fetch_macro_snapshot(period="6mo"):
                 "chg_5d": _calc_change_pct(close, 5),
                 "chg_1m": _calc_change_pct(close, 21),
                 "above_ema21": above_ema,
+                "above_ema50": last_val > float(ema50.iloc[-1]),
+                "rsi": round(rsi_now, 1) if rsi_now is not None else None,
+                "reversal": reversal,
                 "trend": _calc_trend(close, ema21),
             })
         except Exception as e:

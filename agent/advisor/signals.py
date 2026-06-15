@@ -461,15 +461,49 @@ def _ticker_memberships(signals, ticker):
     return sorted(set(hits))
 
 
+def load_xu100_rdp(asof, stale_days=4):
+    """XU100 RDP rejim durumu (regime_labels_daily_rdp_v1.csv'den son etiket).
+
+    RDP = pivot-bazlı low-TIM rejim dedektörü ([[regime_beta_overlay_v1_outcome]] C6).
+    regime ∈ {long, flat, short}. long DIŞI (flat/short) = 'risk-kapalı/SAT' bilgisi.
+    Canlı kapı DEĞİL — advisor'da BİLGİ/bağlam olarak gösterilir. DE Stage 3 taze
+    üretir; CI'da artifact ile taşınır (commit'li dosya bayat olabilir → tarih kontrol).
+    """
+    path = OUT_DIR / "regime_labels_daily_rdp_v1.csv"
+    if not path.exists():
+        return {"status": "UNAVAILABLE", "regime": None, "date": None}
+    try:
+        df = pd.read_csv(path)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df[df["date"] <= pd.Timestamp(asof)].sort_values("date")
+        if df.empty:
+            return {"status": "UNAVAILABLE", "regime": None, "date": None}
+        last = df.iloc[-1]
+        d = datetime.date.fromisoformat(asof)
+        bar_d = last["date"].date()
+        stale = (d - bar_d).days > stale_days
+        regime = str(last["regime"]).lower()
+        return {"status": "STALE" if stale else "OK",
+                "regime": regime,
+                "is_sell": regime in ("flat", "short", "risk_off", "out"),
+                "date": bar_d.isoformat(),
+                "close": _f(last.get("close")),
+                "window_id": str(last.get("window_id", "")),
+                "validation": VALIDATION_CONTEXT}
+    except Exception as e:
+        return {"status": "UNAVAILABLE", "regime": None, "date": None, "note": str(e)}
+
+
 def load_macro():
     try:
         from agent.macro import fetch_macro_snapshot, assess_macro_regime
         snapshot = fetch_macro_snapshot()
         regime = assess_macro_regime(snapshot)
-        return {"status": "OK", "validation": VALIDATION_CONTEXT, "regime": regime}
+        return {"status": "OK", "validation": VALIDATION_CONTEXT,
+                "regime": regime, "snapshot": snapshot}
     except Exception as e:
         return {"status": "UNAVAILABLE", "validation": VALIDATION_CONTEXT,
-                "regime": None, "note": str(e)}
+                "regime": None, "snapshot": [], "note": str(e)}
 
 
 # ── Canlı fiyatlar ──
