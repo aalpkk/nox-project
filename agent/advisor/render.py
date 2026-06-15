@@ -52,6 +52,9 @@ def _full_confluence(b):
     for c in (b.get("context_lists") or []):
         parts.append(c)
     # özel hatlar
+    if b.get("weekly_lead"):
+        tf = "+".join(b.get("weekly_lead_tf") or [])
+        parts.append(f"1w-LİDER✓({tf})" if tf else "1w-LİDER✓")
     if b.get("trident_geo"):
         parts.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else ""))
     return parts
@@ -163,6 +166,18 @@ def render_telegram_tr(advisory):
                 lines.append(f"• {s['ticker']}{cell}{ctx}{refs} — {s['status']}")
         lines.append(f"⛔ Toplam elenen: {len(sk)} aday")
     lines.append("")
+
+    # HAFTALIK-LİDER çakışma — aday-DIŞI (al kararı değil, bilgi): son kapanmış
+    # haftalık barda mb_1w above + aynı hafta günlük/5h above. DE adayı olmasa da raporla.
+    wlw = a.get("weekly_lead_watch") or []
+    if wlw:
+        bar = a.get("weekly_lead_bar") or "?"
+        lines.append(f"📐 <b>Haftalık-lider çakışma</b> <i>(1w birth {bar} + günlük/5h, "
+                     f"aday-dışı, bilgi)</i>")
+        for w in wlw:
+            tf = "+".join(w.get("tf") or [])
+            lines.append(f"• <b>{w['ticker']}</b> 1w+{tf}")
+        lines.append("")
 
     if a.get("scorecard_prev"):
         from agent.advisor.scorecard import format_scorecard_line
@@ -282,6 +297,19 @@ def render_html(advisory):
                        f"<td>{info.get('top_seller', '—')}</td>"
                        f"<td>{info.get('ice', '—')}</td>"
                        f"<td style='color:#f85149'>{al}</td></tr>")
+    # haftalık-lider çakışma (aday-dışı) — HTML bölümü
+    wlw = a.get("weekly_lead_watch") or []
+    weekly_lead_html = ""
+    if wlw:
+        bar = a.get("weekly_lead_bar") or "?"
+        wl_rows = "".join(f"<tr><td>{w['ticker']}</td><td>1w + {'+'.join(w.get('tf') or [])}</td></tr>"
+                          for w in wlw)
+        weekly_lead_html = (
+            f"<h2>📐 Haftalık-lider çakışma — aday-dışı (bilgi)</h2>"
+            f"<p class='meta'>Son kapanmış haftalık barda ({bar}) mb_1w above_mb_birth + "
+            f"aynı hafta günlük/5h above_mb_birth. DE adayı DEĞİL, çapraz-TF yapı hizalanması.</p>"
+            f"<table><tr><th>Hisse</th><th>Çakışan TF</th></tr>{wl_rows}</table>")
+
     takas_html = ""
     if takas_banner or takas_rows:
         n_al = tk.get("n_alerts", 0)
@@ -314,6 +342,7 @@ Yatırımda %{ps['invested_pct']:.1f} · Açık risk %{ps['open_risk_pct']:.1f}
 <h2>AL adayları</h2>
 <table><tr><th>Hisse</th><th>TF</th><th>Setup</th><th>🔗 TÜM ÇAKIŞMA (DE çoklu-TF + RT/sbt/nox_v3/alsat/triangle...)</th>
 <th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk TL</th></tr>{buy_rows}</table>
+{weekly_lead_html}
 <h2>Genel değerlendirme</h2><p>{a.get('narrative_tr', '')}</p>
 <h2>Korkuluk müdahaleleri</h2><ul>{guard or '<li>yok</li>'}</ul>
 <p class="disclaimer">⚠️ {a['disclaimer_tr']}</p>

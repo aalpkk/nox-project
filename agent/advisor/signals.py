@@ -98,6 +98,59 @@ def _trident_bos(asof):
     return _trident_bos._v
 
 
+def mb_birth_xtf(asof, lower_offset_days=4):
+    """Çapraz-TF above_mb_birth çakışması — DE CSV'den DEĞİL, mb_scanner_events
+    parquet'lerinden (point-in-time, event_bar_date ≤ asof).
+
+    HAFTALIK-LİDER çakışma (kullanıcı isteği): son KAPANMIŞ haftalık barda mb_1w
+    above_mb_birth + aynı hafta(+bugüne kadar) günlük/5h above_mb_birth. DE watchlist
+    haftalık STATE'i o günün aday-satırı olarak emit ETMEZ → bu çakışma DE CSV'sinde
+    GÖRÜNMEZ; burada parquet'ten kurtarılır (cache'li).
+
+    Döner: {"weekly_bar": "YYYY-MM-DD",
+            "per_ticker": {T: {"weekly_bar","tf":[...],"weekly_lead":bool}}}
+    """
+    if not hasattr(mb_birth_xtf, "_cache"):
+        mb_birth_xtf._cache = {}
+    if asof in mb_birth_xtf._cache:
+        return mb_birth_xtf._cache[asof]
+
+    asof_ts = pd.Timestamp(asof)
+
+    def _births(tf):
+        p = OUT_DIR / f"mb_scanner_events_mb_{tf}.parquet"
+        if not p.exists():
+            return pd.DataFrame(columns=["tkr", "d"])
+        df = pd.read_parquet(p, columns=["ticker", "event_type", "event_bar_date"])
+        df = df[df["event_type"] == "above_mb_birth"].copy()
+        df["d"] = pd.to_datetime(df["event_bar_date"])
+        df = df[df["d"] <= asof_ts]
+        df["tkr"] = df["ticker"].astype(str).str.upper()
+        return df[["tkr", "d"]]
+
+    try:
+        w, dd, h = _births("1w"), _births("1d"), _births("5h")
+        if w.empty:
+            out = {"weekly_bar": None, "per_ticker": {}}
+        else:
+            last_w = sorted(w["d"].unique())[-1]           # son KAPANMIŞ haftalık bar
+            w_set = set(w[w["d"] == last_w]["tkr"])         # o barda haftalık doğum
+            lo = last_w - pd.Timedelta(days=lower_offset_days)  # o haftanın başı
+            d_set = set(dd[dd["d"] >= lo]["tkr"])
+            h_set = set(h[h["d"] >= lo]["tkr"])
+            per = {}
+            for t in w_set:
+                tf = ([("1d")] if t in d_set else []) + (["5h"] if t in h_set else [])
+                per[t] = {"weekly_bar": str(pd.Timestamp(last_w).date()),
+                          "tf": tf, "weekly_lead": bool(tf)}
+            out = {"weekly_bar": str(pd.Timestamp(last_w).date()), "per_ticker": per}
+    except Exception as e:
+        out = {"weekly_bar": None, "per_ticker": {}, "error": str(e)}
+
+    mb_birth_xtf._cache[asof] = out
+    return out
+
+
 def _parse_de_csv(path, asof, status="OK"):
     df = pd.read_csv(path)
     df["ticker"] = df["ticker"].astype(str).str.upper()

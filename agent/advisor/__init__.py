@@ -88,6 +88,37 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         advisory["scorecard_prev"] = score_entry
     advisory["takas"] = takas  # pozisyon takas özeti + Matriks durum (render banner)
     advisory["inputs_status"]["takas"] = takas["status"]
+
+    # 6b) HAFTALIK-LİDER çakışma (mb_scanner_events parquet'ten, DE CSV'de görünmez):
+    #     son kapanmış haftalık barda mb_1w above + aynı hafta günlük/5h above.
+    #     Adayları zenginleştir (1w bileşenini mtf_birth'e ekle) + aday-DIŞI
+    #     çakışmaları ayrı 'haftalık-lider izleme' listesine koy (al kararı olmasa da raporla).
+    try:
+        xtf = signals.mb_birth_xtf(asof)
+        per = xtf.get("per_ticker", {})
+        cand_tk = set()
+        for b in advisory.get("buy_candidates", []):
+            cand_tk.add(b["ticker"])
+            info = per.get(b["ticker"])
+            if info and info.get("weekly_lead"):
+                b["weekly_lead"] = True
+                b["weekly_lead_tf"] = info["tf"]
+                mtf = list(b.get("mtf_birth") or [])
+                if "1w" not in mtf:
+                    mtf.append("1w")
+                b["mtf_birth"] = sorted(
+                    mtf, key=lambda t: {"5h": 0, "1d": 1, "1w": 2, "1mo": 3}.get(t, 9))
+        advisory["weekly_lead_watch"] = sorted(
+            ({"ticker": t, "weekly_bar": v["weekly_bar"], "tf": v["tf"]}
+             for t, v in per.items() if v.get("weekly_lead") and t not in cand_tk),
+            key=lambda x: x["ticker"])
+        advisory["weekly_lead_bar"] = xtf.get("weekly_bar")
+        print(f"   haftalık-lider çakışma: {sum(1 for v in per.values() if v['weekly_lead'])} "
+              f"toplam ({len(advisory['weekly_lead_watch'])} aday-dışı, bar={xtf.get('weekly_bar')})")
+    except Exception as e:
+        print(f"   haftalık-lider çakışma HATA: {e}")
+        advisory["weekly_lead_watch"] = []
+
     adv_path = context_pack.persist_advisory(advisory)
     print(f"   advisory: {adv_path} (mode={advisory['mode']})")
 
