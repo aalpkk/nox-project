@@ -82,6 +82,41 @@ def _append_fintables_latest(idx):
     return idx
 
 
+def _fintables_stock_tail(tickers, after_utc):
+    """Fintables'tan after_utc (UTC literal) sonrası hisse kapanışları:
+    daily (mumlar_gunluk_gh, 1 seans gecikmeli) + en son seans intraday
+    (mumlar_15dk_gh). → {ticker: {date(tz-naive UTC-normalize): close}}.
+    UTC-normalize: günlük bar 'GÜN T21:00Z' → o gün; intraday 'GÜN T15:00Z' → o gün."""
+    res = {}
+    if not tickers or not os.environ.get('FINTABLES_MCP_TOKEN'):
+        return res
+    try:
+        from nyxexpansion.intraday.fetchers.fintables import FintablesMCPClient, _parse_markdown_table
+        cli = FintablesMCPClient()
+
+        def add(rows):
+            for r in rows:
+                z = pd.Timestamp(r['zaman_utc']).tz_convert('UTC').normalize().tz_localize(None)
+                res.setdefault(r['kod'], {})[z] = float(r['kapanis'])
+        for i in range(0, len(tickers), 25):
+            in_c = ", ".join(f"'{t}'" for t in tickers[i:i + 25])
+            p = cli.call_tool("veri_sorgula", {"purpose": "nyx hisse tail daily", "sql":
+                f"SELECT kod, zaman_utc, kapanis FROM mumlar_gunluk_gh WHERE kod IN ({in_c}) "
+                f"AND zaman_utc > '{after_utc}' ORDER BY kod, zaman_utc LIMIT 300"})
+            if isinstance(p, dict):
+                add(_parse_markdown_table(p.get("table") or ""))
+        for i in range(0, len(tickers), 30):
+            in_c = ", ".join(f"'{t}'" for t in tickers[i:i + 30])
+            p = cli.call_tool("veri_sorgula", {"purpose": "nyx hisse tail intraday", "sql":
+                f"SELECT DISTINCT ON (kod) kod, zaman_utc, kapanis FROM mumlar_15dk_gh WHERE kod IN ({in_c}) "
+                f"AND zaman_utc > '{after_utc}' ORDER BY kod, zaman_utc DESC LIMIT 300"})
+            if isinstance(p, dict):
+                add(_parse_markdown_table(p.get("table") or ""))
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠️ Fintables hisse tail atlandı: {type(e).__name__}: {e}")
+    return res
+
+
 def anatomy_priority():
     """sector_leadlag ranks → sektör başına early_post ortalama nrank (düşük=erken lider)."""
     p = os.path.join(ROOT, 'output', 'sector_leadlag_v0_ranks.csv')
@@ -154,22 +189,34 @@ def main():
     st_master = pd.read_parquet(os.path.join(ROOT, 'output', 'ohlcv_10y_fintables_master.parquet')).reset_index()
     pc = st_master.pivot_table(index='Date', columns='ticker', values='Close').sort_index()
     vol = st_master.pivot_table(index='Date', columns='ticker', values='Volume').sort_index()
-    # XU100'ü hisse takvimine hizala
+    mlast = pd.Timestamp(pc.index.max())   # master son (örn. 06-04)
+    # GLOBAL likit-150 (master ADV ile; likidite sıralaması bayat tail'e dayanıklı)
+    adv_all = (vol.iloc[-60:] * pc.iloc[-60:]).mean().dropna()
+    liquid150 = set(adv_all.sort_values(ascending=False).head(150).index)
+    sec_of = {}  # ticker → hedef sektör (likit-150 ∩ hedef sektör; dedup)
+    for t, ss in tick_secs.items():
+        hit = [s for s in ss if s in target_secs]
+        if hit and t in liquid150 and t in pc.columns:
+            sec_of[t] = hit[0]
+    # aday evreninin fiyatlarını Fintables tail ile master son tarihinden bugüne uzat
+    tail = _fintables_stock_tail(list(sec_of), mlast.strftime('%Y-%m-%dT21:00:00'))
+    if tail:
+        ext_dates = sorted({d for v in tail.values() for d in v})
+        print(f"  + Fintables hisse tail: {len(tail)} hisse, {len(ext_dates)} yeni gün → {ext_dates[-1].date() if ext_dates else '-'}")
+        for t, dv in tail.items():
+            for d, c in dv.items():
+                pc.loc[d, t] = c
+        pc = pc.sort_index()
+    # XU100 (idx, 16'ya kadar) hisse takvimine hizala
     xu_al = xu.copy(); xu_al.index = pd.to_datetime(xu_al.index)
     common = pc.index.intersection(xu_al.index)
     pcc, xuc = pc.loc[common], xu_al.loc[common]
     xur = xuc.pct_change()
     dn = xur < 0
-    # doğrulanmış edge'le tutarlı: GLOBAL likit-150 evreni (mikro-cap pump'ları ele)
-    adv_all = (vol.loc[common].iloc[-60:] * pcc.iloc[-60:]).mean().dropna()
-    liquid150 = set(adv_all.sort_values(ascending=False).head(150).index)
-    sec_of = {}  # ticker → hedef sektör (ilk eşleşen, dedup)
-    for t, ss in tick_secs.items():
-        hit = [s for s in ss if s in target_secs]
-        if hit and t in liquid150 and t in pcc.columns:
-            sec_of[t] = hit[0]
     cand = []
     for m, sec in sec_of.items():
+        if m not in pcc.columns:
+            continue
         s = pcc[m]
         if s.iloc[-WIN:].isna().mean() > 0.2 or pd.isna(s.iloc[-1]):
             continue
@@ -178,8 +225,7 @@ def main():
         if d2.sum() < 10 or xur.iloc[-WIN:][d2].mean() == 0:
             continue
         dc = sr[d2].mean() / xur.iloc[-WIN:][d2].mean()
-        # defansif bandı: 0 ≤ dc < 0.85 (piyasadan az düşer ama kopuk/pump değil)
-        if np.isnan(dc) or dc < 0 or dc >= 0.85:
+        if np.isnan(dc) or dc < 0 or dc >= 0.85:   # defansif bandı
             continue
         r20 = float(s.iloc[-1] / s.iloc[-21] - 1) - float(xuc.iloc[-1] / xuc.iloc[-21] - 1)
         cand.append({'kod': m, 'sec': sec, 'dc': dc, 'rel20': r20})
