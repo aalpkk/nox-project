@@ -170,6 +170,14 @@ def render_telegram_tr(advisory):
                     lines.append(f"      → <b>{si}</b>: {tk_txt}")
                 lines.append("   <i>(sektör/zaman seçimi doğrulanmış; sektör-içi sıra = DÜŞÜK "
                              "down-capture/defansif önce — vs-XU100 +alfa, both-period ✓)</i>")
+        # LİDER sektörlerde defansif hisseler (TÜM likit üye, dc sıralı)
+        sdc = a.get("sector_dc_picks") or {}
+        if sdc:
+            lines.append("   📉 <b>lider sektörlerde defansif (düşük dc) hisseler:</b>")
+            for si, rs in sdc.items():
+                tk = ", ".join(f"{r['ticker']}{'🎯' if r.get('in_de') else ''}(dc{r['dc']:+.2f})"
+                               for r in rs[:6])
+                lines.append(f"      <b>{si}</b>: {tk}")
             else:
                 lines.append("   <i>(bu sektörlerde bugün DE adayı yok)</i>")
         lines.append("")
@@ -589,6 +597,28 @@ def render_html(advisory):
             f"<tbody>{trows}</tbody></table></div>",
             sub=f"{len(tpicks)} aday · izleme bağlamı")
 
+    # ── LİDER/ARMED SEKTÖRLERDE DEFANSİF HİSSELER (düşük down-capture) ──
+    sdc = a.get("sector_dc_picks") or {}
+    sector_dc_html = ""
+    if sdc:
+        blocks = ""
+        for si, rows in sdc.items():
+            cells = "".join(
+                f"<tr><td><b>{_tv(r['ticker'])}</b>{' 🎯DE' if r.get('in_de') else ''}</td>"
+                f"<td style=\"color:{'#7a9e7a' if r['dc'] < 0.7 else 'var(--text-primary)'}\">{r['dc']:+.2f}</td>"
+                f"<td>{r['adv']/1e6:.0f}M₺</td></tr>" for r in rows)
+            blocks += (f"<p class='note' style='margin-top:8px'><b>{si}</b> "
+                       f"<span class='meta'>(lider/ARMED)</span></p>"
+                       f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th>"
+                       f"<th>dc</th><th>likidite</th></tr></thead><tbody>{cells}</tbody></table></div>")
+        sector_dc_html = _sec(
+            "📉 Lider sektörlerde defansif hisseler",
+            f"<p class='note'>ARMED/LİDER sektörlerin TÜM likit üyeleri, DÜŞÜK down-capture "
+            f"(düşerken az düşen=defansif) önce sıralı. dc&lt;0.7 yeşil. 🎯DE=aynı zamanda DE "
+            f"adayı. Doğrulanmış edge: düşük dc vs-XU100 +alfa her iki dönem ✓ (lider sektör/zaman "
+            f"seçimi + sektör-içi defansif).</p>{blocks}",
+            sub="down-capture · doğrulanmış defansif faktör")
+
     # ── cluster3 STANDALONE bölümü (açık arketip-paper havuzu — örtüşmese de) ──
     c3o = a.get("cluster3_open") or []
     cluster3_html = ""
@@ -708,6 +738,8 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
         sub="DE v1 · paper-track tek-rejim · dc=down-capture (düşük=defansif)")}
 
   {weekly_lead_html}
+
+  {sector_dc_html}
 
   {tavan_html}
 

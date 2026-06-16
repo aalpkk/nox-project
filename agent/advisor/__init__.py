@@ -171,14 +171,31 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
             if si and si in fav:
                 b["sector_favorable"] = True
                 picks.setdefault(si, []).append(b["ticker"])
-        # DOWN-CAPTURE faktörü (doğrulanmış defansif +alfa): TÜM adaylara (buy+skipped,
-        # her sektörde) hesapla — kullanıcı isteği. Hisse serisi commit'li master'dan →
-        # ucuz (tek XU100 çekimi). Lider-sektör pick'leri DÜŞÜK dc (defansif) önce sıralı.
+        # DOWN-CAPTURE faktörü (doğrulanmış defansif +alfa): adaylar + LİDER/ARMED
+        # sektörlerin TÜM üyeleri (kullanıcı isteği). Tek XU100 çekimi paylaşılır.
         all_cands = advisory.get("buy_candidates", []) + (advisory.get("skipped_candidates") or [])
-        dcap = signals.compute_down_capture([b["ticker"] for b in all_cands], asof)
+        cand_tk = [b["ticker"] for b in all_cands]
+        members_by_sec = signals.sector_members(fav)         # lider sektör → üyeler
+        leader_members = sorted({t for ms in members_by_sec.values() for t in ms})
+        dcap = signals.compute_down_capture(sorted(set(cand_tk) | set(leader_members)), asof)
         for b in all_cands:
             info = dcap.get(b["ticker"])
             b["down_capture"] = info["dc"] if info else None
+        # LİDER SEKTÖRLERDE DEFANSİF HİSSELER: üyeleri likidite eler + dc'ye göre sırala
+        cand_set = set(cand_tk)
+        ADV_MIN = 5_000_000  # likidite tabanı (TL/gün, ~60g ort.)
+        sector_dc_picks = {}
+        for si in sorted(fav):
+            rows = []
+            for t in members_by_sec.get(si, []):
+                d = dcap.get(t)
+                if d and d.get("adv", 0) >= ADV_MIN:
+                    rows.append({"ticker": t, "dc": d["dc"], "adv": round(d["adv"]),
+                                 "in_de": t in cand_set})
+            rows.sort(key=lambda x: x["dc"])            # düşük dc = defansif önce
+            if rows:
+                sector_dc_picks[si] = rows[:8]
+        advisory["sector_dc_picks"] = sector_dc_picks
         advisory.setdefault("sector_rotation", {})
         advisory["sector_rotation"]["sectors"] = sectors
         advisory["sector_rotation"]["favorable_sectors"] = sorted(fav)
