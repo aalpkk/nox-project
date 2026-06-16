@@ -1,0 +1,44 @@
+name: Nyx Rotation Telegram (PAPER)
+
+# Günlük 4-bilgilik rotasyon raporu → Telegram:
+#  ① LİDER sektörler ② sonraki-lider adayı (ARMED+anatomi) ③ yeni dönen (ARMED)
+#  ④ down-capture AL adayları (defansif, hedef sektörlerde).
+# Betimsel + paper; canlı para sistemi DEĞİL. Veri: İŞ Yatırım (auth yok) +
+# repo'daki ohlcv master. Spec: docs/sector_rotation_trade_spec_v0.md ailesi.
+
+on:
+  schedule:
+    - cron: '30 17 * * 1-5'      # hafta içi 20:30 TR
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nyx-rotation-telegram
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Build + send report
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python tools/nyx_rotation_telegram_v0.py --notify 2>&1 | tee nyx_rotation_output.txt
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyx-rotation-${{ github.run_number }}
+          path: nyx_rotation_output.txt
+          if-no-files-found: warn
+          retention-days: 14
