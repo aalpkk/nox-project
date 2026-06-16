@@ -409,14 +409,23 @@ _SECTOR_CODES = ["XBANK", "XHOLD", "XUSIN", "XKMYA", "XELKT", "XGIDA", "XSGRT",
 _DD_LOOK, _DD_ARM, _BOUNCE = 120, -0.10, 0.03
 
 
-def _sector_states_from_closes(by):
-    """{kod: [eski→yeni kapanış]} → (sectors[], favorable[]).
+_REL20_LEADER = 0.015  # LİDER eşiği: 20g göreli güçte XU100'ü +%1.5 yenmek
 
-    ORİJİNAL sector_scan durum makinesi (DD_LOOK=120 / DD_ARM=−10% / BOUNCE=3%):
-    her sektör TEK durumda — TREND→'LİDER' (zirvede, düşüşte değil) | 'ARMED' (≥%10
-    düşüşte, dipten dönüş yok) | 'TETİK' (ARMED + dipten %3 sıçradı). 'hem lider hem
-    armed' OLAMAZ. favorable = TETİK ∪ ARMED ∪ LİDER (hepsi, ama tek-durum etiketli).
+
+def _sector_states_from_closes(by, xu_closes=None):
+    """{kod: [eski→yeni kapanış]} (+ XU100 kapanışları) → (sectors[], favorable[]).
+
+    ORİJİNAL state makinesi (DD_LOOK=120 / DD_ARM=−10% / BOUNCE=3%) + LİDER rel20:
+    her sektör TEK durum (ÖNCELİK sırasıyla):
+      🔵 LİDER  = state≠IDLE VE rel20 (20g sektör−XU100) > +%1.5 → öne geçmiş
+                  (genelde düşüp-dönmüş; 'zirvede hiç düşmemiş' DEĞİL — o DİĞER'e gider)
+      🟢 TETİK  = ARMED + dipten %3 sıçradı (lider değil)
+      🟠 ARMED  = ≥%10 düşüşte, dönüş yok
+      ⚪ DİĞER  = IDLE/zirve veya öne geçmemiş → favorable DIŞI (gizli)
+    favorable = LİDER ∪ TETİK ∪ ARMED (DİĞER hariç). 'hem lider hem armed' OLAMAZ.
     """
+    xu = np.asarray([float(x) for x in (xu_closes or [])])
+    xu_ret20 = (xu[-1] / xu[-21] - 1) if len(xu) >= 21 else None
     sectors, fav = [], []
     for kod, cl in by.items():
         if len(cl) < _DD_LOOK + 10:
@@ -437,15 +446,25 @@ def _sector_states_from_closes(by):
                     trig_i = t
         last = len(v) - 1
         dd = v[last] / v[last - _DD_LOOK:last].max() - 1
-        durum = ("TETİK" if trig_i is not None else "ARMED" if state == "ARMED" else "LİDER")
+        rel20 = ((v[-1] / v[-21] - 1) - xu_ret20) if (xu_ret20 is not None and len(v) >= 21) else None
+        leader = (state != "IDLE") and (rel20 is not None and rel20 > _REL20_LEADER)
+        if leader:
+            durum = "LİDER"
+        elif trig_i is not None:
+            durum = "TETİK"
+        elif state == "ARMED":
+            durum = "ARMED"
+        else:
+            durum = "DİĞER"
         dipten = (v[last] / run_min - 1) if run_min else None
         sectors.append({"kod": kod, "durum": durum,
                         "dipten_pct": round(dipten * 100, 1) if dipten is not None else None,
                         "dd_pct": round(dd * 100, 1),
+                        "rel20_pct": round(rel20 * 100, 1) if rel20 is not None else None,
                         "yas": int(last - trig_i) if trig_i is not None else None})
-        fav.append(kod)  # her sektör tek-durumlu; favorable=hepsi (ARMED/LİDER/TETİK)
-    # sıra: TETİK → ARMED → LİDER (aksiyon önceliği)
-    order = {"TETİK": 0, "ARMED": 1, "LİDER": 2}
+        if durum in ("LİDER", "TETİK", "ARMED"):   # DİĞER favorable DIŞI
+            fav.append(kod)
+    order = {"LİDER": 0, "TETİK": 1, "ARMED": 2, "DİĞER": 3}
     sectors.sort(key=lambda s: order.get(s["durum"], 9))
     return sectors, fav
 
@@ -463,7 +482,7 @@ def load_sector_strength(asof, n_bars=140):
             FintablesMCPClient, _parse_markdown_table)
         cli = FintablesMCPClient()
         by = {}
-        codes = _SECTOR_CODES
+        codes = _SECTOR_CODES + ["XU100"]   # XU100 = rel20 (LİDER) baz endeksi
         for i in range(0, len(codes), 2):
             batch = codes[i:i + 2]
             inc = ", ".join(f"'{c}'" for c in batch)
@@ -475,8 +494,9 @@ def load_sector_strength(asof, n_bars=140):
             for row in _parse_markdown_table((payload or {}).get("table") or ""):
                 if row.get("kapanis"):
                     by.setdefault(row["kod"], []).append(row["kapanis"])
+        xu_closes = by.pop("XU100", None)
         if by:
-            sectors, fav = _sector_states_from_closes(by)
+            sectors, fav = _sector_states_from_closes(by, xu_closes)
             if sectors:
                 return {"source": "fintables", "sectors": sectors, "favorable_sectors": fav}
     except Exception as e:
