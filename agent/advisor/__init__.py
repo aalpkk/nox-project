@@ -183,9 +183,10 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
             b["down_capture"] = info["dc"] if info else None
         # LİDER SEKTÖRLERDE DEFANSİF HİSSELER: üyeleri likidite eler + dc'ye göre sırala
         cand_set = set(cand_tk)
+        sec_durum = {s["kod"]: s.get("durum") for s in sectors}  # her sektör TEK durum
         ADV_MIN = 5_000_000  # likidite tabanı (TL/gün, ~60g ort.)
         sector_dc_picks = {}
-        for si in sorted(fav):
+        for si in sorted(fav, key=lambda k: {"TETİK": 0, "ARMED": 1, "LİDER": 2}.get(sec_durum.get(k), 9)):
             rows = []
             for t in members_by_sec.get(si, []):
                 d = dcap.get(t)
@@ -194,7 +195,7 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                                  "in_de": t in cand_set})
             rows.sort(key=lambda x: x["dc"])            # düşük dc = defansif önce
             if rows:
-                sector_dc_picks[si] = rows[:8]
+                sector_dc_picks[si] = {"durum": sec_durum.get(si), "rows": rows[:8]}
         advisory["sector_dc_picks"] = sector_dc_picks
         advisory.setdefault("sector_rotation", {})
         advisory["sector_rotation"]["sectors"] = sectors
