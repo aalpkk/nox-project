@@ -163,9 +163,13 @@ def render_telegram_tr(advisory):
             rp = a.get("rotation_picks") or {}
             if rp:
                 for si, info in rp.items():
-                    lines.append(f"      → <b>{si}</b>: {', '.join(info['tickers'])}")
-                lines.append("   <i>(sektör/zaman seçimi doğrulanmış; sektör-içi hisse seçimi "
-                             "robust DEĞİL → eşit-ağırlık/bilgi)</i>")
+                    dcm = info.get("down_capture") or {}
+                    tk_txt = ", ".join(
+                        f"{t}{f'(dc{dcm[t]:.2f})' if isinstance(dcm.get(t), (int, float)) else ''}"
+                        for t in info["tickers"])
+                    lines.append(f"      → <b>{si}</b>: {tk_txt}")
+                lines.append("   <i>(sektör/zaman seçimi doğrulanmış; sektör-içi sıra = DÜŞÜK "
+                             "down-capture/defansif önce — vs-XU100 +alfa, both-period ✓)</i>")
             else:
                 lines.append("   <i>(bu sektörlerde bugün DE adayı yok)</i>")
         lines.append("")
@@ -463,15 +467,23 @@ def render_html(advisory):
             for k in fav:
                 s = sec_l.get(k, {})
                 dp = s.get("dipten_pct")
-                tks = (rp.get(k) or {}).get("tickers") or []
-                tlinks = ", ".join(_tv(t) for t in tks) if tks else "<span class='meta'>bugün DE adayı yok</span>"
+                info = rp.get(k) or {}
+                tks = info.get("tickers") or []
+                dcm = info.get("down_capture") or {}
+                if tks:
+                    tlinks = ", ".join(
+                        _tv(t) + (f"<span class='meta'> dc{dcm[t]:.2f}</span>"
+                                  if isinstance(dcm.get(t), (int, float)) else "")
+                        for t in tks)
+                else:
+                    tlinks = "<span class='meta'>bugün DE adayı yok</span>"
                 pick_rows += (f"<tr><td><b>{k}</b></td>"
-                              f"<td>{s.get('durum','?')}{f' · dipten +{dp}%' if dp else ''}</td>"
+                              f"<td>{s.get('durum','?')}{f' · {dp:+.1f}%/5g' if dp is not None else ''}</td>"
                               f"<td>{tlinks}</td></tr>")
             rot_html += (
                 "<p class='note'>📈 <b>Rotasyonda öne çıkan sektörler → o sektördeki DE adayların</b> "
-                "<i>(sektör/zaman seçimi DOĞRULANMIŞ edge; sektör-içi hisse seçimi robust DEĞİL "
-                "→ eşit-ağırlık/bilgi)</i></p>"
+                "<i>(sektör/zaman seçimi DOĞRULANMIŞ; sektör-içi sıra = DÜŞÜK down-capture/defansif "
+                "önce — vs-XU100 +alfa her iki dönem ✓; dc düşük = düşerken az düşen)</i></p>"
                 "<div class='nox-table-wrap'><table><thead><tr><th>Sektör</th><th>Durum</th>"
                 f"<th>DE adayların</th></tr></thead><tbody>{pick_rows}</tbody></table></div>")
     hw = a.get("hw_obos") or {}
