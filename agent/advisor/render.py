@@ -267,10 +267,13 @@ def render_telegram_tr(advisory):
             st = (b.get("state") or "").replace("_", " ")[:18]
             dc = b.get("down_capture")
             dc_txt = f" · dc {dc:+.2f}" if isinstance(dc, (int, float)) else ""
+            _ti = ((a.get("takas") or {}).get("per_ticker") or {}).get(b["ticker"]) or {}
+            tk_txt = (f" · takas {_ti['mark']}{'⚠️' if _ti.get('alerts') else ''}"
+                      if _ti.get("mark") else "")
             lines.append(
                 f"🟢 {trid}<b>{b['ticker']}</b>{add_tag} [{tf}{' '+st if st else ''}] · "
                 f"{b['suggested_qty']} adet @ {b['entry_ref']:.2f} · "
-                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{dc_txt}{mtf_txt}{conf_txt}"
+                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{dc_txt}{tk_txt}{mtf_txt}{conf_txt}"
             )
             if b["rationale_tr"]:
                 lines.append(f"   <i>{b['rationale_tr']}</i>")
@@ -385,6 +388,14 @@ def render_html(advisory):
             return f"{float(x):,.0f}"
         except Exception:
             return x
+    # takas per_ticker (pozisyon+aday) → AL adaylarına takas işareti/özeti
+    _tkp = (a.get("takas") or {}).get("per_ticker") or {}
+    def _takas_cell(tkr):
+        info = _tkp.get(tkr)
+        if not info or "mark" not in info:
+            return info.get("durum", "—") if info else "—"
+        al = " · ".join(info.get("alerts", []))
+        return f"{info['mark']} {info.get('top_buyer','')}{(' | '+al) if al else ''}"
     buy_view = []
     for b in a["buy_candidates"]:
         mtf = b.get("mtf_birth") or []
@@ -393,12 +404,13 @@ def render_html(advisory):
         buy_view.append({**b,
                          "confluence": mtf_p + ", ".join(_full_confluence(b)),
                          "dc": f"{dc:+.2f}" if isinstance(dc, (int, float)) else "—",
+                         "takas": _takas_cell(b["ticker"]),
                          "entry_ref": _r2(b.get("entry_ref")),
                          "stop_ref": _r2(b.get("stop_ref")),
                          "risk_tl": _ri(b.get("risk_tl")),
                          "suggested_qty": _ri(b.get("suggested_qty"))})
     buy_rows = rows(buy_view,
-                    ["ticker", "timeframe", "state", "confluence", "dc", "section",
+                    ["ticker", "timeframe", "state", "confluence", "dc", "takas", "section",
                      "suggested_qty", "entry_ref", "stop_ref", "risk_tl"])
 
     # BÜTÇE-KISITSIZ TAM LİSTE: buy + skipped (nakit/limit duvarına takılanlar) —
@@ -439,13 +451,21 @@ def render_html(advisory):
         takas_banner = ('<div style="background:#3a3a1a;border:1px solid #d29922;color:#e3d18a;'
                         'padding:10px;border-radius:6px;margin:12px 0">'
                         'ℹ️ Takas kapalı (MATRIKS_API_KEY yok).</div>')
+    _cand_set = set(tk.get("candidate_tickers") or [])
+    _pos_set = set(p.get("ticker") for p in a.get("position_recommendations", []))
+    def _rol(tkr):  # rol etiketi: pozisyon / AL adayı
+        if tkr in _pos_set and tkr in _cand_set:
+            return " <span class='tag'>poz+aday</span>"
+        if tkr in _cand_set:
+            return " <span class='tag tag-w'>AL adayı</span>"
+        return ""
     takas_rows = ""
     for tkr, info in (tk.get("per_ticker") or {}).items():
         if "mark" not in info:
-            takas_rows += (f"<tr><td>{_tv(tkr)}</td><td colspan='4'>{info.get('durum','—')}</td></tr>")
+            takas_rows += (f"<tr><td>{_tv(tkr)}{_rol(tkr)}</td><td colspan='4'>{info.get('durum','—')}</td></tr>")
             continue
         al = "<br>".join(info.get("alerts", [])) or "—"
-        takas_rows += (f"<tr><td>{info['mark']} {_tv(tkr)}</td>"
+        takas_rows += (f"<tr><td>{info['mark']} {_tv(tkr)}{_rol(tkr)}</td>"
                        f"<td>{' | '.join(info.get('key', [])) or '—'}</td>"
                        f"<td>{info.get('top_buyer', '—')}</td>"
                        f"<td>{info.get('top_seller', '—')}</td>"
@@ -737,9 +757,9 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
 
   {_sec("🟢 AL adayları",
         "<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>"
-        "<th>🔗 Tüm çakışma</th><th>dc</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>"
+        "<th>🔗 Tüm çakışma</th><th>dc</th><th>💼 Takas</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>"
         f"</tr></thead><tbody>{buy_rows}</tbody></table></div>",
-        sub="DE v1 · paper-track tek-rejim · dc=down-capture (düşük=defansif)")}
+        sub="DE v1 · paper-track · dc=down-capture (düşük=defansif) · takas=Matriks akış")}
 
   {weekly_lead_html}
 
