@@ -103,9 +103,11 @@ def _full_confluence(b):
     for k, tfs in de.items():
         tford = sorted(tfs, key=lambda t: {"5h": 0, "1d": 1, "1w": 2, "1mo": 3}.get(t, 9))
         parts.append(f"{k}[{','.join(tford)}]" if tford else k)
-    # çapraz tarayıcılar (context)
+    # çapraz tarayıcılar (context) — 'tavan' = bist-tavan-SCREENER üyeliği
+    # (tavan adayı/devam/seri), "bugün kilitlendi" DEĞİL → yanıltmamak için netleştir.
+    _ctx_lbl = {"tavan": "tavan-aday(scr)", "tavan_kandidat": "tavan-kandidat(scr)"}
     for c in (b.get("context_lists") or []):
-        parts.append(c)
+        parts.append(_ctx_lbl.get(c, c))
     # özel hatlar
     if b.get("weekly_lead"):
         tf = "+".join(b.get("weekly_lead_tf") or [])
