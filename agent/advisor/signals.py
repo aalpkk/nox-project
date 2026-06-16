@@ -405,67 +405,67 @@ _SECTOR_CODES = ["XBANK", "XHOLD", "XUSIN", "XKMYA", "XELKT", "XGIDA", "XSGRT",
                  "XMESY", "XUTEK", "XGMYO", "XUMAL", "XTRZM", "XMADN", "XINSA"]
 
 
-def _sector_states_from_closes(by, top_frac=0.30):
+# ORİJİNAL sector_scan sabitleri (tools/sector_rotation_trade_v0 + monitor) — DEĞİŞTİRME
+_DD_LOOK, _DD_ARM, _BOUNCE = 120, -0.10, 0.03
+
+
+def _sector_states_from_closes(by):
     """{kod: [eski→yeni kapanış]} → (sectors[], favorable[]).
 
-    favorable GÖRELİ seçicidir (boğada her şey 'trend↑' olur, ayrışmaz): en güçlü
-    ~%30 5-gün momentum (LİDER sektörler) VEYA taze dip↗ dönüş. durum: dip↗/TREND↑/
-    tepe↘/nötr; favori olanlar 'LİDER↑' işaretlenir.
+    ORİJİNAL sector_scan durum makinesi (DD_LOOK=120 / DD_ARM=−10% / BOUNCE=3%):
+    her sektör TEK durumda — TREND→'LİDER' (zirvede, düşüşte değil) | 'ARMED' (≥%10
+    düşüşte, dipten dönüş yok) | 'TETİK' (ARMED + dipten %3 sıçradı). 'hem lider hem
+    armed' OLAMAZ. favorable = TETİK ∪ ARMED ∪ LİDER (hepsi, ama tek-durum etiketli).
     """
-    rows = []
-    for kod, cl in by.items():
-        if len(cl) < 20:
-            continue
-        s = pd.Series([float(x) for x in cl])
-        last = s.iloc[-1]
-        chg5 = (last / s.iloc[-6] - 1) * 100 if len(s) >= 6 else 0.0
-        chg20 = (last / s.iloc[-21] - 1) * 100 if len(s) >= 21 else None
-        d = s.diff()
-        up = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
-        dn = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
-        rsi = 100 - 100 / (1 + up / dn.replace(0, 1e-9))
-        rsi_now, rsi_prev = float(rsi.iloc[-1]), float(rsi.iloc[-2])
-        rsi_min5 = float(rsi.iloc[-5:].min())
-        rsi_max5 = float(rsi.iloc[-5:].max())
-        dip = rsi_min5 < 40 and rsi_now > rsi_prev and last > s.iloc[-2]
-        tepe = rsi_max5 > 72 and rsi_now < rsi_prev and last < s.iloc[-2]
-        rows.append({"kod": kod, "chg5": chg5, "chg20": chg20, "rsi": rsi_now,
-                     "dip": dip, "tepe": tepe})
-    if not rows:
-        return [], []
-    rows.sort(key=lambda x: -x["chg5"])
-    n_top = max(1, round(len(rows) * top_frac))
-    leaders = {r["kod"] for r in rows[:n_top]}
     sectors, fav = [], []
-    for r in rows:
-        is_fav = r["kod"] in leaders or r["dip"]
-        durum = ("dip↗" if r["dip"] else "LİDER↑" if r["kod"] in leaders
-                 else "tepe↘" if r["tepe"] else "TREND" if r["chg5"] > 0 else "zayıf")
-        sectors.append({"kod": r["kod"], "durum": durum,
-                        "dipten_pct": round(r["chg5"], 1),
-                        "dd_pct": round(r["chg20"], 1) if r["chg20"] is not None else None,
-                        "rsi": round(r["rsi"], 0)})
-        if is_fav:
-            fav.append(r["kod"])
+    for kod, cl in by.items():
+        if len(cl) < _DD_LOOK + 10:
+            continue
+        v = np.asarray([float(x) for x in cl])
+        state, run_min, trig_i = "IDLE", None, None
+        for t in range(_DD_LOOK, len(v)):
+            if state == "IDLE":
+                if v[t] / v[t - _DD_LOOK:t].max() - 1 <= _DD_ARM:
+                    state, run_min, trig_i = "ARMED", v[t], None
+            else:
+                run_min = min(run_min, v[t])
+                if v[t] > v[t - _DD_LOOK:t].max():
+                    state, run_min, trig_i = "IDLE", None, None
+                elif trig_i is not None and v[t] < run_min:
+                    trig_i = None
+                elif trig_i is None and v[t] >= run_min * (1 + _BOUNCE):
+                    trig_i = t
+        last = len(v) - 1
+        dd = v[last] / v[last - _DD_LOOK:last].max() - 1
+        durum = ("TETİK" if trig_i is not None else "ARMED" if state == "ARMED" else "LİDER")
+        dipten = (v[last] / run_min - 1) if run_min else None
+        sectors.append({"kod": kod, "durum": durum,
+                        "dipten_pct": round(dipten * 100, 1) if dipten is not None else None,
+                        "dd_pct": round(dd * 100, 1),
+                        "yas": int(last - trig_i) if trig_i is not None else None})
+        fav.append(kod)  # her sektör tek-durumlu; favorable=hepsi (ARMED/LİDER/TETİK)
+    # sıra: TETİK → ARMED → LİDER (aksiyon önceliği)
+    order = {"TETİK": 0, "ARMED": 1, "LİDER": 2}
+    sectors.sort(key=lambda s: order.get(s["durum"], 9))
     return sectors, fav
 
 
-def load_sector_strength(asof, n_bars=40):
-    """Sektör gücü/öne-çıkanlar — BİRİNCİL Fintables (endeks_mumlar_gunluk_gh, CI'da
-    FINTABLES_MCP_TOKEN), FALLBACK İŞY (sector_scan, lokal/monitör ortamı). yfinance
-    BIST alt-sektör endekslerini N/A döndürdüğü için kullanılmaz.
+def load_sector_strength(asof, n_bars=140):
+    """Sektör durumu (ORİJİNAL state-makinesi) — BİRİNCİL Fintables (endeks_mumlar_
+    gunluk_gh, CI'da FINTABLES_MCP_TOKEN), FALLBACK İŞY (sector_scan). yfinance BIST
+    alt-sektör endekslerini N/A döndürdüğü için kullanılmaz. DD_LOOK=120 → ≥140 bar.
 
-    Döner: {"source", "sectors":[{kod,durum,dipten_pct,...}], "favorable_sectors":[...]}.
+    Döner: {"source", "sectors":[{kod,durum∈TETİK/ARMED/LİDER,...}], "favorable_sectors"}.
     """
-    # 1) Fintables (birincil)
+    # 1) Fintables (birincil) — DD_LOOK=120 için ~140 bar; 300-satır cap → 2 sektör/sorgu
     try:
         from nyxexpansion.intraday.fetchers.fintables import (
             FintablesMCPClient, _parse_markdown_table)
         cli = FintablesMCPClient()
         by = {}
         codes = _SECTOR_CODES
-        for i in range(0, len(codes), 7):
-            batch = codes[i:i + 7]
+        for i in range(0, len(codes), 2):
+            batch = codes[i:i + 2]
             inc = ", ".join(f"'{c}'" for c in batch)
             sql = (f"WITH r AS (SELECT kod, zaman_utc, kapanis, ROW_NUMBER() OVER "
                    f"(PARTITION BY kod ORDER BY zaman_utc DESC) rn FROM endeks_mumlar_gunluk_gh "

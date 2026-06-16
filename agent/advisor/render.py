@@ -173,11 +173,12 @@ def render_telegram_tr(advisory):
         # LİDER sektörlerde defansif hisseler (TÜM likit üye, dc sıralı)
         sdc = a.get("sector_dc_picks") or {}
         if sdc:
-            lines.append("   📉 <b>lider sektörlerde defansif (düşük dc) hisseler:</b>")
-            for si, rs in sdc.items():
+            lines.append("   📉 <b>sektör durumu + defansif (düşük dc) hisseler:</b>")
+            for si, info in sdc.items():
+                rs = info.get("rows") or []
                 tk = ", ".join(f"{r['ticker']}{'🎯' if r.get('in_de') else ''}(dc{r['dc']:+.2f})"
                                for r in rs[:6])
-                lines.append(f"      <b>{si}</b>: {tk}")
+                lines.append(f"      <b>{si}</b> [{info.get('durum')}]: {tk}")
             else:
                 lines.append("   <i>(bu sektörlerde bugün DE adayı yok)</i>")
         lines.append("")
@@ -601,14 +602,17 @@ def render_html(advisory):
     sdc = a.get("sector_dc_picks") or {}
     sector_dc_html = ""
     if sdc:
+        _dem = {"TETİK": "🟢TETİK", "ARMED": "🟠ARMED", "LİDER": "🔵LİDER"}
         blocks = ""
-        for si, rows in sdc.items():
+        for si, info in sdc.items():
+            rows = info.get("rows") or []
+            durum = info.get("durum") or "?"
             cells = "".join(
                 f"<tr><td><b>{_tv(r['ticker'])}</b>{' 🎯DE' if r.get('in_de') else ''}</td>"
                 f"<td style=\"color:{'#7a9e7a' if r['dc'] < 0.7 else 'var(--text-primary)'}\">{r['dc']:+.2f}</td>"
                 f"<td>{r['adv']/1e6:.0f}M₺</td></tr>" for r in rows)
             blocks += (f"<p class='note' style='margin-top:8px'><b>{si}</b> "
-                       f"<span class='meta'>(lider/ARMED)</span></p>"
+                       f"<span class='meta'>{_dem.get(durum, durum)}</span></p>"
                        f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th>"
                        f"<th>dc</th><th>likidite</th></tr></thead><tbody>{cells}</tbody></table></div>")
         sector_dc_html = _sec(
