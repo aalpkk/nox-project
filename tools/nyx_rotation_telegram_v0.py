@@ -54,6 +54,34 @@ def sector_state(v):
     return state, run_min, trig
 
 
+def _append_fintables_latest(idx):
+    """İŞY'nin kaçırdığı en son seansı Fintables intraday (15dk) kapanışından ekle.
+    Token yoksa/başarısızsa idx'i olduğu gibi döndürür (graceful)."""
+    if not os.environ.get('FINTABLES_MCP_TOKEN'):
+        return idx
+    try:
+        from nyxexpansion.intraday.fetchers.fintables import FintablesMCPClient, _parse_markdown_table
+        last = pd.Timestamp(idx.index[-1])
+        after = last.strftime('%Y-%m-%dT21:00:00')   # bu günün günlük-bar damgası sonrası
+        in_c = ", ".join(f"'{c}'" for c in idx.columns)
+        sql = (f"SELECT DISTINCT ON (kod) kod, zaman_utc, kapanis FROM endeks_mumlar_15dk_gh "
+               f"WHERE kod IN ({in_c}) AND zaman_utc > '{after}' ORDER BY kod, zaman_utc DESC LIMIT 300")
+        p = FintablesMCPClient().call_tool("veri_sorgula", {"sql": sql, "purpose": "nyx rotasyon son seans"})
+        rows = _parse_markdown_table(p.get("table") or "") if isinstance(p, dict) else []
+        closes, newdate = {}, None
+        for r in rows:
+            z = pd.Timestamp(r['zaman_utc']).tz_convert('Europe/Istanbul').normalize().tz_localize(None)
+            closes[r['kod']] = float(r['kapanis'])
+            newdate = z if newdate is None else max(newdate, z)
+        if newdate is not None and newdate > last and closes:
+            idx.loc[newdate] = {c: closes.get(c, np.nan) for c in idx.columns}
+            idx = idx.sort_index().ffill()
+            print(f"  + Fintables intraday ile {newdate.date()} eklendi ({len(closes)} endeks)")
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠️ Fintables ekleme atlandı: {type(e).__name__}: {e}")
+    return idx
+
+
 def anatomy_priority():
     """sector_leadlag ranks → sektör başına early_post ortalama nrank (düşük=erken lider)."""
     p = os.path.join(ROOT, 'output', 'sector_leadlag_v0_ranks.csv')
@@ -71,13 +99,16 @@ def main():
     ap.add_argument('--notify', action='store_true')
     args = ap.parse_args()
 
-    # 1) sektör + XU100 canlı
+    # 1) sektör + XU100 geçmişi (İŞY, ücretsiz/tam) + Fintables intraday ile EN SON
+    #    seansı ekle (İŞY günlük feed'i 1 seans gecikiyor; Fintables günlük tablo da
+    #    gecikiyor AMA intraday saatlik/15dk tabloları kapanışı içeriyor).
     frames = {}
     for c in SECTORS + ['XU100']:
         d = _fetch_isy_single(c, lookback_days=400, timeout=30)
         if d is not None and len(d) >= DD_LOOK + 10:
             frames[c] = d['close']
     idx = pd.DataFrame(frames).dropna(subset=['XU100']).ffill()
+    idx = _append_fintables_latest(idx)
     xu = idx['XU100']
     asof = idx.index[-1].date()
     anat = anatomy_priority()
