@@ -12,6 +12,7 @@ import json
 import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 OUT_DIR = Path(os.environ.get("NOX_OUTPUT_DIR", "output"))
@@ -497,6 +498,66 @@ def load_sector_strength(asof, n_bars=40):
         return {"source": "isy", "sectors": sectors, "favorable_sectors": fav}
     except Exception as e:
         return {"source": "none", "sectors": [], "favorable_sectors": [], "note": str(e)}
+
+
+def _fintables_index_daily(kod, n_bars, asof):
+    """Tek endeksin son n_bars günlük kapanışı (Fintables) → pd.Series(date→close)."""
+    from nyxexpansion.intraday.fetchers.fintables import (
+        FintablesMCPClient, _parse_markdown_table)
+    cli = FintablesMCPClient()
+    sql = (f"WITH r AS (SELECT zaman_utc, kapanis, ROW_NUMBER() OVER "
+           f"(ORDER BY zaman_utc DESC) rn FROM endeks_mumlar_gunluk_gh WHERE kod = '{kod}' "
+           f"AND zaman_utc <= '{asof}T21:00:00Z') SELECT zaman_utc, kapanis FROM r "
+           f"WHERE rn <= {n_bars} ORDER BY zaman_utc ASC LIMIT 300")
+    payload = cli.call_tool("veri_sorgula", {"sql": sql, "purpose": "NOX down-capture XU100"})
+    rows = _parse_markdown_table((payload or {}).get("table") or "")
+    s = pd.Series({str(r["zaman_utc"])[:10]: float(r["kapanis"]) for r in rows if r.get("kapanis")})
+    return s
+
+
+def compute_down_capture(tickers, asof, win=250):
+    """DOWN-CAPTURE faktörü (sektör-rotasyon oturumu, DOĞRULANMIŞ +alfa her iki dönem):
+    dc = (hisse'nin XU100-düşüş-günlerindeki ort. günlük getirisi) / (XU100'ün o
+    günlerdeki ort. getirisi). DÜŞÜK dc = defansif (düşerken az düşen) = +alfa.
+    Piyasa-seviyesi (vs XU100) — within-sector era-kırılgan olduğu için XU100.
+
+    Hisse serisi commit'li ohlcv master'dan; XU100 Fintables endeks tablosundan.
+    Döner: {ticker: {dc, n_down}} (düşük dc daha defansif). Veri yoksa boş.
+    """
+    want = {str(t).upper() for t in (tickers or [])}
+    if not want:
+        return {}
+    try:
+        xu = _fintables_index_daily("XU100", win + 30, asof)
+        if len(xu) < 60:
+            return {}
+        xu.index = pd.to_datetime(xu.index)
+        xu_ret = xu.pct_change()
+        dn_mask = xu_ret < 0
+        xu_dn_mean = xu_ret[dn_mask].mean()
+        if not xu_dn_mean or pd.isna(xu_dn_mean):
+            return {}
+        m = pd.read_parquet(OUT_DIR / "ohlcv_10y_fintables_master.parquet",
+                            columns=["ticker", "Close"])
+        m = m[m["ticker"].astype(str).str.upper().isin(want)]
+        out = {}
+        for tkr, g in m.groupby(m["ticker"].astype(str).str.upper()):
+            cl = g["Close"].copy()
+            cl.index = pd.to_datetime(g.index)
+            cl = cl[cl.index <= pd.Timestamp(asof)].tail(win + 30)
+            if len(cl) < 60:
+                continue
+            sr = cl.pct_change().reindex(xu_ret.index)  # XU100 takvimine hizala
+            both_dn = dn_mask & sr.notna()
+            if both_dn.sum() < 10:
+                continue
+            dc = float(sr[both_dn].mean() / xu_ret[both_dn].mean())
+            if not np.isnan(dc):
+                out[tkr] = {"dc": round(dc, 2), "n_down": int(both_dn.sum())}
+        return out
+    except Exception as e:
+        print(f"   [down-capture] hesaplanamadı: {str(e)[:80]}")
+        return {}
 
 
 def load_tavan_scan_live(asof, stale_days=4):

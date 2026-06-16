@@ -171,17 +171,25 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
             if si and si in fav:
                 b["sector_favorable"] = True
                 picks.setdefault(si, []).append(b["ticker"])
+        # DOWN-CAPTURE faktörü (doğrulanmış defansif +alfa): TÜM adaylara hesapla,
+        # lider-sektör pick'lerini DÜŞÜK dc (defansif) önce sırala — sektör-içi seçim.
+        dcap = signals.compute_down_capture([b["ticker"] for b in advisory.get("buy_candidates", [])], asof)
+        for b in advisory.get("buy_candidates", []):
+            info = dcap.get(b["ticker"])
+            b["down_capture"] = info["dc"] if info else None
         advisory.setdefault("sector_rotation", {})
         advisory["sector_rotation"]["sectors"] = sectors
         advisory["sector_rotation"]["favorable_sectors"] = sorted(fav)
         advisory["sector_rotation"]["strength_source"] = strength.get("source")
         advisory["rotation_picks"] = {
-            si: {"tickers": tk, "durum": sec_lookup.get(si, {}).get("durum"),
-                 "dipten_pct": sec_lookup.get(si, {}).get("dipten_pct")}
+            si: {"tickers": sorted(tk, key=lambda t: (dcap.get(t, {}).get("dc") if dcap.get(t) else 9e9)),
+                 "durum": sec_lookup.get(si, {}).get("durum"),
+                 "dipten_pct": sec_lookup.get(si, {}).get("dipten_pct"),
+                 "down_capture": {t: (dcap.get(t, {}).get("dc")) for t in tk}}
             for si, tk in sorted(picks.items())}
         print(f"   sektör rotasyon [{strength.get('source')}]: öne çıkan {sorted(fav)} → "
               f"eşleşen aday {sum(len(v) for v in picks.values())} ({len(picks)} sektörde, "
-              f"{len(sectors)} sektör taranmış)")
+              f"{len(sectors)} sektör taranmış) · down-capture {len(dcap)} hisse")
     except Exception as e:
         print(f"   sektör rotasyon eşleme HATA: {e}")
         advisory["rotation_picks"] = {}
