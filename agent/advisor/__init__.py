@@ -171,10 +171,12 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
             if si and si in fav:
                 b["sector_favorable"] = True
                 picks.setdefault(si, []).append(b["ticker"])
-        # DOWN-CAPTURE faktörü (doğrulanmış defansif +alfa): TÜM adaylara hesapla,
-        # lider-sektör pick'lerini DÜŞÜK dc (defansif) önce sırala — sektör-içi seçim.
-        dcap = signals.compute_down_capture([b["ticker"] for b in advisory.get("buy_candidates", [])], asof)
-        for b in advisory.get("buy_candidates", []):
+        # DOWN-CAPTURE faktörü (doğrulanmış defansif +alfa): TÜM adaylara (buy+skipped,
+        # her sektörde) hesapla — kullanıcı isteği. Hisse serisi commit'li master'dan →
+        # ucuz (tek XU100 çekimi). Lider-sektör pick'leri DÜŞÜK dc (defansif) önce sıralı.
+        all_cands = advisory.get("buy_candidates", []) + (advisory.get("skipped_candidates") or [])
+        dcap = signals.compute_down_capture([b["ticker"] for b in all_cands], asof)
+        for b in all_cands:
             info = dcap.get(b["ticker"])
             b["down_capture"] = info["dc"] if info else None
         advisory.setdefault("sector_rotation", {})

@@ -256,10 +256,12 @@ def render_telegram_tr(advisory):
             conf_txt = f"\n   🔗 çakışma: {', '.join(conf)}" if conf else ""
             tf = b.get("timeframe") or "?"
             st = (b.get("state") or "").replace("_", " ")[:18]
+            dc = b.get("down_capture")
+            dc_txt = f" · dc {dc:+.2f}" if isinstance(dc, (int, float)) else ""
             lines.append(
                 f"🟢 {trid}<b>{b['ticker']}</b>{add_tag} [{tf}{' '+st if st else ''}] · "
                 f"{b['suggested_qty']} adet @ {b['entry_ref']:.2f} · "
-                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{mtf_txt}{conf_txt}"
+                f"stop {b['stop_ref']:.2f} · risk {_fmt_tl(b['risk_tl'])} TL{dc_txt}{mtf_txt}{conf_txt}"
             )
             if b["rationale_tr"]:
                 lines.append(f"   <i>{b['rationale_tr']}</i>")
@@ -378,14 +380,16 @@ def render_html(advisory):
     for b in a["buy_candidates"]:
         mtf = b.get("mtf_birth") or []
         mtf_p = f"çoklu-TF birth:{'+'.join(mtf)}; " if len(mtf) > 1 else ""
+        dc = b.get("down_capture")
         buy_view.append({**b,
                          "confluence": mtf_p + ", ".join(_full_confluence(b)),
+                         "dc": f"{dc:+.2f}" if isinstance(dc, (int, float)) else "—",
                          "entry_ref": _r2(b.get("entry_ref")),
                          "stop_ref": _r2(b.get("stop_ref")),
                          "risk_tl": _ri(b.get("risk_tl")),
                          "suggested_qty": _ri(b.get("suggested_qty"))})
     buy_rows = rows(buy_view,
-                    ["ticker", "timeframe", "state", "confluence", "section",
+                    ["ticker", "timeframe", "state", "confluence", "dc", "section",
                      "suggested_qty", "entry_ref", "stop_ref", "risk_tl"])
 
     # BÜTÇE-KISITSIZ TAM LİSTE: buy + skipped (nakit/limit duvarına takılanlar) —
@@ -401,10 +405,12 @@ def render_html(advisory):
         mtf = it.get("mtf_birth") or []
         mtf_p = f"çoklu-TF birth:{'+'.join(mtf)}; " if len(mtf) > 1 else ""
         conf = mtf_p + ", ".join(_full_confluence(it))
+        dc = it.get("down_capture")
+        dc_t = f"{dc:+.2f}" if isinstance(dc, (int, float)) else "—"
         full_rows += (
             f"<tr><td><b>{_tv(it['ticker'])}</b></td>"
             f"<td>{it.get('timeframe', '')}</td><td>{it.get('state', '')}</td>"
-            f"<td>{conf}</td><td>{it.get('section', '')}</td>"
+            f"<td>{conf}</td><td>{dc_t}</td><td>{it.get('section', '')}</td>"
             f"<td>{_r2(it.get('entry_ref'))}</td><td>{_r2(it.get('stop_ref'))}</td>"
             f"<td>{it.get('_durum')}</td></tr>")
     inputs = "".join(f"<li>{k}: {_STATUS_EMOJI.get(v, '')} {v}</li>"
@@ -697,8 +703,9 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
 
   {_sec("🟢 AL adayları",
         "<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>"
-        "<th>🔗 Tüm çakışma</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>"
-        f"</tr></thead><tbody>{buy_rows}</tbody></table></div>", sub="DE v1 · paper-track tek-rejim")}
+        "<th>🔗 Tüm çakışma</th><th>dc</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>"
+        f"</tr></thead><tbody>{buy_rows}</tbody></table></div>",
+        sub="DE v1 · paper-track tek-rejim · dc=down-capture (düşük=defansif)")}
 
   {weekly_lead_html}
 
@@ -716,7 +723,7 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
     (alınabilir + bütçe duvarına takılanlar). Durum kolonu hangisinin bütçeyle
     elendiğini gösterir.</p>
     <div class="nox-table-wrap"><table><thead><tr><th>Hisse</th><th>TF</th><th>Setup</th>
-    <th>🔗 Tüm çakışma</th><th>Bölüm</th><th>Giriş</th><th>Stop</th><th>Durum</th>
+    <th>🔗 Tüm çakışma</th><th>dc</th><th>Bölüm</th><th>Giriş</th><th>Stop</th><th>Durum</th>
     </tr></thead><tbody>{full_rows}</tbody></table></div>
   </details>
 
