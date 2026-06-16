@@ -33,6 +33,8 @@ jobs:
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # Fintables intraday ile en son seansı (İŞY günlük feed'i gecikince) ekler
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
         run: python tools/nyx_rotation_telegram_v0.py --notify 2>&1 | tee nyx_rotation_output.txt
       - name: Upload output
         if: always()
