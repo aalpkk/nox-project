@@ -82,6 +82,9 @@ def main():
     asof = idx.index[-1].date()
     anat = anatomy_priority()
 
+    xur_full = xu.pct_change()
+    dn_full = xur_full.iloc[-WIN:] < 0
+    xur_dn_mean = xur_full.iloc[-WIN:][dn_full].mean()
     rows = []
     for c in SECTORS:
         if c not in idx.columns:
@@ -93,8 +96,11 @@ def main():
         rel10 = float(s.iloc[-1] / s.iloc[-11] - 1) - float(xu.iloc[-1] / xu.iloc[-11] - 1)
         dipten = (v[-1] / run_min - 1) if run_min else np.nan
         yas = (len(v) - 1 - trig) if trig is not None else np.nan
+        # sektör endeksinin down-capture'ı vs XU100 (trailing 250g; düşük=defansif sektör)
+        sret = idx[c].pct_change().iloc[-WIN:]
+        sec_dc = float(sret[dn_full].mean() / xur_dn_mean) if xur_dn_mean else np.nan
         rows.append({'kod': c, 'state': st, 'rel20': rel20, 'rel10': rel10,
-                     'dipten': dipten, 'yas': yas, 'anat': anat.get(c, np.nan)})
+                     'dipten': dipten, 'yas': yas, 'anat': anat.get(c, np.nan), 'dc': sec_dc})
     sdf = pd.DataFrame(rows)
 
     # sınıflandırma (öncelik: LİDER > YENİ DÖNEN)
@@ -149,13 +155,15 @@ def main():
 
     # mesaj
     L = [f"🧭 <b>Nyx Rotasyon — {asof}</b>", ""]
-    L.append("<b>① LİDER (öne geçmiş)</b>")
-    L += [f"  {r.kod}: rel20 {r.rel20*100:+.1f}% · dipten {r.dipten*100:+.0f}%" for r in liders.itertuples()] or ["  (yok)"]
+    def _dc(x):
+        return f"dc {x:.2f}" if x == x else "dc —"
+    L.append("<b>① LİDER (öne geçmiş)</b>  [dc düşük=defansif lider]")
+    L += [f"  {r.kod}: rel20 {r.rel20*100:+.1f}% · {_dc(r.dc)} · dipten {r.dipten*100:+.0f}%" for r in liders.itertuples()] or ["  (yok)"]
     L.append("\n<b>② SONRAKİ LİDER ADAYI (ARMED + anatomi)</b>")
     sl = sdf[sdf['sonraki_lider']].sort_values('anat')
-    L += [f"  {r.kod}: anatomi-erken {r.anat:.2f} · rel20 {r.rel20*100:+.1f}%" for r in sl.itertuples()] or ["  (yok)"]
+    L += [f"  {r.kod}: anatomi-erken {r.anat:.2f} · {_dc(r.dc)} · rel20 {r.rel20*100:+.1f}%" for r in sl.itertuples()] or ["  (yok)"]
     L.append("\n<b>③ YENİ DÖNEN (ARMED/taze)</b>")
-    L += [f"  {r.kod}: {r.state}{f' yaş{int(r.yas)}' if r.yas==r.yas else ''} · rel20 {r.rel20*100:+.1f}%" for r in yeni.itertuples()] or ["  (yok)"]
+    L += [f"  {r.kod}: {r.state}{f' yaş{int(r.yas)}' if r.yas==r.yas else ''} · {_dc(r.dc)} · rel20 {r.rel20*100:+.1f}%" for r in yeni.itertuples()] or ["  (yok)"]
     L.append("\n<b>④ DOWN-CAPTURE AL ADAYLARI</b> (defansif, hedef sektörlerde)")
     cand.sort(key=lambda x: x['dc'])
     L += [f"  {c['kod']} ({c['sec']}): dc {c['dc']:.2f} · rel20 {c['rel20']*100:+.1f}%" for c in cand[:10]] or ["  (yok)"]
