@@ -538,22 +538,24 @@ def compute_down_capture(tickers, asof, win=250):
         if not xu_dn_mean or pd.isna(xu_dn_mean):
             return {}
         m = pd.read_parquet(OUT_DIR / "ohlcv_10y_fintables_master.parquet",
-                            columns=["ticker", "Close"])
+                            columns=["ticker", "Close", "Volume"])
         m = m[m["ticker"].astype(str).str.upper().isin(want)]
         out = {}
         for tkr, g in m.groupby(m["ticker"].astype(str).str.upper()):
-            cl = g["Close"].copy()
-            cl.index = pd.to_datetime(g.index)
-            cl = cl[cl.index <= pd.Timestamp(asof)].tail(win + 30)
+            g = g.copy()
+            g.index = pd.to_datetime(g.index)
+            g = g[g.index <= pd.Timestamp(asof)].tail(win + 30)
+            cl = g["Close"]
             if len(cl) < 60:
                 continue
+            adv = float((g["Close"] * g["Volume"]).tail(60).mean())  # likidite (TL)
             sr = cl.pct_change().reindex(xu_ret.index)  # XU100 takvimine hizala
             both_dn = dn_mask & sr.notna()
             if both_dn.sum() < 10:
                 continue
             dc = float(sr[both_dn].mean() / xu_ret[both_dn].mean())
             if not np.isnan(dc):
-                out[tkr] = {"dc": round(dc, 2), "n_down": int(both_dn.sum())}
+                out[tkr] = {"dc": round(dc, 2), "n_down": int(both_dn.sum()), "adv": adv}
         return out
     except Exception as e:
         print(f"   [down-capture] hesaplanamadı: {str(e)[:80]}")
@@ -590,6 +592,25 @@ def load_tavan_scan_live(asof, stale_days=4):
     except Exception as e:
         return {"status": "UNAVAILABLE", "validation": VALIDATION_TAVAN, "asof": asof,
                 "picks": [], "note": str(e)}
+
+
+def sector_members(sector_indexes):
+    """sector_index listesi → o sektörlerdeki TÜM ticker üyeleri (sector_map'ten,
+    all_sector_indexes dahil). Lider/ARMED sektörlerde defansif tarama için."""
+    want = set(sector_indexes or [])
+    if not want:
+        return {}
+    try:
+        import json as _json
+        m = _json.loads(Path("tools/sector_map.json").read_text(encoding="utf-8"))
+        out = {s: [] for s in want}
+        for tk, info in (m.get("tickers") or {}).items():
+            for si in (info.get("all_sector_indexes") or [info.get("sector_index")]):
+                if si in want:
+                    out[si].append(tk.upper())
+        return {s: sorted(set(v)) for s, v in out.items()}
+    except Exception:
+        return {}
 
 
 def load_sector_map():
