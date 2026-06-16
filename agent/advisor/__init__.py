@@ -63,13 +63,7 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     context = signals.load_context_signals(asof, tickers_of_interest=tickers)
     macro = signals.load_macro()
 
-    # 4c) takas/AKD — elde tutulan pozisyonlar için Matriks akışı (graceful;
-    #     API hata verirse status=MATRIKS_ERROR, raporda kırmızı uyarı → kullanıcı güncellesin)
-    from agent.advisor import takas as takas_mod
-    takas = takas_mod.load_takas(pf.tickers())
-    print(f"   takas: {takas['status']}" +
-          (f" ({takas.get('n_alerts', 0)} alarm)" if takas['status'] == 'OK'
-           else f" — {takas.get('note') or takas.get('error', '')}"))
+    from agent.advisor import takas as takas_mod  # 4c'de değil — AL adaylarını da kapsamak için sentez SONRASI yüklenir
 
     # 5) korkuluk ön-hesap + pack — bağlam örtüşmesi kabul SIRASINI güçlendirir;
     #    HW dönüş betimsel pozisyon-rengi (SAT_OB yumuşak 'tepe' flag'i)
@@ -86,7 +80,18 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                                         llm_mode=llm_mode)
     if score_entry:
         advisory["scorecard_prev"] = score_entry
-    advisory["takas"] = takas  # pozisyon takas özeti + Matriks durum (render banner)
+
+    # 4c→6) takas/AKD — pozisyonlar + AL ADAYLARI (kullanıcı isteği) için Matriks akışı.
+    #     Sentez sonrası: admit edilen adaylar belli; pozisyon ∪ aday (az isim) → makul
+    #     Matriks çağrısı. Aday takas işaretleri render'da AL tablosuna da yansır.
+    cand_tk = [b["ticker"] for b in advisory.get("buy_candidates", [])]
+    takas_tk = list(dict.fromkeys(pf.tickers() + cand_tk))  # sıra korunur, tekrarsız
+    takas = takas_mod.load_takas(takas_tk)
+    takas["candidate_tickers"] = cand_tk  # render: pozisyon mu aday mı ayrımı
+    print(f"   takas: {takas['status']} ({len(takas_tk)} isim: {len(pf.tickers())} poz + {len(cand_tk)} aday)" +
+          (f" · {takas.get('n_alerts', 0)} alarm" if takas['status'] == 'OK'
+           else f" — {takas.get('note') or takas.get('error', '')}"))
+    advisory["takas"] = takas  # pozisyon+aday takas özeti + Matriks durum (render banner)
     advisory["inputs_status"]["takas"] = takas["status"]
 
     # 6b) HAFTALIK-LİDER çakışma (mb_scanner_events parquet'ten, DE CSV'de görünmez):
