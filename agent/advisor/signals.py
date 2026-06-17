@@ -210,6 +210,16 @@ def _parse_de_csv(path, asof, status="OK"):
             grp["_tf_rank"] = (grp["timeframe"].astype(str) != "1d").astype(int)
             best = grp.sort_values(["_tf_rank", "risk_atr"]).iloc[0]
             row = _row(best)
+            # TRİDENT ticker'ın EN İYİ satırından (leak fix): trident verisi best satırda
+            # değil başka aile/TF satırında olabilir → geo/tier1 ticker bazında AGREGE.
+            tr_rows = [_row(rr) for _, rr in grp.iterrows()]
+            best_tr = max(tr_rows, key=lambda x: (
+                x["trident_geo"], x["trident_tier1"],
+                sum(g in (x["trident_gates"] or "") for g in ("G1", "G2", "G3")),
+                -(abs((x["trident_D_pct"] or 99) - 25))))  # D∈[20,30) merkezine yakınlık
+            for _k in ("trident_geo", "trident_tier1", "trident_gates",
+                       "trident_D_pct", "trident_sil", "trident_bos"):
+                row[_k] = best_tr[_k]
             row["n_cells"] = int(len(grp))  # konfluens: kaç hücre (family) tetikledi
             row["families"] = ";".join(sorted(grp["family"].astype(str).unique()))
             # ÇOKLU-TF birth çakışması: above_mb_birth hangi FARKLI timeframe'lerde
