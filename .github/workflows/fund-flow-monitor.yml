@@ -5,23 +5,19 @@ name: Fund Flow Monitor (TEFAS)
 # kosul tetiklenirse Telegram'a uyari yollar. State repoya geri commit edilir
 # (gecmis kalici olsun diye). Veri: borsapy (TEFAS), auth gerektirmez.
 #
-# Takvim: SABAH calisir — aracı kurum satis kesimi (~13:00 TR) ONCESI uyari
-# yetissin diye. TEFAS bugunun (T) verisini AKSAM yayinlar; sabah run'i en
-# taze olarak DUNUN (T-1) kapanis verisini gorur — satis karari icin dogru
-# sinyal budur (bugunun akisi 13:00'ten once zaten yok). Iki atis = GitHub
-# cron gecikmesine (bir kez 2.5sa gec dondu) karsi guvence; ikisi de 13:00
-# TR'den once iner. Resmi TEFAS son-islem 17:00-17:45 ama broker kesimi
-# daha erken olabilir → 13:00 hedef.
+# Takvim: hafta ici 19:00 TR (16:00 UTC). TEFAS gunluk veriyi AKSAM yayinlar;
+# 19:00 run'i o gunun taze verisini yakalar. Satis mantigi: bu aksam gorulen
+# sinyal → ERTESI GUN 13:00 broker kesiminden once satis emri (gece boyu vakit
+# var). Sabaha almak ayni veriyi gec gosterir, oncu zaman KAYBETTIRIR — bu yuzden
+# aksam dogru saat. (19:00 bazi gun veriyi gec yakalarsa 20:00'ye otele.)
 #
 # Fon ekleme/cikarma: Actions UI'dan "Run workflow" → add/remove kutulari,
 # ya da lokalde `python tools/fund_flow_monitor.py --add KOD`.
 
 on:
   schedule:
-    # Pzt-Cuma 09:00 TR (UTC+3) = 06:00 UTC — erken guvence (2.5sa gecikme bile 11:30 TR)
-    - cron: '0 6 * * 1-5'
-    # Pzt-Cuma 10:30 TR (UTC+3) = 07:30 UTC — en taze pre-kesim atisi
-    - cron: '30 7 * * 1-5'
+    # Pzt-Cuma 19:00 TR (UTC+3) = 16:00 UTC
+    - cron: '0 16 * * 1-5'
   workflow_dispatch:
     inputs:
       digest:
