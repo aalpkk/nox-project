@@ -282,6 +282,13 @@ def render_telegram_tr(advisory):
     else:
         lines.append("🟢 Bugün korkulukları geçen AL adayı yok.")
 
+    ce = a.get("chased_excluded") or []
+    if ce:
+        lst = ", ".join("{}(+{:.0f}%)".format(c["ticker"], c["runup_pct"]) for c in ce[:10])
+        lines.append(f"⛔ <b>Kovalama-filtresi:</b> {len(ce)} aday elendi "
+                     f"(yakın +%20 koşmuş, weekly birth yok): {lst}")
+        lines.append("")
+
     if a.get("skipped_candidates"):
         sk = a["skipped_candidates"]
         # kalite sırasının başındaki (nakit/limit duvarına takılan) güçlü adaylar
@@ -645,6 +652,22 @@ def render_html(advisory):
             f"seçimi + sektör-içi defansif).</p>{blocks}",
             sub="down-capture · doğrulanmış defansif faktör")
 
+    # ── KOVALAMA-FİLTRESİ ile elenenler (yakın +%20 koşmuş, weekly birth yok) ──
+    ce = a.get("chased_excluded") or []
+    chased_html = ""
+    if ce:
+        crows = "".join(f"<tr><td><b>{_tv(c['ticker'])}</b></td>"
+                        f"<td style='color:#f85149'>+{c['runup_pct']:.0f}%</td>"
+                        f"<td>{c.get('section', '')}</td></tr>" for c in ce)
+        chased_html = _sec(
+            "⛔ Kovalama-filtresi — elenen adaylar",
+            f"<p class='note'>Yakın zamanda <b>≥+%20 koşmuş</b> VE weekly birth (mb_1w "
+            f"above) OLMAYAN adaylar aday-havuzundan çıkarıldı (kullanıcı kuralı — uzamış "
+            f"hisseyi haftalık yapı desteği olmadan kovalama). Yakın-koşu extfeed'den.</p>"
+            f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Yakın koşu</th>"
+            f"<th>DE bölüm</th></tr></thead><tbody>{crows}</tbody></table></div>",
+            sub=f"{len(ce)} elendi · bilgi", open=False)
+
     # ── cluster3 STANDALONE bölümü (açık arketip-paper havuzu — örtüşmese de) ──
     c3o = a.get("cluster3_open") or []
     cluster3_html = ""
@@ -762,6 +785,8 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
         "<th>🔗 Tüm çakışma</th><th>dc</th><th>💼 Takas</th><th>Bölüm</th><th>Adet</th><th>Giriş</th><th>Stop</th><th>Risk ₺</th>"
         f"</tr></thead><tbody>{buy_rows}</tbody></table></div>",
         sub="DE v1 · paper-track · dc=down-capture (düşük=defansif) · takas=Matriks akış")}
+
+  {chased_html}
 
   {weekly_lead_html}
 

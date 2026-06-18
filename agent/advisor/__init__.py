@@ -65,6 +65,32 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
 
     from agent.advisor import takas as takas_mod  # 4c'de değil — AL adaylarını da kapsamak için sentez SONRASI yüklenir
 
+    # 4d) KOVALAMA FİLTRESİ (kullanıcı kuralı): yakın zamanda ≥+%20 koşmuş hisseyi
+    #     weekly birth (mb_1w above_mb_birth) YOKSA aday-havuzundan ÇIKAR — LLM hiç görmesin.
+    #     Yakın-koşu extfeed'den; weekly-birth mb_birth_xtf'ten (son kapanmış haftalık bar).
+    chased_excluded = []
+    try:
+        wbirth = set((signals.mb_birth_xtf(asof).get("per_ticker") or {}).keys())  # weekly above olanlar
+        de_tk = [r["ticker"] for r in de["buy_rows"]]
+        runup = signals.fetch_runup(de_tk, asof)
+        kept = []
+        for r in de["buy_rows"]:
+            t = r["ticker"]
+            ru = runup.get(t)
+            if ru is not None and ru >= 0.20 and t not in wbirth:
+                chased_excluded.append({"ticker": t, "runup_pct": round(ru * 100, 1),
+                                        "section": r.get("section")})
+            else:
+                kept.append(r)
+        de["buy_rows"] = kept
+        if chased_excluded:
+            _lst = ", ".join("{}(+{:.0f}%)".format(c["ticker"], c["runup_pct"])
+                             for c in chased_excluded[:8])
+            print(f"   kovalama-filtresi: {len(chased_excluded)} aday ELENDİ "
+                  f"(+%20 koşmuş, weekly birth yok): {_lst}")
+    except Exception as e:
+        print(f"   kovalama-filtresi HATA: {e}")
+
     # 5) korkuluk ön-hesap + pack — bağlam örtüşmesi kabul SIRASINI güçlendirir;
     #    HW dönüş betimsel pozisyon-rengi (SAT_OB yumuşak 'tepe' flag'i)
     hw = validated["hw_obos"]
@@ -80,6 +106,7 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                                         llm_mode=llm_mode)
     if score_entry:
         advisory["scorecard_prev"] = score_entry
+    advisory["chased_excluded"] = chased_excluded  # kovalama-filtresiyle elenenler (rapor notu)
 
     # 4c→6) takas/AKD — pozisyonlar + AL ADAYLARI (kullanıcı isteği) için Matriks akışı.
     #     Sentez sonrası: admit edilen adaylar belli; pozisyon ∪ aday (az isim) → makul
