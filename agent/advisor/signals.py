@@ -864,6 +864,33 @@ def fetch_prices(tickers):
     return out
 
 
+def fetch_runup(tickers, asof, lookback=10):
+    """Yakın-koşu — EXTFEED master'dan (yfinance DEĞİL; scanner'larla tutarlı, CI'da
+    master-data-pull ile taze). Her ticker: son_kapanış / min(son `lookback` günlük
+    kapanış) − 1 (dipten kazanç). point-in-time (≤ asof). {ticker: float}."""
+    want = {str(t).upper() for t in (tickers or [])}
+    if not want:
+        return {}
+    try:
+        df = pd.read_parquet(OUT_DIR / "extfeed_intraday_1h_3y_master.parquet",
+                             columns=["ticker", "ts_istanbul", "close"])
+        df["tkr"] = df["ticker"].astype(str).str.upper()
+        df = df[df["tkr"].isin(want)].copy()
+        df["d"] = pd.to_datetime(df["ts_istanbul"]).dt.tz_localize(None)
+        df = df[df["d"] <= pd.Timestamp(asof) + pd.Timedelta(days=1)]
+        out = {}
+        for tkr, g in df.groupby("tkr"):
+            daily = g.set_index("d")["close"].resample("1D").last().dropna()
+            if len(daily) >= 3:
+                lo = float(daily.iloc[-lookback:].min())
+                if lo > 0:
+                    out[tkr] = float(daily.iloc[-1]) / lo - 1.0
+        return out
+    except Exception as e:
+        print(f"⚠️ runup (extfeed) hatası: {str(e)[:80]}")
+        return {}
+
+
 def _f(v):
     try:
         f = float(v)
