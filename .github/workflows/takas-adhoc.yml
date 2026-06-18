@@ -1,0 +1,43 @@
+name: Takas Adhoc (serbest sembol)
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Boşluk ayrımlı sembol listesi (ör. AKHAN KBORU DITAS SVGYO)"
+        required: true
+        default: "AKHAN KBORU DITAS SVGYO"
+      slug:
+        description: "Çıktı dosya etiketi"
+        required: false
+        default: "adhoc"
+      hist_days:
+        description: "ICE geçmiş gün sayısı"
+        required: false
+        default: "6"
+
+jobs:
+  takas-adhoc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pandas
+      - name: Run takas batch
+        env:
+          MATRIKS_API_KEY: ${{ secrets.MATRIKS_API_KEY }}
+          MATRIKS_CLIENT_ID: ${{ secrets.MATRIKS_CLIENT_ID }}
+          PYTHONPATH: .
+        run: python tools/takas_batch_run.py --tickers "${{ inputs.tickers }}" --slug "${{ inputs.slug }}" --hist-days "${{ inputs.hist_days }}"
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: takas-adhoc-${{ inputs.slug }}
+          path: |
+            output/takas_batch_*_${{ inputs.slug }}.csv
+            output/takas_batch_*_${{ inputs.slug }}_ice.csv
+            output/takas_batch_*_${{ inputs.slug }}.md
+          if-no-files-found: warn
