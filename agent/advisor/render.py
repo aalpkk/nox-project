@@ -138,6 +138,14 @@ def render_telegram_tr(advisory):
                      ", ".join(f"{k}={v}" for k, v in bad.items()))
         lines.append("")
 
+    # TARAMA TAZELİĞİ — bayat kaynak varsa yüksek sesle uyar (kullanıcı endişesi)
+    stale_fr = [x for x in (a.get("freshness") or []) if x.get("stale")]
+    if stale_fr:
+        lines.append("🕒 <b>BAYAT tarama:</b> " +
+                     ", ".join(f"{x['kaynak']}({x.get('tarih')})" for x in stale_fr) +
+                     " <i>(asof'tan eski — dikkat)</i>")
+        lines.append("")
+
     # XU100 RDP rejimi (risk-ON/OFF) — en üstte, makro pusula
     rdp_t = _rdp_text(a.get("xu100_rdp"))
     if rdp_t:
@@ -652,6 +660,23 @@ def render_html(advisory):
             f"seçimi + sektör-içi defansif).</p>{blocks}",
             sub="down-capture · doğrulanmış defansif faktör")
 
+    # ── TARAMA TAZELİĞİ paneli (kullanıcı: dahil edilen taramalar güncel olmayabiliyor) ──
+    fr = a.get("freshness") or []
+    fresh_html = ""
+    if fr:
+        n_stale = sum(1 for x in fr if x.get("stale"))
+        frows = "".join(
+            f"<tr><td>{x['kaynak']}</td><td>{x.get('tarih') or '—'}</td>"
+            f"<td>{'⚠️ BAYAT' if x.get('stale') else '✓ güncel'}</td></tr>"
+            for x in fr)
+        fresh_html = _sec(
+            "📅 Tarama tazeliği",
+            f"<p class='note'>Advisor'a giren her kaynağın son veri tarihi. asof <b>{a['asof']}</b>'tan "
+            f">3 gün eski = BAYAT. {n_stale} bayat / {len(fr)} kaynak.</p>"
+            f"<div class='nox-table-wrap'><table><thead><tr><th>Kaynak</th><th>Son tarih</th>"
+            f"<th>Durum</th></tr></thead><tbody>{frows}</tbody></table></div>",
+            sub=f"{n_stale} bayat / {len(fr)} kaynak", open=bool(n_stale))
+
     # ── KOVALAMA-FİLTRESİ ile elenenler (yakın +%20 koşmuş, weekly birth yok) ──
     ce = a.get("chased_excluded") or []
     chased_html = ""
@@ -772,6 +797,8 @@ details.sec-d .sec-body > .nox-table-wrap {{ margin:0; }}
   {macro_html}
 
   {_sec("📋 Girdi durumu", f"<ul class='inputs'>{inputs}</ul>")}
+
+  {fresh_html}
 
   {_sec("📊 Pozisyon önerileri",
         "<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Aksiyon</th><th>Güven</th>"
