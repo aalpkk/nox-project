@@ -756,6 +756,7 @@ def load_context_signals(asof, tickers_of_interest=None):
 
     Lokal CSV yoksa (CI/bot ortamı) GH Pages latest_signals.json fallback'i
     (agent/tools._get_signals ile aynı desen; GH_PAGES_BASE_URL gerekir)."""
+    stale_days = 3  # asof'tan >3 takvim günü eski tarayıcı = BAYAT
     try:
         from agent.scanner_reader import (get_latest_signals, summarize_signals,
                                           fetch_signals_from_url)
@@ -764,7 +765,7 @@ def load_context_signals(asof, tickers_of_interest=None):
             signals, _ = fetch_signals_from_url()
         if not signals:
             return {"status": "UNAVAILABLE", "validation": VALIDATION_CONTEXT,
-                    "summary": None, "per_ticker": {},
+                    "summary": None, "per_ticker": {}, "scan_dates": {}, "stale_scanners": [],
                     "note": "lokal CSV yok + GH Pages fallback boş"}
         summary = summarize_signals(signals)
         per_ticker = {}
@@ -772,11 +773,29 @@ def load_context_signals(asof, tickers_of_interest=None):
             hits = _ticker_memberships(signals, tkr)
             if hits:
                 per_ticker[tkr] = hits
+        # TARAMA TAZELİĞİ: her tarayıcının son signal_date'i + bayat işareti (kullanıcı
+        # endişesi: dahil edilen taramalar güncel olmayabiliyor — örn. sbt 06-15).
+        scan_dates = {}
+        for s in signals:
+            scr = s.get("screener") or s.get("source")
+            d = str(s.get("signal_date") or s.get("date") or "")[:10]
+            if scr and len(d) == 10:
+                scan_dates[scr] = max(scan_dates.get(scr, ""), d)
+        ad = datetime.date.fromisoformat(asof)
+        stale = []
+        for scr, d in scan_dates.items():
+            try:
+                if (ad - datetime.date.fromisoformat(d)).days > stale_days:
+                    stale.append(scr)
+            except Exception:
+                pass
         return {"status": "OK", "validation": VALIDATION_CONTEXT,
-                "summary": summary, "per_ticker": per_ticker}
+                "summary": summary, "per_ticker": per_ticker,
+                "scan_dates": scan_dates, "stale_scanners": sorted(stale)}
     except Exception as e:
         return {"status": "UNAVAILABLE", "validation": VALIDATION_CONTEXT,
-                "summary": None, "per_ticker": {}, "note": str(e)}
+                "summary": None, "per_ticker": {}, "scan_dates": {}, "stale_scanners": [],
+                "note": str(e)}
 
 
 def _ticker_memberships(signals, ticker):

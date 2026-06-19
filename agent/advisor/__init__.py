@@ -257,6 +257,35 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     print(f"   XU100 RDP: {rdp.get('regime')} ({rdp.get('date')}, {rdp.get('status')})"
           f"{' ⚠️SAT/risk-off' if rdp.get('is_sell') else ''}")
 
+    # 6e) TARAMA TAZELİĞİ paneli (kullanıcı endişesi: dahil edilen taramalar güncel
+    #     olmayabiliyor). Her kaynağın tarihi + BAYAT işareti (asof'tan >3 gün eski).
+    import datetime as _dt
+    def _stale(d):
+        try:
+            return (_dt.date.fromisoformat(asof) - _dt.date.fromisoformat(str(d)[:10])).days > 3
+        except Exception:
+            return False
+    fr = []
+    de_block = validated.get("decision_engine", {})
+    fr.append({"kaynak": "DE v1 watchlist", "tarih": de_block.get("asof"),
+               "stale": de_block.get("status") == "STALE" or _stale(de_block.get("asof"))})
+    for scr, d in sorted((context.get("scan_dates") or {}).items()):
+        fr.append({"kaynak": f"ctx:{scr}", "tarih": d,
+                   "stale": scr in (context.get("stale_scanners") or [])})
+    for lbl, d in [("tavan-scan-live", (advisory.get("tavan_lock") or {}).get("scan_asof")),
+                   ("hw-obos", (validated.get("hw_obos") or {}).get("scan_date")),
+                   ("sektör monitör", (advisory.get("sector_rotation") or {}).get("bar_date")),
+                   ("XU100 RDP", rdp.get("date")),
+                   ("haftalık-lider bar", advisory.get("weekly_lead_bar")),
+                   ("cluster3", (validated.get("cluster3") or {}).get("last_signal_date"))]:
+        if d:
+            fr.append({"kaynak": lbl, "tarih": str(d)[:10], "stale": _stale(d)})
+    advisory["freshness"] = fr
+    advisory["context_scan_dates"] = context.get("scan_dates") or {}
+    n_stale = sum(1 for x in fr if x["stale"])
+    print(f"   tarama tazeliği: {len(fr)} kaynak, {n_stale} BAYAT "
+          f"({', '.join(x['kaynak'] for x in fr if x['stale']) or 'hepsi güncel'})")
+
     adv_path = context_pack.persist_advisory(advisory)
     print(f"   advisory: {adv_path} (mode={advisory['mode']})")
 
