@@ -259,12 +259,8 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
 
     # 6e) TARAMA TAZELİĞİ paneli (kullanıcı endişesi: dahil edilen taramalar güncel
     #     olmayabiliyor). Her kaynağın tarihi + BAYAT işareti (asof'tan >3 gün eski).
-    import datetime as _dt
-    def _stale(d):
-        try:
-            return (_dt.date.fromisoformat(asof) - _dt.date.fromisoformat(str(d)[:10])).days > 3
-        except Exception:
-            return False
+    def _stale(d):  # işgünü-bazlı: 1 işgünü bile eski = BAYAT (hafta sonu hariç)
+        return signals._busday_stale(d, asof)
     fr = []
     de_block = validated.get("decision_engine", {})
     fr.append({"kaynak": "DE v1 watchlist", "tarih": de_block.get("asof"),
