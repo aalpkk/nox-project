@@ -672,7 +672,7 @@ def render_html(advisory):
         fresh_html = _sec(
             "📅 Tarama tazeliği",
             f"<p class='note'>Advisor'a giren her kaynağın son veri tarihi. asof <b>{a['asof']}</b>'tan "
-            f">3 gün eski = BAYAT. {n_stale} bayat / {len(fr)} kaynak.</p>"
+            f"≥1 İŞGÜNÜ eski = BAYAT (hafta sonu hariç). {n_stale} bayat / {len(fr)} kaynak.</p>"
             f"<div class='nox-table-wrap'><table><thead><tr><th>Kaynak</th><th>Son tarih</th>"
             f"<th>Durum</th></tr></thead><tbody>{frows}</tbody></table></div>",
             sub=f"{n_stale} bayat / {len(fr)} kaynak", open=bool(n_stale))

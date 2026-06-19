@@ -15,6 +15,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+
+def _busday_stale(date_str, asof):
+    """İşgünü-bazlı bayatlık: kaynak tarihi asof'tan ≥1 İŞGÜNÜ eski ise True
+    (hafta sonu otomatik hariç). 1 işgünü bile eski = BAYAT (kullanıcı kuralı)."""
+    try:
+        d = np.datetime64(str(date_str)[:10])
+        a = np.datetime64(str(asof)[:10])
+        return int(np.busday_count(d, a)) >= 1
+    except Exception:
+        return False
+
 OUT_DIR = Path(os.environ.get("NOX_OUTPUT_DIR", "output"))
 
 VALIDATION_DE = "paper-track (tek-rejim)"
@@ -756,7 +767,6 @@ def load_context_signals(asof, tickers_of_interest=None):
 
     Lokal CSV yoksa (CI/bot ortamı) GH Pages latest_signals.json fallback'i
     (agent/tools._get_signals ile aynı desen; GH_PAGES_BASE_URL gerekir)."""
-    stale_days = 3  # asof'tan >3 takvim günü eski tarayıcı = BAYAT
     try:
         from agent.scanner_reader import (get_latest_signals, summarize_signals,
                                           fetch_signals_from_url)
@@ -781,14 +791,7 @@ def load_context_signals(asof, tickers_of_interest=None):
             d = str(s.get("signal_date") or s.get("date") or "")[:10]
             if scr and len(d) == 10:
                 scan_dates[scr] = max(scan_dates.get(scr, ""), d)
-        ad = datetime.date.fromisoformat(asof)
-        stale = []
-        for scr, d in scan_dates.items():
-            try:
-                if (ad - datetime.date.fromisoformat(d)).days > stale_days:
-                    stale.append(scr)
-            except Exception:
-                pass
+        stale = [scr for scr, d in scan_dates.items() if _busday_stale(d, asof)]
         return {"status": "OK", "validation": VALIDATION_CONTEXT,
                 "summary": summary, "per_ticker": per_ticker,
                 "scan_dates": scan_dates, "stale_scanners": sorted(stale)}
@@ -884,9 +887,10 @@ def fetch_prices(tickers):
 
 
 def fetch_runup(tickers, asof, lookback=10):
-    """Yakın-koşu — EXTFEED master'dan (yfinance DEĞİL; scanner'larla tutarlı, CI'da
-    master-data-pull ile taze). Her ticker: son_kapanış / min(son `lookback` günlük
-    kapanış) − 1 (dipten kazanç). point-in-time (≤ asof). {ticker: float}."""
+    """Yakın-koşu — EXTFEED master'dan (yfinance DEĞİL; scanner'larla tutarlı).
+    NOKTA-NOKTA `lookback` işgünü getirisi: son_kapanış / lookback-gün-önceki − 1.
+    Böylece ŞU AN uzamış (son N günde +%X koşmuş) yakalanır; ESKİDEN koşup SONRA
+    düşmüş (TEKTU gibi) getirisi ≤0 → kovalama sayılmaz. point-in-time (≤ asof)."""
     want = {str(t).upper() for t in (tickers or [])}
     if not want:
         return {}
@@ -900,10 +904,11 @@ def fetch_runup(tickers, asof, lookback=10):
         out = {}
         for tkr, g in df.groupby("tkr"):
             daily = g.set_index("d")["close"].resample("1D").last().dropna()
-            if len(daily) >= 3:
-                lo = float(daily.iloc[-lookback:].min())
-                if lo > 0:
-                    out[tkr] = float(daily.iloc[-1]) / lo - 1.0
+            if len(daily) >= 4:
+                n = min(lookback, len(daily) - 1)
+                base = float(daily.iloc[-(n + 1)])     # n işgünü ÖNCEKİ kapanış
+                if base > 0:
+                    out[tkr] = float(daily.iloc[-1]) / base - 1.0   # nokta-nokta getiri
         return out
     except Exception as e:
         print(f"⚠️ runup (extfeed) hatası: {str(e)[:80]}")
