@@ -181,7 +181,10 @@ def main():
 
     liders = sdf[sdf['bucket'] == 'LIDER'].sort_values('rel20', ascending=False)
     yeni = sdf[sdf['bucket'] == 'YENI'].sort_values('anat')
-    target_secs = set(liders['kod']) | set(sdf[sdf['sonraki_lider']]['kod'])
+    # ④ iki havuz: OLGUN (lider + anatomi-erken sonraki-lider) ve ERKEN (kalan ARMED/yeni dönen)
+    mature_secs = set(liders['kod']) | set(sdf[sdf['sonraki_lider']]['kod'])
+    early_secs = set(yeni['kod']) - mature_secs
+    target_secs = mature_secs | early_secs
 
     # 4) down-capture AL adayları (hedef sektörler)
     smap = json.load(open(os.path.join(ROOT, 'tools', 'sector_map.json')))
@@ -211,6 +214,10 @@ def main():
     xu_al = xu.copy(); xu_al.index = pd.to_datetime(xu_al.index)
     common = pc.index.intersection(xu_al.index)
     pcc, xuc = pc.loc[common], xu_al.loc[common]
+    # ④ down-capture hisse verisinin EFEKTİF son tarihi (tail başarısızsa master'da donar);
+    # sektör asof'undan geri kalmışsa Fintables tail/token bayat demektir → mesajda uyar.
+    stock_asof = pcc.index[-1].date()
+    stale_days = (asof - stock_asof).days
     xur = xuc.pct_change()
     dn = xur < 0
     cand = []
@@ -228,10 +235,15 @@ def main():
         if np.isnan(dc) or dc < 0 or dc >= 0.85:   # defansif bandı
             continue
         r20 = float(s.iloc[-1] / s.iloc[-21] - 1) - float(xuc.iloc[-1] / xuc.iloc[-21] - 1)
-        cand.append({'kod': m, 'sec': sec, 'dc': dc, 'rel20': r20})
+        cand.append({'kod': m, 'sec': sec, 'dc': dc, 'rel20': r20,
+                     'bucket': 'olgun' if sec in mature_secs else 'erken'})
 
     # mesaj
     L = [f"🧭 <b>Nyx Rotasyon — {asof}</b>", ""]
+    if stale_days > 4:   # hafta sonu toleransı; üstü = tail/token bayat
+        L.insert(1, f"⚠️ <b>BAYAT VERİ:</b> ④ hisse fiyatları {stock_asof} tarihinde donmuş "
+                    f"({stale_days}g geride). Fintables token süresi dolmuş olabilir → "
+                    f"<code>tools/rotate_fintables_token.sh</code> ile yenile.")
     def _dc(x):
         return f"dc {x:.2f}" if x == x else "dc —"
     L.append("<b>① LİDER (öne geçmiş)</b>  [dc düşük=defansif lider]")
@@ -241,10 +253,14 @@ def main():
     L += [f"  {r.kod}: anatomi-erken {r.anat:.2f} · {_dc(r.dc)} · rel20 {r.rel20*100:+.1f}%" for r in sl.itertuples()] or ["  (yok)"]
     L.append("\n<b>③ YENİ DÖNEN (ARMED/taze)</b>")
     L += [f"  {r.kod}: {r.state}{f' yaş{int(r.yas)}' if r.yas==r.yas else ''} · {_dc(r.dc)} · rel20 {r.rel20*100:+.1f}%" for r in yeni.itertuples()] or ["  (yok)"]
-    L.append("\n<b>④ DOWN-CAPTURE AL ADAYLARI</b> (defansif, hedef sektörlerde)")
-    cand.sort(key=lambda x: x['dc'])
-    L += [f"  {c['kod']} ({c['sec']}): dc {c['dc']:.2f} · rel20 {c['rel20']*100:+.1f}%" for c in cand[:10]] or ["  (yok)"]
-    L.append("\n<i>down-capture vs XU100 (düşük=defansif, low-vol edge); rotasyon betimsel. Geçersiz: XU100 düşüş kapısı altı.</i>")
+    olgun = sorted([c for c in cand if c['bucket'] == 'olgun'], key=lambda x: x['dc'])
+    # ERKEN: düşen-bıçak guard (rel20 ≥ −%10) — sürekli çöken sahte-defansifleri ele
+    erken = sorted([c for c in cand if c['bucket'] == 'erken' and c['rel20'] >= -0.10], key=lambda x: x['dc'])
+    L.append("\n<b>④a DEFANSİF AL — OLGUN sektörler</b> (lider/sonraki-lider)")
+    L += [f"  {c['kod']} ({c['sec']}): dc {c['dc']:.2f} · rel20 {c['rel20']*100:+.1f}%" for c in olgun[:8]] or ["  (yok)"]
+    L.append("\n<b>④b DEFANSİF AL — ERKEN sektörler</b> (yeni dönen ARMED, düşen-bıçak elendi)")
+    L += [f"  {c['kod']} ({c['sec']}): dc {c['dc']:.2f} · rel20 {c['rel20']*100:+.1f}%" for c in erken[:8]] or ["  (yok)"]
+    L.append("\n<i>down-capture vs XU100 (düşük=defansif, low-vol edge); ④b erken=daha riskli; rotasyon betimsel. Geçersiz: XU100 düşüş kapısı altı.</i>")
     msg = "\n".join(L)
     print(msg)
 
