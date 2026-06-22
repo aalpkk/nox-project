@@ -1,0 +1,171 @@
+name: bist scanners (alsat + tavan)
+
+# alsat + tavan tarayıcıları — HARİCİ aalpkk/bist-tavan-screener'dan nox-project'e TAŞINDI.
+# Neden: harici repo yfinance ile veri çekiyordu (BIST'te bayat → 06-08'de takıldı) VE
+# 60 gün inaktivitede otomatik disable oluyordu. Burada SADECE veri kaynağı yfinance→extfeed
+# (taze master-data-pull verisi) değişti; tarama mantığı (scanners/*.py) byte-identik.
+#
+# Akış: master data pull (close) → bu workflow (workflow_run) → tarayıcılar koşar →
+#       alsat_signals_*.csv + tavan_devam/kandidat_*.csv ARTIFACT yüklenir →
+#       scanner_reader bu artifact'ları indirir → latest_signals.json TAZE → advisor TAZE.
+# (CSV artifact = advisor için kritik yol; Telegram + nox-signals HTML push ikincil/opsiyonel.)
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["master data pull"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install pandas numpy pyarrow requests beautifulsoup4
+
+      - name: Select close master-data-pull run (workflow_run veya dispatch)
+        id: select
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_ID: ${{ github.event.workflow_run.id }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          is_close_run() {
+            local rid="$1" tmp
+            tmp=$(mktemp -d)
+            if ! gh run download "$rid" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+              rm -rf "$tmp"; return 1
+            fi
+            local mode verdict fresh
+            mode=$(jq -r '.mode // empty' "$tmp/master_data_manifest.json")
+            verdict=$(jq -r '.verdict // empty' "$tmp/master_data_manifest.json")
+            fresh=$(jq -r '.freshness_status // empty' "$tmp/master_data_manifest.json")
+            rm -rf "$tmp"
+            [ "$mode" = "close" ] && [ "$verdict" = "PASS" ] && [ "$fresh" = "PASS" ]
+          }
+
+          SELECTED=""
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+              echo "[scanners] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            if is_close_run "$UPSTREAM_ID"; then
+              SELECTED="$UPSTREAM_ID"
+            else
+              echo "[scanners] SKIP: tetikleyen master-pull close değil (intraday cron)"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          else
+            # Manuel dispatch → son başarılı close master-pull'u bul
+            for rid in $(gh run list --repo "$GH_REPO" --workflow="master data pull" \
+                           --status=success --branch main --limit 20 \
+                           --json databaseId --jq '.[].databaseId'); do
+              if is_close_run "$rid"; then SELECTED="$rid"; break; fi
+            done
+            if [ -z "$SELECTED" ]; then
+              echo "::error::son 20 başarılı master-pull içinde close run yok"; exit 1
+            fi
+          fi
+          echo "[scanners] seçilen master-pull run: $SELECTED"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "run_id=$SELECTED" >> "$GITHUB_OUTPUT"
+
+      - name: Download master-data (extfeed + xu100)
+        if: steps.select.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          rm -f output/extfeed_intraday_1h_3y_master.parquet output/xu100_extfeed_daily.parquet
+          gh run download "${{ steps.select.outputs.run_id }}" -n master-extfeed-intraday-1h -D output
+          gh run download "${{ steps.select.outputs.run_id }}" -n master-xu100-extfeed-daily -D output
+          python -c "import pandas as pd; d=pd.read_parquet('output/extfeed_intraday_1h_3y_master.parquet', columns=['ts_istanbul']); print('extfeed max:', d['ts_istanbul'].max())"
+
+      - name: Run ALSAT screener (extfeed)
+        if: steps.select.outputs.proceed == 'true'
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: python scanners/bist_alsat_screener.py 2>&1 | tee alsat_output.log
+
+      - name: Upload ALSAT signals (artifact → scanner_reader)
+        if: steps.select.outputs.proceed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: alsat-signals-${{ github.run_number }}
+          path: |
+            alsat_signals_*.csv
+            rejim_v3_*.html
+            alsat_output.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Create tavan config
+        if: steps.select.outputs.proceed == 'true'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PORTFOY_TOPLAM: ${{ secrets.PORTFOY_TOPLAM }}
+        run: |
+          python -c "
+          import json, os
+          config = {
+              'portfoy_toplam': int(os.environ.get('PORTFOY_TOPLAM') or '2000000'),
+              'maks_pozisyon_pct': 15, 'maks_pozisyon_adet': 4, 'likit_olmayan_pct': 7.5,
+              'devam_al_esik': 60, 'devam_guclu_esik': 80, 'pretavan_izle_esik': 50,
+              'stop_loss_pct': -4.0, 'trailing_stop_pct': -3.0, 'gap_down_kes_pct': -3.0,
+              'maks_gunluk_kayip_pct': -3.0,
+              'telegram_token': os.environ.get('TELEGRAM_TOKEN', ''),
+              'telegram_chat_id': os.environ.get('TELEGRAM_CHAT_ID', ''),
+              'scan_saati': '18:35', 'pazar_aktif': False,
+              'portfoy_dosya': 'portfoy.json', 'trade_log_dosya': 'trade_log.csv',
+              'sinyal_log_dosya': 'sinyal_log.csv',
+          }
+          open('bist_config.json','w').write(json.dumps(config, indent=2))
+          print('bist_config.json olusturuldu')
+          "
+
+      - name: Run TAVAN scanner (extfeed)
+        if: steps.select.outputs.proceed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: python scanners/bist_auto_trader.py 2>&1 | tee tavan_output.log
+
+      - name: Upload TAVAN signals (artifact → scanner_reader)
+        if: steps.select.outputs.proceed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tavan-scan-${{ github.run_number }}
+          path: |
+            tavan_devam_*.csv
+            tavan_kandidat_*.csv
+            tavan_*.html
+            tavan_output.log
+          retention-days: 30
+          if-no-files-found: ignore

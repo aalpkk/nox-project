@@ -405,14 +405,17 @@ def build_xref(all_signals):
 
 # Iki repo'dan artifact indir
 _GH_ARTIFACT_SOURCES = [
+    # alsat + tavan: HARİCİ bist-tavan-screener'dan nox-project'e TAŞINDI (bist-scanners.yml,
+    # yfinance→extfeed). Eski prefix'ler signals-/scan-results- idi; yeni workflow ayırt edici
+    # alsat-signals-/tavan-scan- prefix'leriyle yüklüyor.
     {
-        "repo": "aalpkk/bist-tavan-screener",
-        "prefix": "signals-",
-        "csv_patterns": None,  # alsat CSV'leri
+        "repo": "aalpkk/nox-project",
+        "prefix": "alsat-signals-",
+        "csv_patterns": ['alsat_signals_'],
     },
     {
-        "repo": "aalpkk/bist-tavan-screener",
-        "prefix": "scan-results-",
+        "repo": "aalpkk/nox-project",
+        "prefix": "tavan-scan-",
         "csv_patterns": ['tavan_'],
     },
     {
