@@ -174,8 +174,11 @@ def main():
         hit = [s for s in ss if s in target_secs]
         if hit and t in liquid150 and t in pc.columns:
             sec_of[t] = hit[0]
-    # XU100 (idx) hisse takvimine hizala
+    # XU100 (idx) hisse takvimine hizala. 🔴 common index VARLIĞA bakar değere değil;
+    # XU100'ün NaN olduğu gün (İŞY/Fintables append boşluğu) common'a girerse xuc son=NaN
+    # → tüm rel20 nan olur. O yüzden common'ı XU100-DOLU günlere kısıtla.
     xu_al = xu.copy(); xu_al.index = pd.to_datetime(xu_al.index)
+    xu_al = xu_al[xu_al.notna()]
     common = pc.index.intersection(xu_al.index)
     pcc, xuc = pc.loc[common], xu_al.loc[common]
     # ④ down-capture hisse verisinin EFEKTİF son tarihi (tail başarısızsa master'da donar);
@@ -198,7 +201,10 @@ def main():
         dc = sr[d2].mean() / xur.iloc[-WIN:][d2].mean()
         if np.isnan(dc) or dc < 0 or dc >= 0.85:   # defansif bandı
             continue
-        r20 = float(s.iloc[-1] / s.iloc[-21] - 1) - float(xuc.iloc[-1] / xuc.iloc[-21] - 1)
+        # rel20 NaN-safe: hisse/XU100'ün son GEÇERLİ değerinden 20 işlem günü geri
+        sv, xv = s.dropna(), xuc.dropna()
+        r20 = (float(sv.iloc[-1] / sv.iloc[-21] - 1) - float(xv.iloc[-1] / xv.iloc[-21] - 1)
+               if len(sv) >= 21 and len(xv) >= 21 else float('nan'))
         cand.append({'kod': m, 'sec': sec, 'dc': dc, 'rel20': r20,
                      'bucket': 'olgun' if sec in mature_secs else 'erken'})
 
