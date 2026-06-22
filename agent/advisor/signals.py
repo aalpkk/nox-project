@@ -769,12 +769,15 @@ def load_validated_signals(asof):
 def load_context_signals(asof, tickers_of_interest=None):
     """Mevcut scanner_reader havuzu — yalnızca bağlam, AL gerekçesi olamaz.
 
-    Lokal CSV yoksa (CI/bot ortamı) GH Pages latest_signals.json fallback'i
-    (agent/tools._get_signals ile aynı desen; GH_PAGES_BASE_URL gerekir)."""
+    fetch_gh=True: önce GitHub Actions artifact'larını indirir (alsat/tavan/nox_v3/
+    regime — scanner_reader._GH_ARTIFACT_SOURCES, hepsi nox-project) → TAZE CSV'ler.
+    Aksi halde CI'da bayat GH Pages latest_signals.json'a düşerdi (alsat/tavan HTML
+    hattından 06-08'de takılıydı). Tarih-max taze sinyali seçer. gh yoksa graceful
+    → lokal CSV → GH Pages fallback."""
     try:
         from agent.scanner_reader import (get_latest_signals, summarize_signals,
                                           fetch_signals_from_url)
-        signals, _ = get_latest_signals()
+        signals, _ = get_latest_signals(fetch_gh=True)
         if not signals:
             signals, _ = fetch_signals_from_url()
         if not signals:
