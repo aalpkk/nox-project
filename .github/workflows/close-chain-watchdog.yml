@@ -25,7 +25,10 @@ jobs:
     steps:
       - name: Kapanış zinciri eksik aşamayı dispatch et (idempotent)
         env:
-          GH_TOKEN: ${{ github.token }}
+          # PAT ŞART (github.token cascade ETMEZ): PAT ile dispatch edilen master-pull/
+          # DE/advisor downstream workflow_run'larını tetikler → zincir otomatik akar.
+          # Secret yoksa github.token (çalışır ama dispatch'ler cascade etmez).
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT || github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail

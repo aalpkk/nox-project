@@ -21,7 +21,11 @@ jobs:
     steps:
       - name: master-data-pull bugün koştu mu — koşmadıysa close tetikle
         env:
-          GH_TOKEN: ${{ github.token }}
+          # PAT ŞART (github.token DEĞİL): GITHUB_TOKEN ile dispatch edilen koşu
+          # downstream workflow_run'ı TETİKLEMEZ (cascade kopar → DE/scanner/advisor
+          # koşmaz, 2026-06-22). PAT (classic: repo+workflow scope) ile dispatch CASCADE
+          # eder. Secret yoksa github.token'a düşer (çalışır ama cascade yok).
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT || github.token }}
         run: |
           set -euo pipefail
           today=$(TZ=Europe/Istanbul date +%F)
