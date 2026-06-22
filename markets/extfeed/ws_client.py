@@ -149,7 +149,12 @@ async def _fetch_bars_async(
                             for ser in params[1].values():
                                 if isinstance(ser, dict):
                                     for pt in ser.get("s", []):
-                                        bars.append(pt["v"])
+                                        v = pt["v"]
+                                        # endeksler (BIST:XU... sektör) volume göndermez →
+                                        # 5 elemanlı gelir; 6-kolon şema için volume=0 ekle
+                                        if len(v) == 5:
+                                            v = list(v) + [0.0]
+                                        bars.append(v)
                     elif method == "series_completed":
                         completed.set()
                         return
@@ -306,7 +311,12 @@ async def _fetch_bars_until_async(
                             for ser in params[1].values():
                                 if isinstance(ser, dict):
                                     for pt in ser.get("s", []):
-                                        bars.append(pt["v"])
+                                        v = pt["v"]
+                                        # endeksler (BIST:XU... sektör) volume göndermez →
+                                        # 5 elemanlı gelir; 6-kolon şema için volume=0 ekle
+                                        if len(v) == 5:
+                                            v = list(v) + [0.0]
+                                        bars.append(v)
                     elif method == "series_completed":
                         chunk_completed.set()
                     elif method in ("protocol_error", "critical_error"):

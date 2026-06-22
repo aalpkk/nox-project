@@ -3,9 +3,11 @@ name: Nyx Rotation Telegram (PAPER)
 # Günlük 4-bilgilik rotasyon raporu → Telegram:
 #  ① LİDER sektörler ② sonraki-lider adayı (ARMED+anatomi) ③ yeni dönen (ARMED)
 #  ④ down-capture AL adayları (defansif, hedef sektörlerde).
-# Betimsel + paper; canlı para sistemi DEĞİL. Veri: sektör endeksleri İŞ Yatırım
-# (auth yok) + Fintables intraday son-seans; ④ hisseleri extfeed 1h master
-# (restore-extfeed-master ile GÜNLÜK taze, tek-kaynak). Spec: docs/sector_rotation_trade_spec_v0.md ailesi.
+# Betimsel + paper; canlı para sistemi DEĞİL.
+# TEK-KAYNAK (TradingView/extfeed):
+#   - ④ hisseler: extfeed_intraday_1h_3y_master (restore-extfeed-master ile günlük taze)
+#   - ①②③ endeksler: extfeed_index_1h_master (extfeed_index_pull.py --delta ile tazelenir)
+# İŞ Yatırım + Fintables karışımı BIRAKILDI (iki-kaynak hizalaması nan/gecikme üretiyordu).
 
 on:
   schedule:
@@ -13,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write      # endeks master delta'sını commit eder
   actions: read        # restore-extfeed-master: master-data-pull artifact'ını indirir
 
 concurrency:
@@ -23,7 +25,7 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,17 +33,35 @@ jobs:
           python-version: '3.11'
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Restore extfeed master (single data source)
+      - name: Restore extfeed master (hisseler — single source)
         uses: ./.github/actions/restore-extfeed-master
         with:
           github-token: ${{ github.token }}
+      - name: Refresh index master (endeksler — TradingView delta)
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+        run: python tools/extfeed_index_pull.py --delta-days 10 || echo "::warning::index delta-pull başarısız — git'teki master kullanılacak"
       - name: Build + send report
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          # Fintables intraday ile en son seansı (İŞY günlük feed'i gecikince) ekler
-          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
         run: python tools/nyx_rotation_telegram_v0.py --notify 2>&1 | tee nyx_rotation_output.txt
+      - name: Commit refreshed index master
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/extfeed_index_1h_master.parquet || true
+          if git diff --cached --quiet; then
+            echo "Endeks master değişmedi — commit atlanıyor."
+          else
+            git commit -m "chore(nyx-rotation): endeks master delta $(date -u +%Y-%m-%d)"
+            git pull --rebase --autostash origin ${{ github.ref_name }} || true
+            git push origin HEAD:${{ github.ref_name }}
+          fi
       - name: Upload output
         if: always()
         uses: actions/upload-artifact@v4
