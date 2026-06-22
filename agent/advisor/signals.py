@@ -16,13 +16,17 @@ import numpy as np
 import pandas as pd
 
 
-def _busday_stale(date_str, asof):
-    """İşgünü-bazlı bayatlık: kaynak tarihi asof'tan ≥1 İŞGÜNÜ eski ise True
-    (hafta sonu otomatik hariç). 1 işgünü bile eski = BAYAT (kullanıcı kuralı)."""
+_WEEKLY_SRC = ("nox_v3_weekly", "haftalık-lider bar")  # son kapanmış Cuma normaldir
+
+
+def _busday_stale(date_str, asof, max_busdays=0):
+    """İşgünü-bazlı bayatlık: asof'tan >max_busdays İŞGÜNÜ eski ise True (hafta sonu
+    hariç). DAILY (varsayılan max=0): 1 işgünü bile eski = BAYAT. HAFTALIK kaynak
+    (max=5): son kapanmış Cuma normal → ancak >1 hafta eskiyse (kaçmış bar) BAYAT."""
     try:
         d = np.datetime64(str(date_str)[:10])
         a = np.datetime64(str(asof)[:10])
-        return int(np.busday_count(d, a)) >= 1
+        return int(np.busday_count(d, a)) > max_busdays
     except Exception:
         return False
 
@@ -791,7 +795,8 @@ def load_context_signals(asof, tickers_of_interest=None):
             d = str(s.get("signal_date") or s.get("date") or "")[:10]
             if scr and len(d) == 10:
                 scan_dates[scr] = max(scan_dates.get(scr, ""), d)
-        stale = [scr for scr, d in scan_dates.items() if _busday_stale(d, asof)]
+        stale = [scr for scr, d in scan_dates.items()
+                 if _busday_stale(d, asof, 5 if scr in _WEEKLY_SRC else 0)]
         return {"status": "OK", "validation": VALIDATION_CONTEXT,
                 "summary": summary, "per_ticker": per_ticker,
                 "scan_dates": scan_dates, "stale_scanners": sorted(stale)}

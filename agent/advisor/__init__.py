@@ -259,8 +259,8 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
 
     # 6e) TARAMA TAZELİĞİ paneli (kullanıcı endişesi: dahil edilen taramalar güncel
     #     olmayabiliyor). Her kaynağın tarihi + BAYAT işareti (asof'tan >3 gün eski).
-    def _stale(d):  # işgünü-bazlı: 1 işgünü bile eski = BAYAT (hafta sonu hariç)
-        return signals._busday_stale(d, asof)
+    def _stale(d, weekly=False):  # işgünü-bazlı: daily 1 gün=BAYAT; haftalık 1 hafta=BAYAT
+        return signals._busday_stale(d, asof, 5 if weekly else 0)
     fr = []
     de_block = validated.get("decision_engine", {})
     fr.append({"kaynak": "DE v1 watchlist", "tarih": de_block.get("asof"),
@@ -268,14 +268,14 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     for scr, d in sorted((context.get("scan_dates") or {}).items()):
         fr.append({"kaynak": f"ctx:{scr}", "tarih": d,
                    "stale": scr in (context.get("stale_scanners") or [])})
-    for lbl, d in [("tavan-scan-live", (advisory.get("tavan_lock") or {}).get("scan_asof")),
-                   ("hw-obos", (validated.get("hw_obos") or {}).get("scan_date")),
-                   ("sektör monitör", (advisory.get("sector_rotation") or {}).get("bar_date")),
-                   ("XU100 RDP", rdp.get("date")),
-                   ("haftalık-lider bar", advisory.get("weekly_lead_bar")),
-                   ("cluster3", (validated.get("cluster3") or {}).get("last_signal_date"))]:
+    for lbl, d, wk in [("tavan-scan-live", (advisory.get("tavan_lock") or {}).get("scan_asof"), False),
+                       ("hw-obos", (validated.get("hw_obos") or {}).get("scan_date"), False),
+                       ("sektör monitör", (advisory.get("sector_rotation") or {}).get("bar_date"), False),
+                       ("XU100 RDP", rdp.get("date"), False),
+                       ("haftalık-lider bar", advisory.get("weekly_lead_bar"), True),  # son Cuma normal
+                       ("cluster3", (validated.get("cluster3") or {}).get("last_signal_date"), True)]:
         if d:
-            fr.append({"kaynak": lbl, "tarih": str(d)[:10], "stale": _stale(d)})
+            fr.append({"kaynak": lbl, "tarih": str(d)[:10], "stale": _stale(d, wk)})
     advisory["freshness"] = fr
     advisory["context_scan_dates"] = context.get("scan_dates") or {}
     n_stale = sum(1 for x in fr if x["stale"])
