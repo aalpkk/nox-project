@@ -3,8 +3,9 @@ name: Nyx Rotation Telegram (PAPER)
 # Günlük 4-bilgilik rotasyon raporu → Telegram:
 #  ① LİDER sektörler ② sonraki-lider adayı (ARMED+anatomi) ③ yeni dönen (ARMED)
 #  ④ down-capture AL adayları (defansif, hedef sektörlerde).
-# Betimsel + paper; canlı para sistemi DEĞİL. Veri: İŞ Yatırım (auth yok) +
-# repo'daki ohlcv master. Spec: docs/sector_rotation_trade_spec_v0.md ailesi.
+# Betimsel + paper; canlı para sistemi DEĞİL. Veri: sektör endeksleri İŞ Yatırım
+# (auth yok) + Fintables intraday son-seans; ④ hisseleri extfeed 1h master
+# (restore-extfeed-master ile GÜNLÜK taze, tek-kaynak). Spec: docs/sector_rotation_trade_spec_v0.md ailesi.
 
 on:
   schedule:
@@ -13,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read        # restore-extfeed-master: master-data-pull artifact'ını indirir
 
 concurrency:
   group: nyx-rotation-telegram
@@ -29,6 +31,10 @@ jobs:
           python-version: '3.11'
       - name: Install deps
         run: pip install -r requirements.txt
+      - name: Restore extfeed master (single data source)
+        uses: ./.github/actions/restore-extfeed-master
+        with:
+          github-token: ${{ github.token }}
       - name: Build + send report
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
