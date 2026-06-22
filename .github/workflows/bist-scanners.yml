@@ -106,9 +106,10 @@ jobs:
         if: steps.select.outputs.proceed == 'true'
         continue-on-error: true
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT }}
+          # nox-project mevcut secret isimleri (TG_*/GH_TOKEN) — yeni secret gerekmez.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
         run: python scanners/bist_alsat_screener.py 2>&1 | tee alsat_output.log
 
@@ -127,8 +128,9 @@ jobs:
       - name: Create tavan config
         if: steps.select.outputs.proceed == 'true'
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # mevcut TG_* secret'ları; PORTFOY_TOPLAM yoksa config 2.000.000'a default'lar.
+          TELEGRAM_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           PORTFOY_TOPLAM: ${{ secrets.PORTFOY_TOPLAM }}
         run: |
           python -c "
@@ -153,7 +155,7 @@ jobs:
         if: steps.select.outputs.proceed == 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
         run: python scanners/bist_auto_trader.py 2>&1 | tee tavan_output.log
 
