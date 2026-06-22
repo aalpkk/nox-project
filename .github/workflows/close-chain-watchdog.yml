@@ -1,0 +1,77 @@
+name: close-chain watchdog
+
+# Kapanış zincirini uçtan-uca GARANTİLER: close master-pull → close DE (watchlist)
+# → advisor (rapor). Neden gerekli: watchdog/cron-job.org master-pull'u GITHUB_TOKEN
+# ile workflow_dispatch ederse, GitHub o koşunun downstream workflow_run'ını
+# ATEŞLEMEZ (recursion koruması) → close DE hiç tetiklenmez → watchlist yok → advisor
+# atlar → RAPOR YOK (2026-06-22'de oldu). Bu watchdog cascade-kopukluğunu kapatır.
+#
+# cron-job.org bunu hafta içi İKİ kez tetikler (workflow_dispatch):
+#   ~20:15 TR (DE eksikse dispatch) + ~21:30 TR (DE bitti, advisor eksikse dispatch).
+#   Idempotent: her aşama yalnızca eksikse dispatch edilir (çift koşu yok).
+#   POST https://api.github.com/repos/aalpkk/nox-project/actions/workflows/close-chain-watchdog.yml/dispatches
+#   body: {"ref":"main"}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kapanış zinciri eksik aşamayı dispatch et (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          today=$(TZ=Europe/Istanbul date +%F)
+          echo "[watchdog] gün: $today"
+
+          # 1) Bugün close master-data-pull success var mı?
+          mp=$(gh run list --repo "$REPO" --workflow=master-data-pull.yml \
+                 --created="$today" --status=success --json databaseId --jq 'length')
+          echo "[watchdog] close master-pull (success) bugün: $mp"
+          if [ "$mp" -eq 0 ]; then
+            echo "[watchdog] master-pull YOK → close dispatch (masterpull-watchdog ile aynı)"
+            gh workflow run master-data-pull.yml --repo "$REPO" -f mode=close
+            echo "[watchdog] master-pull dispatch edildi; DE/advisor sonraki çağrıda"
+            exit 0
+          fi
+
+          # 2) Bugün watchlist (veya no-de-day) üreten close DE var mı?
+          de_wl="no"
+          for rid in $(gh run list --repo "$REPO" --workflow=decision-engine-v1.yml \
+                         --created="$today" --status=success --json databaseId --jq '.[].databaseId'); do
+            names=$(gh api "repos/$REPO/actions/runs/$rid/artifacts" --jq '.artifacts[].name' 2>/dev/null || true)
+            if echo "$names" | grep -qE "de-v1-watchlist-$today|de-v1-no-de-day-$today"; then
+              de_wl="yes"; break
+            fi
+          done
+          echo "[watchdog] close DE watchlist bugün: $de_wl"
+          if [ "$de_wl" = "no" ]; then
+            echo "[watchdog] watchlist YOK (cascade koptu) → DE close dispatch ($today)"
+            gh workflow run decision-engine-v1.yml --repo "$REPO" \
+              -f run_mode=close -f target_date="$today"
+            echo "[watchdog] DE dispatch edildi; advisor sonraki çağrıda (DE ~30dk)"
+            exit 0
+          fi
+
+          # 3) Bugün advisor RAPORU (skip değil = artifact var) var mı?
+          adv="no"
+          for rid in $(gh run list --repo "$REPO" --workflow=portfolio-advisor.yml \
+                         --created="$today" --status=success --json databaseId --jq '.[].databaseId'); do
+            names=$(gh api "repos/$REPO/actions/runs/$rid/artifacts" --jq '.artifacts[].name' 2>/dev/null || true)
+            if echo "$names" | grep -qE "^advisor-$today"; then adv="yes"; break; fi
+          done
+          echo "[watchdog] advisor raporu bugün: $adv"
+          if [ "$adv" = "no" ]; then
+            echo "[watchdog] watchlist VAR ama advisor raporu YOK → advisor dispatch ($today)"
+            gh workflow run portfolio-advisor.yml --repo "$REPO" -f asof="$today"
+          else
+            echo "[watchdog] zincir TAM (master-pull+DE+advisor) → no-op"
+          fi
