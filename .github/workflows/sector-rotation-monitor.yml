@@ -3,11 +3,11 @@ name: Sector Rotation Monitor (PAPER)
 # XU100 dip-dönüş durum makinesi + rotasyon takvimi PAPER takibi.
 # Backtest karnesi era-fragile FAIL → canlı para sistemi DEĞİL; taze-veri
 # doğrulama + karar desteği. Spec: docs/sector_rotation_trade_spec_v0.md
-# (fren kuralları dahil, kilitli). Veri: İş Yatırım REST (auth gerektirmez).
+# (fren kuralları dahil, kilitli). Veri: extfeed_index_1h_master (TradingView,
+# nyx_rotation ile TEK-KAYNAK; İŞY 1-seans gecikmesi BIRAKILDI → güncel seansa ulaşır).
 #
-# Takvim: hafta içi 20:30 TR (17:30 UTC) — BIST kapanış 18:00 TR, İŞY EOD
-# verisi akşam güncellenir. Veri bir gün geç düşerse olaylar ertesi koşuda
-# bildirilir (10-40 günlük leg'ler için tolere edilir).
+# Takvim: hafta içi 20:30 TR (17:30 UTC) — BIST kapanış 18:00 TR sonrası;
+# extfeed_index_pull --delta o günün kapanışını çeker.
 
 on:
   schedule:
@@ -43,6 +43,11 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      - name: Refresh index master (TradingView delta — güncel seans)
+        # İŞY (1 seans gecikmeli) BIRAKILDI; extfeed_index_1h_master nyx_rotation ile
+        # tek-kaynak. Delta-pull başarısızsa git'teki master kullanılır (graceful).
+        run: python tools/extfeed_index_pull.py --delta-days 10 || echo "::warning::index delta-pull başarısız — git'teki master kullanılacak"
+
       - name: Run monitor
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -59,7 +64,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/sector_rotation_monitor_log.csv || true
+          git add output/sector_rotation_monitor_log.csv output/extfeed_index_1h_master.parquet || true
           if git diff --cached --quiet; then
             echo "Değişiklik yok — commit atlanıyor."
           else
