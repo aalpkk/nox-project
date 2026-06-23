@@ -32,7 +32,8 @@ sys.path.insert(0, ROOT)
 import numpy as np
 import pandas as pd
 
-from agent.sector_regime import _fetch_isy_single
+# NOX: İŞY (1 seans gecikmeli) BIRAKILDI → extfeed_index_1h_master (nyx_rotation ile
+# TEK-KAYNAK; CI'da extfeed_index_pull --delta ile günlük taze → güncel seansa ulaşır).
 from tools.sector_rotation_trade_v0 import (COOLDOWN, COST, DD_ARM, DD_LOOK,
                                             HOLD, LEG1, LEG2, leg_asset)
 
@@ -43,14 +44,35 @@ LOG = os.path.join(ROOT, 'output', 'sector_rotation_monitor_log.csv')
 BRAKE_STOPS, BRAKE_MEANN, BRAKE_LIFT = 4, 8, 4
 
 
+_INDEX_DAILY = None
+
+
+def _load_index_daily():
+    """extfeed_index_1h_master → günlük endeks close paneli (date-index, ticker-kolon).
+    nyx_rotation ile birebir aynı 1h→günlük resample. Bir kez yüklenir (cache)."""
+    global _INDEX_DAILY
+    if _INDEX_DAILY is None:
+        ief = pd.read_parquet(os.path.join(ROOT, 'output', 'extfeed_index_1h_master.parquet'),
+                              columns=['ticker', 'ts_istanbul', 'close'])
+        ief['gun'] = pd.to_datetime(ief['ts_istanbul']).dt.tz_localize(None).dt.normalize()
+        ig = (ief.sort_values('ts_istanbul')
+              .groupby(['ticker', 'gun'])['close'].last().reset_index())
+        _INDEX_DAILY = ig.pivot(index='gun', columns='ticker', values='close').sort_index().ffill()
+    return _INDEX_DAILY
+
+
+def _index_close(code):
+    """Tek endeks günlük close serisi (yoksa None) — _fetch_isy_single(c)['close'] yerine."""
+    idx = _load_index_daily()
+    return idx[code].dropna() if code in idx.columns else None
+
+
 def fetch():
-    frames = {}
-    for c in CODES:
-        df = _fetch_isy_single(c, lookback_days=LOOKBACK_DAYS, timeout=30)
-        if df is None or df.empty:
-            raise SystemExit(f"İŞY {c} çekilemedi")
-        frames[c] = df['close']
-    return pd.DataFrame(frames).dropna(subset=['XU100'])
+    idx = _load_index_daily()
+    if 'XU100' not in idx.columns:
+        raise SystemExit("extfeed_index_1h_master'da XU100 yok")
+    keep = [c for c in CODES if c in idx.columns]
+    return idx[keep].dropna(subset=['XU100'])
 
 
 def leg_daily_ret(px, d, off):
@@ -185,10 +207,10 @@ def sector_scan(lookback_days=600):
     backtest'i yapılmadı; tetik tazeliği >90 bar ise bayat sayılır."""
     rows = []
     for c in SCAN_CODES:
-        df = _fetch_isy_single(c, lookback_days=lookback_days, timeout=30)
-        if df is None or len(df) < DD_LOOK + 10:
+        s = _index_close(c)
+        if s is None or len(s) < DD_LOOK + 10:
             continue
-        v = df['close'].values
+        v = s.values
         state, run_min, trig_i = 'IDLE', None, None
         for t in range(DD_LOOK, len(v)):
             if state == 'IDLE':
