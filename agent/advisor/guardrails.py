@@ -293,6 +293,8 @@ def post_validate(advisory, pack):
             "trident_tier1": bool(cand.get("trident_tier1")),  # G4-dahil (rejim-yukarı)
             "trident_geo": bool(cand.get("trident_geo")),      # G4'süz geometri (birincil)
             "trident_D_pct": cand.get("trident_D_pct"),
+            "trident_tag": cand.get("trident_tag"),            # DE'nin kendi sınıfı
+            "trident_weekly_family": cand.get("trident_weekly_family"),
             "suggested_qty": cand["suggested_qty"],
             "risk_tl": cand["risk_tl"], "notional_tl": cand["notional_tl"],
             "risk_pct_equity": cand.get("risk_pct_equity"),
@@ -328,6 +330,8 @@ def post_validate(advisory, pack):
              "trident_geo": bool(c.get("trident_geo")),
              "trident_tier1": bool(c.get("trident_tier1")),
              "trident_D_pct": c.get("trident_D_pct"),
+             "trident_tag": c.get("trident_tag"),
+             "trident_weekly_family": c.get("trident_weekly_family"),
              "entry_ref": c.get("entry_ref"), "stop_ref": c.get("stop_ref")}
             for c in pre["buy_table"] if c["cand_status"] not in (CAND_OK, CAND_ADD)
         ],

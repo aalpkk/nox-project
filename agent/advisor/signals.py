@@ -212,6 +212,10 @@ def _parse_de_csv(path, asof, status="OK"):
             "trident_geo": bool(g1 and g2 and g3),  # tam G1∧G2∧G3 (G4'süz)
             "trident_gates": f"{'G1' if g1 else '-'}{'G2' if g2 else '-'}{'G3' if g3 else '-'}",
             "trident_D_pct": d, "trident_sil": s, "trident_bos": b,
+            # DE'nin KENDİ trident sınıfı (advisor geo'sundan AYRI): SIL_DEEP/
+            # WEEKLY_BIRTH_ACTIVE/D_PCT_30PLUS/TIER1 → raporda gösterilir.
+            "trident_tag": (r.get("trident_tag") or "").strip(),
+            "trident_weekly_family": (r.get("trident_weekly_family") or "").strip(),
         }
 
     buy_rows, watch_rows = [], []
