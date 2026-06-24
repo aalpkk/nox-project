@@ -201,7 +201,21 @@ def _equality_audit(new_panel: pd.DataFrame, old_path: Path) -> pd.DataFrame:
     """Compare new mfe_pct_{w}d to old panel on (ticker, signal_date, source, family).
 
     Old panel covers 9 sources; we restrict the join to the in-scope subset.
+
+    The old unified panel is a dev-time research artifact (not committed / absent
+    in CI). The audit is a label-equality SANITY check, not required to build the
+    panel — when the old panel is missing, skip it and return a zero placeholder.
     """
+    if not old_path.exists():
+        print(f"[ranking_lab_panel][audit] SKIP — old panel absent ({old_path.name}); "
+              "equality audit is dev-only, not required to produce the panel")
+        audit = pd.DataFrame(columns=["horizon_d", "n_compared", "n_equal",
+                                      "n_diff", "max_abs_diff", "equal_pct"])
+        audit.attrs["n_only_old"] = 0
+        audit.attrs["n_only_new"] = 0
+        audit.attrs["n_both"] = 0
+        audit.attrs["skipped"] = True
+        return audit
     old = pq.read_table(old_path).to_pandas()
     old["signal_date"] = pd.to_datetime(old["signal_date"]).dt.normalize()
     old = old[old["source"].isin(ALLOWED_SOURCES)].copy()
@@ -339,11 +353,15 @@ def main() -> None:
 
     lines.append("## C) Label equality audit vs old panel (shared horizons)")
     lines.append("")
-    lines.append(f"- old panel in-scope (mb+HB+triangle+paper) keys: **both={audit.attrs['n_both']:,}**, "
-                 f"only_old={audit.attrs['n_only_old']:,}, only_new={audit.attrs['n_only_new']:,}")
-    lines.append("")
-    lines.append(audit.to_markdown(index=False, floatfmt=".6f"))
-    lines.append("")
+    if audit.attrs.get("skipped"):
+        lines.append("- SKIPPED — old unified panel absent (dev-only sanity check, not run in CI).")
+        lines.append("")
+    else:
+        lines.append(f"- old panel in-scope (mb+HB+triangle+paper) keys: **both={audit.attrs['n_both']:,}**, "
+                     f"only_old={audit.attrs['n_only_old']:,}, only_new={audit.attrs['n_only_new']:,}")
+        lines.append("")
+        lines.append(audit.to_markdown(index=False, floatfmt=".6f"))
+        lines.append("")
 
     lines.append("## D) Base rates (Stage 2 target distribution)")
     lines.append("")
