@@ -316,9 +316,18 @@ def post_validate(advisory, pack):
         "position_recommendations": clean_recs,
         "buy_candidates": clean_buys,
         "skipped_candidates": [
+            # buy_candidates ile AYNI DE alanları taşınır (families/timeframe/state/mtf/
+            # trident) → bütçe-blocked adaylar da full-liste'de mb/bb + periyod + above
+            # durumunu gösterir (sadece "bütçe-dışı" değil). Veri c'de (buy_table) zaten var.
             {"ticker": c["ticker"], "status": c["cand_status"], "note": c.get("note", ""),
              "section": c.get("section"), "n_cells": c.get("n_cells"),
              "context_lists": c.get("context_lists", []),
+             "families": c.get("families"), "timeframe": c.get("timeframe"),
+             "state": c.get("state"), "mtf_birth": c.get("mtf_birth", []),
+             "n_tf_birth": c.get("n_tf_birth", 0),
+             "trident_geo": bool(c.get("trident_geo")),
+             "trident_tier1": bool(c.get("trident_tier1")),
+             "trident_D_pct": c.get("trident_D_pct"),
              "entry_ref": c.get("entry_ref"), "stop_ref": c.get("stop_ref")}
             for c in pre["buy_table"] if c["cand_status"] not in (CAND_OK, CAND_ADD)
         ],
