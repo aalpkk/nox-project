@@ -159,8 +159,11 @@ jobs:
           workflow: decision-engine-v1.yml
           workflow_conclusion: success
           branch: main
-          name: de-v1-source-events-
-          name_is_regexp: true
+          # EXACT name (not regexp): name_is_regexp nests each match into
+          # output/<artifact-name>/, breaking the flat output/ layout the chain
+          # expects. asof is resolved above and matches the DE run's asof in the
+          # chained flow (DE success → triggers this run, same operational date).
+          name: de-v1-source-events-${{ steps.resolve_date.outputs.asof }}
           path: output/
           if_no_artifact_found: fail
 
