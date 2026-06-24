@@ -1,0 +1,220 @@
+{
+  "version": "STAGE5B_OPERATIONAL_v0",
+  "frozen_at": "2026-06-24",
+  "source_research_script": "ranking_lab_lgbm_v0_stage5b.py",
+  "fold": "F5",
+  "cutoff": "2026-05-12",
+  "lgbm_params": {
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "learning_rate": 0.05,
+    "num_leaves": 63,
+    "min_data_in_leaf": 200,
+    "feature_fraction": 0.85,
+    "bagging_fraction": 0.85,
+    "bagging_freq": 5,
+    "lambda_l1": 0.0,
+    "lambda_l2": 1.0,
+    "verbosity": -1,
+    "seed": 42,
+    "deterministic": true,
+    "force_row_wise": true
+  },
+  "numeric_features": [
+    "atr_pct",
+    "atr_ratio_daily",
+    "xu100_atr_pct",
+    "vol_z_20",
+    "ret_1d",
+    "ret_5d",
+    "gap_pct",
+    "price_vs_20d_high",
+    "price_vs_60d_high",
+    "event_multiplicity",
+    "n_concurrent_sources",
+    "n_concurrent_families",
+    "n_concurrent_timeframes",
+    "liquidity_proxy_rank_pct_by_date",
+    "atr_pct_rank_pct_by_date",
+    "vol_z_20_rank_pct_by_date",
+    "ret_1d_rank_pct_by_date",
+    "ret_5d_rank_pct_by_date",
+    "price_vs_20d_high_rank_pct_by_date",
+    "price_vs_60d_high_rank_pct_by_date"
+  ],
+  "categorical_features": [
+    "source",
+    "family",
+    "setup_label",
+    "signal_state",
+    "timeframe"
+  ],
+  "feature_cols": [
+    "atr_pct",
+    "atr_ratio_daily",
+    "xu100_atr_pct",
+    "vol_z_20",
+    "ret_1d",
+    "ret_5d",
+    "gap_pct",
+    "price_vs_20d_high",
+    "price_vs_60d_high",
+    "event_multiplicity",
+    "n_concurrent_sources",
+    "n_concurrent_families",
+    "n_concurrent_timeframes",
+    "liquidity_proxy_rank_pct_by_date",
+    "atr_pct_rank_pct_by_date",
+    "vol_z_20_rank_pct_by_date",
+    "ret_1d_rank_pct_by_date",
+    "ret_5d_rank_pct_by_date",
+    "price_vs_20d_high_rank_pct_by_date",
+    "price_vs_60d_high_rank_pct_by_date",
+    "source",
+    "family",
+    "setup_label",
+    "signal_state",
+    "timeframe"
+  ],
+  "winsorize_caps": {
+    "atr_pct": [
+      0.022676140982117236,
+      0.0878944808757324
+    ],
+    "atr_ratio_daily": [
+      1.1738887895534555,
+      4.80386569305282
+    ],
+    "vol_z_20": [
+      -1.323337603995922,
+      4.122528471511603
+    ],
+    "ret_1d": [
+      -0.09192082100837683,
+      0.10000000000000009
+    ],
+    "ret_5d": [
+      -0.1333333333333333,
+      0.3015267119194627
+    ],
+    "gap_pct": [
+      -0.05903913858810728,
+      0.09178743961352676
+    ],
+    "price_vs_20d_high": [
+      -0.281668380297806,
+      0.0
+    ],
+    "price_vs_60d_high": [
+      -0.43877096321318815,
+      0.0
+    ],
+    "event_multiplicity": [
+      1.0,
+      10.0
+    ],
+    "n_concurrent_sources": [
+      1.0,
+      4.0
+    ],
+    "n_concurrent_families": [
+      1.0,
+      6.0
+    ],
+    "n_concurrent_timeframes": [
+      1.0,
+      3.0
+    ]
+  },
+  "categorical_levels": {
+    "source": [
+      "horizontal_base",
+      "mb_scanner",
+      "paper_execution_v0",
+      "triangle_break"
+    ],
+    "family": [
+      "bb_1M",
+      "bb_1d",
+      "bb_1w",
+      "bb_5h",
+      "hb",
+      "line_e",
+      "line_tr",
+      "mb_1M",
+      "mb_1d",
+      "mb_1w",
+      "mb_5h",
+      "tr_1M",
+      "tr_1d",
+      "tr_1w",
+      "tr_5h"
+    ],
+    "setup_label": [
+      "bb__above_mb_birth",
+      "bb__mit_touch_first",
+      "bb__retest_bounce_first",
+      "hb__extended",
+      "hb__retest_bounce",
+      "hb__trigger",
+      "line_e__extended",
+      "line_tr__retest_bounce",
+      "line_tr__trigger",
+      "mb__above_mb_birth",
+      "mb__mit_touch_first",
+      "mb__retest_bounce_first",
+      "tr_1M__asc_up_break",
+      "tr_1M__desc_up_break",
+      "tr_1M__sym_up_break",
+      "tr_1d__asc_up_break",
+      "tr_1d__desc_up_break",
+      "tr_1d__sym_up_break",
+      "tr_1w__asc_up_break",
+      "tr_1w__desc_up_break",
+      "tr_1w__sym_up_break",
+      "tr_5h__asc_up_break",
+      "tr_5h__desc_up_break",
+      "tr_5h__sym_up_break"
+    ],
+    "signal_state": [
+      "extended",
+      "retest_bounce",
+      "trigger",
+      "untagged"
+    ],
+    "timeframe": [
+      "1M",
+      "1d",
+      "1w",
+      "5h"
+    ]
+  },
+  "fast_rank_early_weights": {
+    "p3_8": 0.4,
+    "p5_10": 0.35,
+    "p10_15": 0.25
+  },
+  "heads": [
+    {
+      "name": "y3_8",
+      "label_col": "mfe_pct_3d",
+      "threshold": 0.08,
+      "best_iteration": 61,
+      "n_train_used": 246405
+    },
+    {
+      "name": "y5_10",
+      "label_col": "mfe_pct_5d",
+      "threshold": 0.1,
+      "best_iteration": 45,
+      "n_train_used": 246405
+    },
+    {
+      "name": "y10_15",
+      "label_col": "mfe_pct_10d",
+      "threshold": 0.15,
+      "best_iteration": 58,
+      "n_train_used": 246405
+    }
+  ]
+}

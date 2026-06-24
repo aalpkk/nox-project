@@ -26,6 +26,9 @@ _CSV_PATTERNS_OUTPUT = [
     (re.compile(r'^nox_v3_signals_(\d{8})\.csv$'),        'nox_v3_daily'),
     # (re.compile(r'^nox_divergence_(\d{8})\.csv$'),       'divergence'),  # PASİF — geliştirme bekliyor
     (re.compile(r'^regime_transition_(\d{8})\.csv$'),      'regime_transition'),
+    # cluster3: ranking_lab arketip (paper/haftalık research — BİLGİ, AL sürücüsü DEĞİL;
+    # confluence'a EKLENMEDİ, skor etkisi yok). Per [[armed_bounce_lowdc_separability_outcome]].
+    (re.compile(r'^cluster3_signals_(\d{8})\.csv$'),       'cluster3'),
     # bist-tavan-screener workflows
     (re.compile(r'^alsat_signals_(\d{8})\.csv$'),          'alsat'),
     # rejim_v3 kaldirildi — regime_transition (nox-project HTML) tek kaynak
@@ -43,6 +46,7 @@ SCREENER_NAMES = {
     'nox_v3_daily': 'NOX v3 Gunluk (zayif)',
     'divergence': 'Divergence',
     'regime_transition': 'Regime Transition',
+    'cluster3': 'Cluster3 Arketip (paper)',
     'alsat': 'AL/SAT Screener',
     'tavan': 'Tavan Scanner',
     'tavan_kandidat': 'Tavan Kandidat',
@@ -358,6 +362,40 @@ def _parse_kademe(path, date_str):
     return signals
 
 
+def _parse_cluster3(path, date_str):
+    """Cluster3 arketip CSV parse (ranking_lab paper hattı).
+
+    Her satır LONG arketip adayı (defansif/down-capture seçimi) — yön daima AL,
+    kalite = fast_rank_early (0-1, frozen F5 LGBM ranker). BİLGİ amaçlı: confluence
+    skoruna girmez (cluster3 doğrulanmış canlı edge değil, paper/haftalık).
+    """
+    df = pd.read_csv(path)
+    sig_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    signals = []
+    for _, row in df.iterrows():
+        fre = row.get('fast_rank_early')
+        entry = {
+            'screener': 'cluster3',
+            'ticker': str(row['ticker']).strip(),
+            'signal_date': sig_date,
+            'direction': 'AL',
+            'signal_type': 'cluster3_archetype',
+            'entry_price': float(row['close']) if pd.notna(row.get('close')) else 0,
+            'quality': round(float(fre), 3) if pd.notna(fre) else None,
+            'paper': True,  # confluence skor etkisi yok
+        }
+        src = str(row.get('source', '')).strip()
+        fam = str(row.get('family', '')).strip()
+        if src or fam:
+            entry['setup'] = f"{src}/{fam}".strip('/')
+        if pd.notna(row.get('ret_5d')):
+            entry['ret_5d'] = round(float(row['ret_5d']), 4)
+        if pd.notna(row.get('price_vs_60d_high')):
+            entry['vs_60d_high'] = round(float(row['price_vs_60d_high']), 4)
+        signals.append(entry)
+    return signals
+
+
 def parse_all_csvs(csv_map):
     """Tum CSV'leri parse et -> birlesik sinyal listesi."""
     all_signals = []
@@ -373,6 +411,8 @@ def parse_all_csvs(csv_map):
                     sigs = _parse_alsat(path, date_str)
                 elif screener == 'regime_transition':
                     sigs = _parse_regime_transition(path, date_str)
+                elif screener == 'cluster3':
+                    sigs = _parse_cluster3(path, date_str)
                 elif screener in ('tavan', 'tavan_kandidat'):
                     sigs = _parse_tavan(path, date_str, screener)
                 elif screener == 'kademe':
@@ -427,6 +467,11 @@ _GH_ARTIFACT_SOURCES = [
         "repo": "aalpkk/nox-project",
         "prefix": "regime-daily-",
         "csv_patterns": ['regime_transition_'],
+    },
+    {
+        "repo": "aalpkk/nox-project",
+        "prefix": "cluster3-signals-",
+        "csv_patterns": ['cluster3_signals_'],
     },
     # divergence: PASİF — geliştirme bekliyor
     # {
