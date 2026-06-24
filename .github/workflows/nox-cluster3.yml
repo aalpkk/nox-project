@@ -1,0 +1,235 @@
+name: NOX Cluster3 — Daily Archetype Scan (paper)
+
+# Chains off the "decision engine v1" CLOSE run. cluster3 is the ranking_lab
+# archetype line — a PAPER / weekly-research selector (defansif down-capture
+# seçimi), NOT a validated live AL edge. It surfaces in the advisor as an
+# INFORMATIONAL signal (confluence skor etkisi YOK).
+#
+# Chain (full parity with the other close-chained scanners — auto-refreshes daily):
+#   1. Restore fresh sources:
+#        - DE run artifact `de-v1-source-events-*`  → mb_scanner×8 + horizontal_base
+#          + paper_execution×2  (refreshed in-run by DE Stage 1/3/6)
+#        - master-data-pull close run → extfeed 1h master + xu100 daily
+#        - repo (static)            → decision_engine_lab_triangle_break_events_3y.parquet
+#                                     (3y research panel; minor source, frozen)
+#   2. ranking_lab event_panel → features         (312k-row panel rebuild)
+#   3. Stage5b OPERATIONAL frozen scorer (score)  → fast_rank_early for fresh events
+#        (frozen F5 boosters in repo; NO retrain — predict-only)
+#   4. cluster3 scan --asof / fill / status       (frozen KMeans archetype model in repo)
+#   5. daily picks export → cluster3_signals_<YYYYMMDD>.csv  (advisor contract)
+#   6. Upload artifact `cluster3-signals-<run_number>` → scanner_reader fetch_gh
+#
+# Paper ledger (paper_snapshots) accumulates across runs via the `cluster3-ledger`
+# artifact (downloaded best-effort, re-uploaded each run).
+#
+# Why chained on DE (not master-data-pull): event_panel consumes the raw scanner
+# events DE refreshes in-run. DE self-gates to close-mode, so a successful DE run
+# on main == a close run.
+
+on:
+  workflow_run:
+    workflows: ["decision engine v1"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      asof:
+        description: 'As-of date YYYY-MM-DD (boş = operational target date).'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cluster3-daily
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Proceed only when the triggering "decision engine v1" run succeeded on main
+    # (DE self-gates to close-mode, so success-on-main == a close run).
+    # workflow_dispatch always proceeds.
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Gate — DE v1 success on main only
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "[gate] manual workflow_dispatch — proceed"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+            echo "[gate] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION (need main+success)"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "[gate] PROCEED: DE v1 succeeded on main"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+  scan:
+    needs: [gate]
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Resolve as-of date
+        id: resolve_date
+        run: |
+          if [ -n "${{ github.event.inputs.asof }}" ]; then
+            DATE="${{ github.event.inputs.asof }}"
+          else
+            DATE=$(python -c "from tools.master_data_pull_orchestrator import compute_operational_target_date; print(compute_operational_target_date().isoformat())")
+          fi
+          echo "asof=$DATE" >> $GITHUB_OUTPUT
+          echo "As-of date: $DATE"
+
+      - name: Select latest close-mode master-data-pull run on main
+        id: select_master_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidates=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow=master-data-pull.yml \
+            --branch=main \
+            --status=success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[].databaseId')
+          if [ -z "$candidates" ]; then
+            echo "::error::no successful master-data-pull runs on main"; exit 1
+          fi
+          selected=""
+          for run_id in $candidates; do
+            tmp=$(mktemp -d)
+            if gh run download "$run_id" --repo "${{ github.repository }}" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+              mf="$tmp/master_data_manifest.json"
+              if [ -f "$mf" ]; then
+                ok=$(python -c "import json; m=json.load(open('$mf')); print('yes' if (m.get('mode')=='close' and m.get('verdict')=='PASS' and m.get('freshness_status')=='PASS') else 'no')")
+                if [ "$ok" = "yes" ]; then
+                  selected="$run_id"; rm -rf "$tmp"; break
+                fi
+              fi
+            fi
+            rm -rf "$tmp"
+          done
+          if [ -z "$selected" ]; then
+            echo "::error::no close-mode master-data-pull run with PASS verdict in last 30 successful runs"; exit 1
+          fi
+          echo "selected close-mode master-data-pull run: $selected"
+          echo "run_id=$selected" >> "$GITHUB_OUTPUT"
+
+      - name: Restore master-data-pull extfeed parquet (close run)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.select_master_run.outputs.run_id }}
+          name: master-extfeed-intraday-1h
+          path: output/
+          if_no_artifact_found: fail
+
+      - name: Restore master-data-pull xu100 daily parquet (close run)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.select_master_run.outputs.run_id }}
+          name: master-xu100-extfeed-daily
+          path: output/
+          if_no_artifact_found: fail
+
+      - name: Restore DE source events (mb_scanner + horizontal_base + paper_execution)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: decision-engine-v1.yml
+          workflow_conclusion: success
+          branch: main
+          name: de-v1-source-events-
+          name_is_regexp: true
+          path: output/
+          if_no_artifact_found: fail
+
+      - name: Restore previous cluster3 paper ledger (best-effort)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: nox-cluster3.yml
+          workflow_conclusion: success
+          branch: main
+          name: cluster3-ledger
+          path: output/
+          if_no_artifact_found: warn
+
+      - name: Verify required inputs present (fail-fast, no fallback)
+        run: |
+          set -euo pipefail
+          req=(
+            output/extfeed_intraday_1h_3y_master.parquet
+            output/xu100_extfeed_daily.parquet
+            output/mb_scanner_events_mb_5h.parquet
+            output/mb_scanner_events_mb_1d.parquet
+            output/horizontal_base_event_v1.parquet
+            output/paper_execution_v0_trades.parquet
+            output/paper_execution_v0_trigger_retest_trades.parquet
+            output/decision_engine_lab_triangle_break_events_3y.parquet
+            output/ranking_lab_cluster3_model_v0.json
+            output/ranking_lab_lgbm_stage5b_frozen_v0/meta.json
+          )
+          miss=0
+          for f in "${req[@]}"; do
+            if [ ! -f "$f" ]; then echo "::error::missing required input: $f"; miss=1; fi
+          done
+          [ "$miss" = "0" ] || { echo "::error::cluster3 inputs incomplete — aborting"; exit 1; }
+          echo "all required inputs present"
+
+      - name: Build event panel + features
+        run: |
+          set -euo pipefail
+          python tools/ranking_lab_event_panel_v0.py
+          python tools/ranking_lab_features_v0.py
+
+      - name: Score fresh events (frozen F5 operational LGBM — predict-only)
+        run: python tools/ranking_lab_lgbm_stage5b_operational_v0.py score --asof "${{ steps.resolve_date.outputs.asof }}"
+
+      - name: Cluster3 scan + fill + status
+        run: |
+          set -euo pipefail
+          python tools/ranking_lab_cluster3_scanner_v0.py scan --asof "${{ steps.resolve_date.outputs.asof }}"
+          python tools/ranking_lab_cluster3_scanner_v0.py fill
+          python tools/ranking_lab_cluster3_scanner_v0.py status
+
+      - name: Export daily picks (advisor CSV + HTML)
+        run: python tools/ranking_lab_cluster3_daily_export_v0.py --asof "${{ steps.resolve_date.outputs.asof }}"
+
+      - name: Upload cluster3 signals (artifact → scanner_reader)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster3-signals-${{ github.run_number }}
+          path: |
+            output/cluster3_signals_*.csv
+            output/cluster3_signals_*.html
+            output/ranking_lab_cluster3_paper_status_v0.md
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload cluster3 paper ledger (accumulates across runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster3-ledger
+          path: output/ranking_lab_cluster3_paper_snapshots_v0.parquet
+          retention-days: 90
+          if-no-files-found: warn

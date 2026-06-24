@@ -720,6 +720,31 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Upload source events (→ ranking_lab cluster3 chain)
+        # Raw scanner events refreshed in-run by Stage 1 (mb_scanner), Stage 3
+        # (horizontal_base) and Stage 6 (paper_execution). nox-cluster3.yml chains
+        # off this run and rebuilds the ranking_lab event_panel from these. triangle
+        # comes from triangle-break-scan (its own artifact); extfeed/xu100 from
+        # master-data-pull. Bundling them here is the only missing close-fresh source.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: de-v1-source-events-${{ steps.resolve.outputs.asof }}
+          path: |
+            output/mb_scanner_events_mb_5h.parquet
+            output/mb_scanner_events_mb_1d.parquet
+            output/mb_scanner_events_mb_1w.parquet
+            output/mb_scanner_events_mb_1M.parquet
+            output/mb_scanner_events_bb_5h.parquet
+            output/mb_scanner_events_bb_1d.parquet
+            output/mb_scanner_events_bb_1w.parquet
+            output/mb_scanner_events_bb_1M.parquet
+            output/horizontal_base_event_v1.parquet
+            output/paper_execution_v0_trades.parquet
+            output/paper_execution_v0_trigger_retest_trades.parquet
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Upload trident probe (Stage 7.5)
         if: always()
         uses: actions/upload-artifact@v4
