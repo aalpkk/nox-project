@@ -114,6 +114,15 @@ def _full_confluence(b):
         parts.append(f"1w-LİDER✓({tf})" if tf else "1w-LİDER✓")
     if b.get("trident_geo"):
         parts.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else ""))
+    # DE'nin KENDİ trident sınıfı (geo'dan ayrı; SIL_DEEP/WEEKLY_BIRTH_ACTIVE/
+    # D_PCT_30PLUS/TIER1) — advisor geo'su 0 olsa bile DE'nin etiketlediğini gösterir.
+    for t in (b.get("trident_tag") or "").split(";"):
+        t = t.strip()
+        if t and f"🔱{t}" not in parts:
+            parts.append(f"🔱{t}")
+    wf = b.get("trident_weekly_family") or ""
+    if wf and not b.get("weekly_lead"):  # 1w-LİDER✓ zaten varsa tekrar etme
+        parts.append(f"1w-birth({wf})")
     return parts
 
 
@@ -250,16 +259,27 @@ def render_telegram_tr(advisory):
         lines.append("📊 Açık pozisyon yok.")
     lines.append("")
 
-    # Trident durumu (backtest BİRİNCİL — her zaman raporla). trident_geo = G4'süz
-    # geometri (rejim-bağımsız, RISK_OFF'ta da fırlar); trident_tier1 = G4-dahil teyit.
-    geo = [b["ticker"] for b in a["buy_candidates"] if b.get("trident_geo")]
-    t1 = set(b["ticker"] for b in a["buy_candidates"] if b.get("trident_tier1"))
+    # Trident durumu. geo = advisor G4'süz geometri (D∈20-30 ∧ SIL-derin ∧ BoS);
+    # tier1 = DE G4-dahil. AYRICA DE'nin kendi trident-tag'i (SIL_DEEP/WEEKLY_BIRTH_
+    # ACTIVE/D_PCT_30PLUS) raporlanır — geo 0 olsa da. Buy + bütçe-blocked HEPSİ taranır.
+    _all_cand = a["buy_candidates"] + (a.get("skipped_candidates") or [])
+    geo = [b["ticker"] for b in _all_cand if b.get("trident_geo")]
+    t1 = set(b["ticker"] for b in _all_cand if b.get("trident_tier1"))
     if geo:
         marked = [f"{t}{'✓G4' if t in t1 else ''}" for t in geo[:12]]
         lines.append(f"🔱 <b>Trident geo (G4'süz): {len(geo)} aday</b> — {', '.join(marked)} "
                      "<i>(D∈20-30 ∧ SIL-derin; backtest birincil +6.7; ✓G4=rejim teyitli)</i>")
     else:
-        lines.append("🔱 <i>Trident: bugün geometri adayı yok (D∈20-30 ∧ SIL-derin koşulu).</i>")
+        lines.append("🔱 <i>Trident geo: bugün geometri adayı yok (D∈20-30 ∧ SIL-derin); "
+                     "tier1 G4 rejim-yukarı ister — düşen tapede kapalı.</i>")
+    tagged = [b for b in _all_cand if (b.get("trident_tag") or "").strip()]
+    if tagged:
+        from collections import Counter
+        tcnt = Counter(t.strip() for b in tagged
+                       for t in (b.get("trident_tag") or "").split(";") if t.strip())
+        tag_sum = ", ".join(f"{k}×{v}" for k, v in tcnt.most_common())
+        ex = ", ".join(b["ticker"] for b in tagged[:12])
+        lines.append(f"🔱 <b>DE trident-tag: {len(tagged)} isim</b> ({tag_sum}) — {ex}")
     lines.append("")
 
     # AL adayları
