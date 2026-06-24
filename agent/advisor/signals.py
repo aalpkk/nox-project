@@ -214,8 +214,11 @@ def _parse_de_csv(path, asof, status="OK"):
             "trident_D_pct": d, "trident_sil": s, "trident_bos": b,
             # DE'nin KENDİ trident sınıfı (advisor geo'sundan AYRI): SIL_DEEP/
             # WEEKLY_BIRTH_ACTIVE/D_PCT_30PLUS/TIER1 → raporda gösterilir.
-            "trident_tag": (r.get("trident_tag") or "").strip(),
-            "trident_weekly_family": (r.get("trident_weekly_family") or "").strip(),
+            # NaN-safe: boş hücre pandas'ta NaN(float) → 'NaN or ""' NaN kalır (truthy!)
+            "trident_tag": (str(r.get("trident_tag")).strip()
+                            if pd.notna(r.get("trident_tag")) else ""),
+            "trident_weekly_family": (str(r.get("trident_weekly_family")).strip()
+                                      if pd.notna(r.get("trident_weekly_family")) else ""),
         }
 
     buy_rows, watch_rows = [], []
