@@ -205,6 +205,22 @@ jobs:
           find /tmp/hw_obos -name 'hw_obos_*_scan_*.csv' -exec cp {} output/ \; 2>/dev/null || true
           ls output/hw_obos_*_scan_*.csv 2>/dev/null | head -4 || echo "(HW CSV yok — UNAVAILABLE)"
 
+      # load_cluster3 (agent/advisor/signals.py) paper ledger'ı output/ parquet'inden
+      # okur. Restore'suz checkout'taki commit'li KOPYA (donuk) okunur → 7g eşiği
+      # aşılır, cluster3 pack'i STALE + eski adaylar gösterir. Taze ledger'ı
+      # nox-cluster3.yml'ın accumulate ettiği cluster3-ledger artifact'ından al
+      # (aynı restore deseni; commit'li parquet'in üzerine yazar).
+      - name: Restore cluster3 paper ledger (artifact)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: nox-cluster3.yml
+          branch: main
+          workflow_conclusion: success
+          name: cluster3-ledger
+          path: output/
+          if_no_artifact_found: warn
+
       - name: Run advisor
         if: steps.select_de.outputs.skip != 'true'
         env:
