@@ -107,7 +107,22 @@ class MatriksClient:
             try:
                 resp = requests.post(MCP_URL, headers=headers, json=msg, timeout=_TIMEOUT)
             except Exception as e:
-                print(f"    ⚠️ HTTP hatası: {e}")
+                if attempt < max_retries:
+                    wait = 2 * (2 ** attempt)  # 2, 4, 8 saniye
+                    print(f"    ⚠️ HTTP hatası: {e} — {wait}s sonra retry...")
+                    time.sleep(wait)
+                    continue
+                print(f"    ⚠️ HTTP hatası kalıcı ({max_retries} retry): {e}")
+                return None
+
+            # Geçici sunucu hataları (örn. 500 'Management API service unavailable')
+            if resp.status_code >= 500:
+                if attempt < max_retries:
+                    wait = 2 * (2 ** attempt)  # 2, 4, 8 saniye
+                    print(f"    ⏳ Sunucu hatası (HTTP {resp.status_code}), {wait}s sonra retry...")
+                    time.sleep(wait)
+                    continue
+                print(f"    ⚠️ Sunucu hatası kalıcı (HTTP {resp.status_code}, {max_retries} retry)")
                 return None
 
             if resp.status_code == 429:
@@ -173,7 +188,11 @@ class MatriksClient:
                 "clientInfo": {"name": "nox-agent", "version": "1.0"}
             }
         }
-        self._send(init_msg)
+        resp = self._send(init_msg)
+        if not resp or "result" not in resp:
+            # init başarısız — _initialized False kalsın ki sonraki çağrı handshake'i yeniden denesin
+            print("    ⚠️ Matriks init başarısız — bir sonraki çağrıda tekrar denenecek")
+            return
         # initialized notification
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         self._initialized = True
