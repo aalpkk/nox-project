@@ -206,6 +206,21 @@ jobs:
           find /tmp/hw_obos -name 'hw_obos_*_scan_*.csv' -exec cp {} output/ \; 2>/dev/null || true
           ls output/hw_obos_*_scan_*.csv 2>/dev/null | head -4 || echo "(HW CSV yok — UNAVAILABLE)"
 
+      # Cluster3 forward ledger: canlı ledger nox-cluster3 koşuları arasında
+      # `cluster3-ledger` artifact'ı ile taşınır; repo'daki output/ kopyası
+      # 2026-06-12'de donmuş tarihsel kopyadır. İndirme checkout'taki bayat
+      # parquet'in ÜZERİNE yazar — advisor son (dünkü) ledger'ı okur.
+      - name: Download cluster3 ledger (canlı forward ledger)
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: nox-cluster3.yml
+          branch: main
+          workflow_conclusion: success
+          name: cluster3-ledger
+          path: output/
+          if_no_artifact_found: warn
+
       - name: Run advisor
         if: steps.select_de.outputs.skip != 'true'
         env:
