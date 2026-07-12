@@ -6,13 +6,15 @@ name: Sector Rotation Monitor (PAPER)
 # (fren kuralları dahil, kilitli). Veri: extfeed_index_1h_master (TradingView,
 # nyx_rotation ile TEK-KAYNAK; İŞY 1-seans gecikmesi BIRAKILDI → güncel seansa ulaşır).
 #
-# Takvim: hafta içi 20:30 TR (17:30 UTC) — BIST kapanış 18:00 TR sonrası;
-# extfeed_index_pull --delta o günün kapanışını çeker.
+# Takvim: hafta içi 19:45 TR (16:45 UTC) — BIST kapanış 18:10 TR'den ~1.5s sonra
+# (TV 1h barları seans bitince final). Advisor kapanış zinciri (~20:42 TR)
+# böylece AYNI GÜNÜN barını okur; ayrıca nyx-rotation'ın (20:30 TR) endeks
+# master commit'iyle yarışmaz.
 
 on:
   schedule:
-    # Pzt-Cuma 20:30 TR (UTC+3) = 17:30 UTC
-    - cron: '30 17 * * 1-5'
+    # Pzt-Cuma 19:45 TR (UTC+3) = 16:45 UTC
+    - cron: '45 16 * * 1-5'
   workflow_dispatch:
     inputs:
       digest:
@@ -46,6 +48,13 @@ jobs:
       - name: Refresh index master (TradingView delta — güncel seans)
         # İŞY (1 seans gecikmeli) BIRAKILDI; extfeed_index_1h_master nyx_rotation ile
         # tek-kaynak. Delta-pull başarısızsa git'teki master kullanılır (graceful).
+        # NOT: INTRADAY_* secret'ları şart — 2026-07 öncesi eksikti, pull her koşuda
+        # sessizce düşüp dünkü master'ı kullanıyordu (bar_date hep T-1 kalıyordu).
+        env:
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
         run: python tools/extfeed_index_pull.py --delta-days 10 || echo "::warning::index delta-pull başarısız — git'teki master kullanılacak"
 
       - name: Run monitor
