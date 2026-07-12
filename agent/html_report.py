@@ -713,7 +713,7 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 
     # Scanner base URL'leri (HTML'deki JS linkleri için)
     _nox_base = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
-    _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
+    _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
 
     # ML Güçlü listesi (≥0.50)
     _LIST_SHORT_HTML = {'alsat': 'NYX-Tek', 'tavan': 'NYX9', 'nw': 'NYX-Dip', 'rt': 'NYX-Trend', 'sbt': 'NYX-Krlm'}

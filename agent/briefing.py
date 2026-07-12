@@ -1054,7 +1054,7 @@ _SCANNER_HTML_LINKS = [
     {"name": "RT Haftalık", "file": "regime_transition_weekly.html"},
     {"name": "US Catalyst", "file": "us_catalyst.html"},
     {"name": "Divergence", "file": "nox_divergence.html"},
-    {"name": "Tavan Scanner", "file": "tavan.html", "base_url": "https://aalpkk.github.io/bist-signals"},
+    {"name": "Tavan Scanner", "file": "tavan.html", "base_url": "https://aalpkk.github.io/nox-signals"},
 ]
 
 
@@ -2505,7 +2505,7 @@ def _build_shortlist_message(lists_dict,
     # ── A. ML Destekli Ana Shortlist ──
     # Scanner HTML linkleri
     _nox_base = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
-    _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
+    _bist_base = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
     _SCAN_URL = {
         'alsat': f'{_bist_base}/',
         'tavan': f'{_bist_base}/tavan.html',
@@ -2805,7 +2805,7 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
 
     # Scanner HTML linkleri (tüm bölümlerde kullanılır)
     _nox_base2 = os.environ.get("GH_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
-    _bist_base2 = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/bist-signals").rstrip("/")
+    _bist_base2 = os.environ.get("BIST_PAGES_BASE_URL", "https://aalpkk.github.io/nox-signals").rstrip("/")
     _SCAN_URL2 = {
         'alsat': f'{_bist_base2}/',
         'tavan': f'{_bist_base2}/tavan.html',
