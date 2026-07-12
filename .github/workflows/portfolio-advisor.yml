@@ -10,8 +10,9 @@ name: portfolio advisor
 #      portföy (aalpkk/nox-private, Contents API) + doğrulanmış sinyaller
 #      + korkuluklar → tek Claude çağrısı (hata → deterministik fallback,
 #      rapor HER HALÜKÂRDA Telegram'a gider)
-#   4. advisory/pack/HTML → artifact (30g). Public repoya HİÇBİR portföy
-#      verisi commit edilmez; advisory_latest.json private repoya yazılır.
+#   4. advisory/pack/HTML → artifact (90g) + nox-private advisor_archive/
+#      altına kalıcı arşiv. Public repoya HİÇBİR portföy verisi commit
+#      edilmez; advisory_latest.json private repoya yazılır.
 #
 # Zamanlama: DE v1 ~20:00-21:30 TR'de biter → advisor 19:45 brifinginden
 # sonra düşer (brifing pazar-geneli, advisor kişisel) — doğru sıra.
@@ -246,7 +247,36 @@ jobs:
             output/advisor/advisor_report_${{ steps.select_de.outputs.asof }}.html
             output/advisor/raw_llm_${{ steps.select_de.outputs.asof }}.json
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90
+
+      # Kalıcı arşiv: artifact 90 günde silinir; tarihli kopyalar nox-private'a
+      # commit edilir → süresiz saklanır (public repoya portföy verisi gitmez).
+      # continue-on-error: arşiv hatası advisor koşusunu kırmaz (artifact yedek).
+      - name: Archive advisor outputs to nox-private (kalıcı)
+        if: steps.select_de.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.NOX_PRIVATE_TOKEN }}
+          ASOF: ${{ steps.select_de.outputs.asof }}
+        run: |
+          set -euo pipefail
+          src=output/advisor
+          if ! ls "$src"/advisory_"$ASOF".json >/dev/null 2>&1; then
+            echo "arşivlenecek advisor çıktısı yok — atla"; exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/aalpkk/nox-private.git" /tmp/nox-private
+          dest="/tmp/nox-private/advisor_archive/$ASOF"
+          mkdir -p "$dest"
+          for f in advisory_"$ASOF".json context_pack_"$ASOF".json \
+                   advisor_report_"$ASOF".html raw_llm_"$ASOF".json; do
+            if [ -f "$src/$f" ]; then cp -f "$src/$f" "$dest/"; fi
+          done
+          cd /tmp/nox-private
+          git add advisor_archive
+          git -c user.name="advisor-bot" -c user.email="actions@users.noreply.github.com" \
+            commit -m "advisor arşiv — $ASOF (run ${{ github.run_number }})" \
+            || { echo "değişiklik yok"; exit 0; }
+          git push
 
       - name: Telegram failure alert
         if: failure()
