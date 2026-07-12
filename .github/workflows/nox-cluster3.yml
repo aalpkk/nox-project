@@ -248,6 +248,28 @@ jobs:
       - name: Export daily picks (advisor CSV + HTML)
         run: python tools/ranking_lab_cluster3_daily_export_v0.py --asof "${{ steps.resolve_date.outputs.asof }}"
 
+      # Diğer tarayıcılarla aynı kalıp (core.reports.push_html_to_github →
+      # GH_PAGES_REPO): sabit adres https://aalpkk.github.io/nox-signals/cluster3_scan.html
+      # Eşleşmesiz günlerde de yayınlanır (export boş-gün HTML'i üretir).
+      - name: Publish cluster3 HTML to Pages (nox-signals)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+          ASOF: ${{ steps.resolve_date.outputs.asof }}
+        run: |
+          python - <<'EOF'
+          import os, pathlib, sys
+          sys.path.insert(0, '.')
+          from core.reports import push_html_to_github
+          asof = os.environ['ASOF']
+          p = pathlib.Path(f"output/cluster3_signals_{asof.replace('-', '')}.html")
+          if not p.exists():
+              print(f'{p} yok — yayın atlandı'); raise SystemExit(0)
+          url = push_html_to_github(p.read_text(encoding='utf-8'), 'cluster3_scan.html', asof)
+          print(f'yayınlandı: {url}')
+          EOF
+
       - name: Upload cluster3 signals (artifact → scanner_reader)
         uses: actions/upload-artifact@v4
         with:
