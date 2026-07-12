@@ -167,6 +167,11 @@ jobs:
           path: output/
           if_no_artifact_found: fail
 
+      # search_artifacts: true ŞART — gate-skip koşuları da "success" bittiği için
+      # yalnızca en-son-koşuya bakmak artifact'sız boş koşuya denk gelebiliyor.
+      # 2026-07-09 RESET OLAYI: 17:15 DE dispatch FAIL → cluster3 gate-skip boş
+      # success koşusu → restore "not found" (warn) → scan donmuş repo kopyasını
+      # yeni ledger olarak yükledi, 13 Haz–8 Tem forward birikimi zincirden sildi.
       - name: Restore previous cluster3 paper ledger (best-effort)
         uses: dawidd6/action-download-artifact@v6
         with:
@@ -174,8 +179,33 @@ jobs:
           workflow_conclusion: success
           branch: main
           name: cluster3-ledger
-          path: output/
+          path: /tmp/prev_ledger
+          search_artifacts: true
           if_no_artifact_found: warn
+
+      # Ledger guard: artifact ile repo kopyasından hangisi DAHA YENİ ise onu
+      # kullan — restore boş geçse bile birikim asla geriye gidemez (self-heal).
+      - name: Keep newer ledger (artifact vs repo copy)
+        run: |
+          python - <<'EOF'
+          import pathlib, shutil
+          import pandas as pd
+          repo = pathlib.Path('output/ranking_lab_cluster3_paper_snapshots_v0.parquet')
+          prev = pathlib.Path('/tmp/prev_ledger/ranking_lab_cluster3_paper_snapshots_v0.parquet')
+          def last(p):
+              try:
+                  return str(pd.read_parquet(p, columns=['snapshot_run_at'])['snapshot_run_at'].max())
+              except Exception:
+                  return ''
+          r = last(repo) if repo.exists() else ''
+          a = last(prev) if prev.exists() else ''
+          print(f"repo copy last append: {r or '-'} | artifact last append: {a or '-'}")
+          if a and a >= r:
+              shutil.copy(prev, repo)
+              print('-> artifact ledger kullanildi (daha yeni/esit)')
+          else:
+              print('-> repo kopyasi kullanildi (daha yeni ya da artifact yok)')
+          EOF
 
       - name: Verify required inputs present (fail-fast, no fallback)
         run: |
