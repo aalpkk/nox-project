@@ -124,8 +124,8 @@ def fetch_all_html_history():
     repos = {
         'nw': ('aalpkk/nox-signals', 'nox_v3_weekly.html'),
         'rt': ('aalpkk/nox-signals', 'regime_transition.html'),
-        'alsat': ('aalpkk/bist-signals', 'index.html'),
-        'tavan': ('aalpkk/bist-signals', 'tavan.html'),
+        'alsat': ('aalpkk/nox-signals', 'index.html'),
+        'tavan': ('aalpkk/nox-signals', 'tavan.html'),
     }
 
     # Her kaynak için commit listesi çek

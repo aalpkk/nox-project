@@ -8,8 +8,9 @@ Veri kaynakları:
   - nox-signals/nox_v3_weekly.html      → NW haftalık pivot AL/SAT
   - nox-signals/regime_transition.html   → RT günlük rejim geçiş
   - nox-signals/regime_transition_weekly.html → RT haftalık (badge tespiti için)
-  - bist-signals/tavan.html             → Tavan serisi
-  - bist-signals/ (index.html)          → AL/SAT günlük
+  - nox-signals/tavan.html              → Tavan serisi
+  - nox-signals/ (index.html)           → AL/SAT günlük
+  (eski aalpkk/bist-signals repo'su 2026-06-22'de donduruldu → yönlendirme)
 """
 import json
 import os
@@ -22,7 +23,7 @@ from markets.bist.regime_transition import classify_volume_quality, is_donus_tra
 
 # -- URL Yapılandırması --
 _NOX_BASE = "https://aalpkk.github.io/nox-signals"
-_BIST_BASE = "https://aalpkk.github.io/bist-signals"
+_BIST_BASE = "https://aalpkk.github.io/nox-signals"
 
 _HTML_SOURCES = {
     'nw': f'{_NOX_BASE}/nox_v3_weekly.html',

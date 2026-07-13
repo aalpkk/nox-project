@@ -48,7 +48,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
           GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
-          BIST_PAGES_BASE_URL: "https://aalpkk.github.io/bist-signals"
+          BIST_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
           ML_SCORING_ENABLED: "1"
           BREAKOUT_ML_ENABLED: "1"
           MATRIKS_ENABLED: "0"  # GEÇİCİ: Matriks 503/401 aralıklı — servis stabilleşince restore
@@ -66,7 +66,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
           GH_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
-          BIST_PAGES_BASE_URL: "https://aalpkk.github.io/bist-signals"
+          BIST_PAGES_BASE_URL: "https://aalpkk.github.io/nox-signals"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ML_SCORING_ENABLED: "1"
           BREAKOUT_ML_ENABLED: "1"
