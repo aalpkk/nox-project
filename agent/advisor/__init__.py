@@ -121,8 +121,9 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
     advisory["takas"] = takas  # pozisyon+aday takas özeti + Matriks durum (render banner)
     advisory["inputs_status"]["takas"] = takas["status"]
 
-    # 6b) HAFTALIK-LİDER çakışma (mb_scanner_events parquet'ten, DE CSV'de görünmez):
-    #     son kapanmış haftalık barda mb_1w above + aynı hafta günlük/5h above.
+    # 6b) HAFTALIK-LİDER lead-lag (mb_scanner_events parquet'ten, DE CSV'de görünmez):
+    #     önceki tamamlanmış haftalık barda mb_1w above (LEAD) → içinde bulunulan
+    #     (sonraki) hafta günlük/5h above (LAG). Aynı hafta çakışması DEĞİL.
     #     Adayları zenginleştir (1w bileşenini mtf_birth'e ekle) + aday-DIŞI
     #     çakışmaları ayrı 'haftalık-lider izleme' listesine koy (al kararı olmasa da raporla).
     try:

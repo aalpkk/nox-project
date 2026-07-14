@@ -333,13 +333,14 @@ def render_telegram_tr(advisory):
         lines.append(f"⛔ Toplam elenen: {len(sk)} aday")
     lines.append("")
 
-    # HAFTALIK-LİDER çakışma — aday-DIŞI (al kararı değil, bilgi): son kapanmış
-    # haftalık barda mb_1w above + aynı hafta günlük/5h above. DE adayı olmasa da raporla.
+    # HAFTALIK-LİDER lead-lag — aday-DIŞI (al kararı değil, bilgi): önceki tamamlanmış
+    # haftalık barda mb_1w above → içinde bulunulan (sonraki) hafta günlük/5h above.
+    # DE adayı olmasa da raporla.
     wlw = a.get("weekly_lead_watch") or []
     if wlw:
         bar = a.get("weekly_lead_bar") or "?"
-        lines.append(f"📐 <b>Haftalık-lider çakışma</b> <i>(1w birth {bar} + günlük/5h, "
-                     f"aday-dışı, bilgi)</i>")
+        lines.append(f"📐 <b>Haftalık-lider çakışma</b> <i>(1w lider {bar} → sonraki hafta "
+                     f"günlük/5h, aday-dışı, bilgi)</i>")
         for w in wlw:
             tf = "+".join(w.get("tf") or [])
             lines.append(f"• <b>{w['ticker']}</b> 1w+{tf}")
@@ -596,7 +597,9 @@ def render_html(advisory):
         macro_html = _sec("🌍 Makro & Rejim", f"{rdp_html}{rot_html}{hw_html}{macro_table}",
                           sub="trend + dipten/tepeden dönüş · bilgi")
 
-    # haftalık-lider çakışma (aday-dışı) — HTML bölümü (NOX temalı)
+    # haftalık-lider lead-lag (aday-dışı) — HTML bölümü (NOX temalı)
+    # LEAD: önceki tamamlanmış haftalık barda mb_1w above → LAG: içinde bulunulan
+    # (sonraki) hafta günlük/5h above. DE adayı olmasa da raporla.
     wlw = a.get("weekly_lead_watch") or []
     weekly_lead_html = ""
     if wlw:
@@ -607,8 +610,9 @@ def render_html(advisory):
             for w in wlw)
         weekly_lead_html = _sec(
             "📐 Haftalık-lider çakışma",
-            f"<p class='note'>Son kapanmış haftalık barda (<b>{bar}</b>) <code>mb_1w above_mb_birth</code> + "
-            f"aynı hafta günlük/5h <code>above_mb_birth</code>. DE adayı DEĞİL — çapraz-TF yapı hizalanması.</p>"
+            f"<p class='note'>Haftalık LİDER barda (<b>{bar}</b>) <code>mb_1w above_mb_birth</code> → "
+            f"İÇİNDE BULUNULAN (sonraki) hafta günlük/5h <code>above_mb_birth</code>. "
+            f"DE adayı DEĞİL — çapraz-TF lead-lag yapı hizalanması.</p>"
             f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Çakışan TF</th></tr></thead>"
             f"<tbody>{wl_rows}</tbody></table></div>",
             sub="aday-dışı · bilgi")
