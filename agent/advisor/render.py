@@ -1,7 +1,9 @@
 """
 NOX Advisor — rapor render: Telegram (HTML parse mode) + bağımsız HTML dosyası.
 
-Gizlilik: HTML public GH Pages'e GİTMEZ — Telegram'a document olarak gönderilir.
+Teslimat: HTML hem Telegram'a document olarak gönderilir HEM DE public GH Pages'e
+yayınlanır (kullanıcı onayı 2026-07-14 — rapor portföyü/pozisyonları içerir,
+yayın bilinçli açıldı; publish_html_to_pages / GH_PAGES_REPO).
 """
 import os
 from pathlib import Path

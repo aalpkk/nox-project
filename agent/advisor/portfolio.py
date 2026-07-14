@@ -23,6 +23,8 @@ load_dotenv()
 DEFAULT_REPO_PATH = os.environ.get("NOX_PORTFOLIO_REPO_PATH", "portfolio/portfolio.json")
 LOCAL_FALLBACK = Path(__file__).resolve().parent.parent / "portfolio.json"
 ADVISORY_LATEST_PATH = "advisor/advisory_latest.json"
+# Public GH Pages advisor HTML yolu (kullanıcı onayıyla — rapor portföyü içerir).
+PAGES_HTML_DIR = "advisor"
 
 DEFAULT_SETTINGS = {
     "max_position_pct": 15.0,
@@ -258,6 +260,58 @@ def publish_advisory_latest(advisory):
     except Exception as e:
         print(f"⚠️ advisory_latest publish hatası: {e}")
         return None
+
+
+def _gh_put_raw(repo, path, content_bytes, message):
+    """Ham (JSON olmayan) içeriği repoya yaz — mevcut sha varsa üstüne."""
+    api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    sha = None
+    try:
+        r = requests.get(api_url, headers=_gh_headers(), timeout=15)
+        if r.status_code == 200:
+            sha = r.json().get("sha")
+    except Exception:
+        pass
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content_bytes).decode("ascii"),
+        "branch": "main",
+    }
+    if sha:
+        payload["sha"] = sha
+    resp = requests.put(api_url, headers=_gh_headers(), json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["commit"]["sha"]
+
+
+def publish_html_to_pages(html_path, asof):
+    """Advisor HTML raporunu public GH Pages reposuna (GH_PAGES_REPO) yaz.
+
+    ⚠️ Rapor portföyü (pozisyon/adet/maliyet/PnL/nakit) içerir; bu yayın
+    KULLANICI ONAYIYLA açıldı (2026-07-14). GH_PAGES_REPO tanımlı değilse
+    sessizce atlar (dev/gizli mod). {asof}'lu dosya + index.html (en son) yazar."""
+    repo = os.environ.get("GH_PAGES_REPO", "")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+    if not repo or not token:
+        return None
+    try:
+        html_bytes = Path(html_path).read_bytes()
+    except Exception as e:
+        print(f"⚠️ advisor HTML okunamadı ({html_path}): {e}")
+        return None
+    urls = []
+    for fn in (f"{PAGES_HTML_DIR}/advisor_report_{asof}.html",
+               f"{PAGES_HTML_DIR}/index.html"):
+        try:
+            _gh_put_raw(repo, fn, html_bytes, f"advisor rapor {asof}")
+            owner, name = repo.split("/")
+            urls.append(f"https://{owner}.github.io/{name}/{fn}")
+        except Exception as e:
+            print(f"⚠️ advisor HTML GH Pages publish hatası ({fn}): {e}")
+    if urls:
+        print(f"✅ advisor HTML yayınlandı: {urls[0]}")
+        return urls[0]
+    return None
 
 
 def fetch_advisory_latest():
