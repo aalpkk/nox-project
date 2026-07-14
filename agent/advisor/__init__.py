@@ -302,5 +302,9 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         send_telegram_document(str(html_path))
     if publish_latest:
         publish_advisory_latest(advisory)   # bot /danis bunu okur
+        # HTML'i public GH Pages'e de yayınla (kullanıcı onayı 2026-07-14;
+        # rapor portföyü içerir — GH_PAGES_REPO tanımlıysa çalışır).
+        from agent.advisor.portfolio import publish_html_to_pages
+        publish_html_to_pages(html_path, advisory.get("asof", "latest"))
         scorecard.update_scorecard(score_entry)
     return advisory
