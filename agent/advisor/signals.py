@@ -118,13 +118,16 @@ def mb_birth_xtf(asof):
     """Çapraz-TF above_mb TAZE çakışması — DE CSV'den DEĞİL, mb_scanner_events
     parquet'lerinden (point-in-time, event_bar_date ≤ asof).
 
-    HAFTALIK-LİDER çakışma (kullanıcı isteği): her TF'de mb above_mb_birth'ün
-    **SON BARDA + TAZE** olması — son KAPANMIŞ haftalık barda mb_1w above + SON
-    günlük/5h barda mb_1d/mb_5h above. "Taze" = ticker'ın o TF'deki EN SON olayı
-    above_mb_birth (sonradan mit_touch ile bölgeye geri DÜŞMEMİŞ) VE o TF'nin SON
-    barında. Eski 4-günlük pencere KULLANILMAZ — doğup geri düşen sinyali saymaz.
-    DE watchlist haftalık STATE'i aday-satırı olarak emit etmez → DE CSV'de GÖRÜNMEZ;
-    parquet'ten kurtarılır (cache'li).
+    HAFTALIK-LİDER LEAD-LAG (kullanıcı isteği): haftalık LİDER ÖNCE doğar, kısa-TF
+    onu SONRAKİ (içinde bulunulan) haftada İZLER — aynı hafta çakışması DEĞİL:
+      (LEAD) içinde bulunulan haftanın ÖNCESİNDEKİ tamamlanmış haftalık barda
+             (W-FRI, asof'tan STRICT önceki Cuma) mb_1w above_mb_birth + TAZE.
+      (LAG)  günlük/5h mb_1d/mb_5h above_mb_birth + TAZE, olay barı LİDER haftalık
+             bardan STRICT SONRA (içinde bulunulan haftada).
+    "Taze" = ticker'ın o TF'deki EN SON olayı above_mb_birth (sonradan mit_touch ile
+    bölgeye geri DÜŞMEMİŞ) VE o TF'nin SON barında. Eski 4-günlük pencere KULLANILMAZ
+    — doğup geri düşen sinyali saymaz. DE watchlist haftalık STATE'i aday-satırı
+    olarak emit etmez → DE CSV'de GÖRÜNMEZ; parquet'ten kurtarılır (cache'li).
 
     NOT: parquet son bar = master-data tarihi (örn. Cuma 06-12). asof Pazartesi
     olsa da hafta-sonu BIST kapalı; canlı gün-içi (yeni iş günü) barlar bu veride
@@ -159,25 +162,35 @@ def mb_birth_xtf(asof):
                        (latest["event_type"] == "above_mb_birth")]
         return set(fresh["tkr"]), last_bar
 
-    # KAPANMIŞ haftalık bar (W-FRI): asof'un HAFTASI oluşuyor olabilir → provizyonel
-    # Cuma'yı düş (Pzt-Per → önceki Cuma; Cuma/hafta-sonu → o hafta).
+    # LEAD haftalık bar (W-FRI): içinde bulunulan haftanın ÖNCESİNDEKİ tamamlanmış
+    # hafta = asof'tan STRICT önceki Cuma. Cuma günü de bir önceki Cuma'ya iner (`or 7`)
+    # ki haftalık LEAD ile kısa-TF LAG ardışık/farklı haftalarda olsun (aynı hafta ≠ lead-lag).
     wd = asof_ts.weekday()
-    days_since_fri = (wd - 4) % 7
-    last_closed_fri = (asof_ts - pd.Timedelta(days=days_since_fri)).normalize()
+    days_since_fri = (wd - 4) % 7 or 7
+    lead_fri = (asof_ts - pd.Timedelta(days=days_since_fri)).normalize()
 
     try:
-        w_set, w_bar = _fresh_above("1w", last_closed_fri)
-        d_set, _ = _fresh_above("1d", asof_ts)
-        h_set, _ = _fresh_above("5h", asof_ts)
+        w_set, w_bar = _fresh_above("1w", lead_fri)
+        d_set, d_bar = _fresh_above("1d", asof_ts)
+        h_set, h_bar = _fresh_above("5h", asof_ts)
+        # LAG kapısı: kısa-TF TAZE doğum barı, haftalık LİDER barından (Cuma, period-end)
+        # STRICT SONRA olmalı → içinde bulunulan haftada. Haftalıkla aynı/önceki bar
+        # lead-lag saymaz. (d_bar/h_bar = o TF'nin SON barı; tüm taze ticker'lar o barda
+        # olduğundan tek skaler karşılaştırma yeterli.)
+        if w_bar is not None:
+            if d_bar is None or d_bar <= w_bar:
+                d_set = set()
+            if h_bar is None or h_bar <= w_bar:
+                h_set = set()
         if not w_set or w_bar is None:
             out = {"weekly_bar": str(w_bar.date()) if w_bar is not None else None,
                    "per_ticker": {}}
         else:
             per = {}
-            for t in w_set:                               # haftalık TAZE above şart
+            for t in w_set:                               # haftalık TAZE above = LEAD şart
                 tf = (["1d"] if t in d_set else []) + (["5h"] if t in h_set else [])
                 per[t] = {"weekly_bar": str(pd.Timestamp(w_bar).date()),
-                          "tf": tf, "weekly_lead": bool(tf)}  # + 1d|5h TAZE
+                          "tf": tf, "weekly_lead": bool(tf)}  # + 1d|5h LAG (sonraki hafta)
             out = {"weekly_bar": str(pd.Timestamp(w_bar).date()), "per_ticker": per}
     except Exception as e:
         out = {"weekly_bar": None, "per_ticker": {}, "error": str(e)}
