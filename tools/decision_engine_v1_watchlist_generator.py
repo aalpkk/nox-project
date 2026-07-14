@@ -80,12 +80,16 @@ SURFACED_TRIDENT_COLS = (
 TRIDENT_ELIGIBLE_SETUP_KIND = "above_mb_birth"
 TRIDENT_ELIGIBLE_SOURCE = "mb_scanner"
 
-# PR-DE-3.17: cross-timeframe weekly confluence
-# A fresh mb_scanner above_mb_birth event on a sub-weekly family (mb_5h /
-# mb_1d / bb_5h / bb_1d) is "weekly-confluent" iff the same ticker also has
-# a mb_1w or bb_1w above_mb_birth event whose weekly bar is the LAST FULLY
-# COMPLETED week prior to asof (Friday-anchored, range (prev_Fri, this_Fri]).
-# Strict: only the immediately prior completed week — no wider lookback.
+# PR-DE-3.17 (+ lead-lag tightening): cross-timeframe weekly confluence.
+# LEAD-LAG semantics — the weekly leader is born FIRST, the sub-weekly follows
+# THE WEEK AFTER. A sub-weekly (mb_5h / mb_1d / bb_5h / bb_1d) above_mb_birth is
+# "weekly-confluent" iff BOTH hold for the same ticker:
+#   (LEAD) a mb_1w / bb_1w above_mb_birth whose weekly bar is the LAST FULLY
+#          COMPLETED week prior to asof (Friday-anchored, range (prev_Fri, this_Fri]).
+#   (LAG)  the sub-weekly above_mb_birth's OWN event_bar_date falls in the
+#          CURRENT (containing) week: event_bar_date ∈ (_prior_completed_friday, asof].
+# The LAG gate rejects same-week (coincident) births — only genuine next-week
+# follow-through counts. Strict: immediately prior completed week, no wider lookback.
 WEEKLY_CONFLUENCE_WEEKLY_FAMILIES = frozenset({"mb_1w", "bb_1w"})
 WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES = frozenset({"mb_5h", "mb_1d", "bb_5h", "bb_1d"})
 WEEKLY_CONFLUENCE_TAG = "WEEKLY_BIRTH_ACTIVE"
@@ -359,6 +363,49 @@ def _load_weekly_birth_tickers(asof: str) -> dict[str, list[str]]:
     return {tk: sorted(fams) for tk, fams in fams_by_ticker.items()}
 
 
+def _load_current_week_subweekly_births(asof: str) -> set:
+    """Lead-lag LAG gate: return {(ticker, family_short)} for every sub-weekly
+    (mb_5h / mb_1d / bb_5h / bb_1d) above_mb_birth whose OWN event_bar_date falls
+    in the CURRENT (containing) week — strictly after the LEAD weekly Friday and
+    at-or-before asof: event_bar_date ∈ (_prior_completed_friday(asof), asof].
+
+    This is what separates a genuine lead-lag follow-through (sub-weekly birth the
+    week AFTER the weekly leader) from a same-week coincidence. Reads only ALLOWED
+    columns (ticker, family, event_bar_date) — leak guard preserved. Returns an
+    empty set silently when the probe is absent.
+    """
+    if not TRIDENT_PROBE_PATH.exists():
+        return set()
+    lower = _prior_completed_friday(asof)  # exclusive lower bound (LEAD weekly Fri)
+    upper = str(asof)                       # inclusive upper bound (asof)
+    try:
+        table = pq.read_table(
+            TRIDENT_PROBE_PATH,
+            columns=["ticker", "family", "event_bar_date"],
+        )
+    except Exception as exc:
+        print(
+            f"[watchlist_generator] WARN: trident probe read (lag gate) failed "
+            f"({TRIDENT_PROBE_PATH.relative_to(ROOT)}): {exc} — confluence skipped",
+            flush=True,
+        )
+        return set()
+
+    out: set = set()
+    for r in table.to_pylist():
+        fam = r.get("family") or ""
+        if fam not in WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES:
+            continue
+        ed = r.get("event_bar_date")
+        ed_str = str(ed)[:10] if ed is not None else ""
+        if not ed_str or not (lower < ed_str <= upper):
+            continue
+        tk = r.get("ticker") or ""
+        if tk:
+            out.add((tk, fam))
+    return out
+
+
 def _compute_xu100_regime(asof: str) -> dict:
     """PR-DE-3.18 (G4): read xu100_extfeed_daily.parquet, compute ret_20d at
     the most-recent close bar at-or-before asof. Returns a state dict:
@@ -572,12 +619,16 @@ def _tier1_lookup(
 
 def _weekly_confluence_lookup(
     weekly_birth_tickers: dict[str, list[str]],
+    current_week_subweekly_births: set,
     source: str,
     family: str,
     ticker: str,
 ) -> str:
-    """Return ';'-joined weekly family list iff today's event is eligible
-    AND its ticker has a prior-week weekly birth. Empty string otherwise.
+    """Return ';'-joined weekly family list iff this row is a genuine LEAD-LAG
+    weekly confluence: the ticker has a prior-completed-week weekly birth (LEAD)
+    AND this eligible sub-weekly family's own birth falls in the CURRENT week
+    (LAG), i.e. (ticker, family_short) ∈ current_week_subweekly_births.
+    Empty string otherwise. The LAG gate rejects same-week (coincident) births.
     """
     if source != TRIDENT_ELIGIBLE_SOURCE:
         return ""
@@ -588,6 +639,9 @@ def _weekly_confluence_lookup(
     if setup_kind != TRIDENT_ELIGIBLE_SETUP_KIND:
         return ""
     if family_short not in WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES:
+        return ""
+    # LAG gate: the sub-weekly birth must fall in the current (containing) week.
+    if (ticker, family_short) not in current_week_subweekly_births:
         return ""
     fams = weekly_birth_tickers.get(ticker)
     if not fams:
@@ -671,6 +725,7 @@ def main():
     degraded = _read_degraded_state()
     trident_attachments = _load_trident_attachments(asof)
     weekly_birth_tickers = _load_weekly_birth_tickers(asof)
+    current_week_subweekly_births = _load_current_week_subweekly_births(asof)
     prior_friday = _prior_completed_friday(asof)
     xu100_state = _compute_xu100_regime(asof)
     tier1_keys, tier1_summary = _load_tier1_eligible_keys(asof, xu100_state)
@@ -693,6 +748,7 @@ def main():
             trident_attach_count += 1
         weekly_fam = _weekly_confluence_lookup(
             weekly_birth_tickers,
+            current_week_subweekly_births,
             r["source"],
             r["family"],
             r["ticker"],
@@ -993,10 +1049,12 @@ def main():
             f"(source=mb_scanner + setup_kind=above_mb_birth eligible cohort)"
         )
         print(
-            f"weekly confluence: {weekly_confluence_count} rows tagged "
-            f"{WEEKLY_CONFLUENCE_TAG} (prior_completed_friday={prior_friday}; "
+            f"weekly confluence (lead-lag): {weekly_confluence_count} rows tagged "
+            f"{WEEKLY_CONFLUENCE_TAG} (LEAD weekly bar={prior_friday}; "
+            f"LAG current-week window=({prior_friday}, {asof}]; "
             f"eligible_fresh_families={sorted(WEEKLY_CONFLUENCE_ELIGIBLE_FAMILIES)}; "
-            f"weekly_birth_tickers={len(weekly_birth_tickers)})"
+            f"weekly_birth_tickers={len(weekly_birth_tickers)}; "
+            f"current_week_subweekly_births={len(current_week_subweekly_births)})"
         )
         sil_t33_str = (
             f"{tier1_summary['sil_t33']:.2f}"
