@@ -390,6 +390,21 @@ def main() -> int:
         if not ext_step.ok:
             failures.append(f"extfeed_delta_pull failed: {ext_step.detail}")
 
+        if not failures:
+            # Gap-heal: delta_pull yalnız son ~4 günü çeker; zincir uzun süre
+            # koşamazsa (2026-04-25→06-16 vakası: 606/607 hisse ~54 gün boş
+            # kaldı, resample deliği köprüledi → hayalet weekly-birth'ler)
+            # geçmiş delik kendiliğinden DOLMAZ. Bu adım son 90 günde ≥14
+            # günlük deliği tespit edip kaynaktan geri doldurur; delik yoksa
+            # saniyeler içinde no-op.
+            heal_step = run_subprocess(
+                [sys.executable, "tools/extfeed_gap_backfill.py"],
+                step_name="extfeed_gap_heal",
+            )
+            steps.append(heal_step)
+            if not heal_step.ok:
+                failures.append(f"extfeed_gap_heal failed: {heal_step.detail}")
+
         if args.mode == "close" and not failures:
             # --source extfeed: günlük delta extfeed 1h master'dan resample edilir
             # (tek-kaynak). extfeed_delta_pull yukarıda zaten koştu → master taze.
