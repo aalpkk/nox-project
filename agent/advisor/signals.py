@@ -118,6 +118,12 @@ def mb_birth_xtf(asof):
     """Çapraz-TF above_mb TAZE çakışması — DE CSV'den DEĞİL, mb_scanner_events
     parquet'lerinden (point-in-time, event_bar_date ≤ asof).
 
+    BoS/CHoCH katmanı (2026-07-16): haftalık LEAD 4 aileden okunur —
+    mit=mitigation (mb: LL→LH→HL→HH) / brk=breaker (bb: dip-altı süpürme)
+    × 📐U uzun (n=2) / 📐K kısa (n=1, 1-2 hafta erken görünür). Her taze
+    doğuma kırılım (HH/BoS close) tarihi eklenir; parquet son barı cap'ten
+    >10 gün eskiyse aile bayat sayılır (uyarı + taze yok).
+
     HAFTALIK-LİDER LEAD-LAG (kullanıcı isteği): haftalık LİDER ÖNCE doğar, kısa-TF
     onu SONRAKİ (içinde bulunulan) haftada İZLER — aynı hafta çakışması DEĞİL:
       (LEAD) içinde bulunulan haftanın ÖNCESİNDEKİ tamamlanmış haftalık barda
@@ -143,24 +149,43 @@ def mb_birth_xtf(asof):
 
     asof_ts = pd.Timestamp(asof)
 
-    def _fresh_above(tf, bar_cap):
-        """(set(taze-above ticker), son_bar) — ticker'ın EN SON olayı bar_cap'a
-        kadar above_mb_birth VE o TF'nin SON barında ise TAZE sayılır."""
-        p = OUT_DIR / f"mb_scanner_events_mb_{tf}.parquet"
+    # BoS/CHoCH sınıflandırması: mode mb = MITIGATION (LL→LH→HL→HH,
+    # failed-bounce), bb = BREAKER (ilk dibin ALTINA süpürüp geri alma:
+    # HL→LH→LL→HH okuma). scale: uzun n=2 (📐U) / kısa n=1 (📐K, ±1 bar
+    # fraktal → yapı 1-2 bar ERKEN görünür; AYDEM 07-03 vs 07-10 dersi).
+    _WEEKLY_FAMS = (("mb_1w", "mit", "U"), ("mb_1w_s", "mit", "K"),
+                    ("bb_1w", "brk", "U"), ("bb_1w_s", "brk", "K"))
+    _LAG_FAMS = {"1d": ("mb_1d", "mb_1d_s", "bb_1d", "bb_1d_s"),
+                 "5h": ("mb_5h", "mb_5h_s", "bb_5h", "bb_5h_s")}
+    _STALE_MAX_DAYS = 10  # mutlak takvim kapısı (B): parquet son barı bundan
+    #                       eskiyse "taze" sayma — bayat-parquet hayaletlerini keser.
+
+    def _fresh_above(fam, bar_cap, warnings):
+        """({tkr: kırılım_HH_tarihi}, son_bar) — ticker'ın EN SON olayı bar_cap'a
+        kadar above_mb_birth VE o ailenin SON barında ise TAZE. Bayatlık kapısı:
+        son bar bar_cap'tan >_STALE_MAX_DAYS eskiyse aile atlanır + uyarı."""
+        p = OUT_DIR / f"mb_scanner_events_{fam}.parquet"
         if not p.exists():
-            return set(), None
-        df = pd.read_parquet(p, columns=["ticker", "event_type", "event_bar_date"])
+            return {}, None
+        cols = ["ticker", "event_type", "event_bar_date", "hh_bar_date"]
+        df = pd.read_parquet(p, columns=cols)
         df["d"] = pd.to_datetime(df["event_bar_date"])
         df = df[df["d"] <= bar_cap].copy()
         if df.empty:
-            return set(), None
+            return {}, None
         df["tkr"] = df["ticker"].astype(str).str.upper()
         last_bar = df["d"].max()
+        if (pd.Timestamp(bar_cap).normalize() - last_bar.normalize()).days > _STALE_MAX_DAYS:
+            warnings.append(f"⚠️ bayat mb-events: {fam} son bar "
+                            f"{last_bar.date()} (cap {pd.Timestamp(bar_cap).date()})")
+            return {}, last_bar
         # ticker başına EN SON olay; above_mb_birth VE son barda mı?
         latest = df.sort_values("d").groupby("tkr").tail(1)
         fresh = latest[(latest["d"] == last_bar) &
                        (latest["event_type"] == "above_mb_birth")]
-        return set(fresh["tkr"]), last_bar
+        hh = {r.tkr: str(pd.Timestamp(r.hh_bar_date).date())
+              for r in fresh.itertuples()}
+        return hh, last_bar
 
     # LEAD haftalık bar (W-FRI): içinde bulunulan haftanın ÖNCESİNDEKİ tamamlanmış
     # hafta = asof'tan STRICT önceki Cuma. Cuma günü de bir önceki Cuma'ya iner (`or 7`)
@@ -170,30 +195,47 @@ def mb_birth_xtf(asof):
     lead_fri = (asof_ts - pd.Timedelta(days=days_since_fri)).normalize()
 
     try:
-        w_set, w_bar = _fresh_above("1w", lead_fri)
-        d_set, d_bar = _fresh_above("1d", asof_ts)
-        h_set, h_bar = _fresh_above("5h", asof_ts)
-        # LAG kapısı: kısa-TF TAZE doğum barı, haftalık LİDER barından (Cuma, period-end)
-        # STRICT SONRA olmalı → içinde bulunulan haftada. Haftalıkla aynı/önceki bar
-        # lead-lag saymaz. (d_bar/h_bar = o TF'nin SON barı; tüm taze ticker'lar o barda
-        # olduğundan tek skaler karşılaştırma yeterli.)
-        if w_bar is not None:
-            if d_bar is None or d_bar <= w_bar:
-                d_set = set()
-            if h_bar is None or h_bar <= w_bar:
-                h_set = set()
-        if not w_set or w_bar is None:
+        warnings = []
+        # --- haftalık LEAD: mit/brk × uzun/kısa (4 aile)
+        w_hits = {}   # tkr -> list[(mode, scale, hh_date)]
+        w_bars = []
+        for fam, mode, scale in _WEEKLY_FAMS:
+            hh_map, fam_bar = _fresh_above(fam, lead_fri, warnings)
+            if fam_bar is not None:
+                w_bars.append(fam_bar)
+            for t, hh in hh_map.items():
+                w_hits.setdefault(t, []).append((mode, scale, hh))
+        w_bar = max(w_bars) if w_bars else None
+
+        # --- kısa-TF LAG (mit+brk, uzun+kısa birleşimi): bar haftalık LİDER
+        # barından STRICT SONRA olmalı (içinde bulunulan hafta).
+        lag_sets = {}
+        for tf, fams in _LAG_FAMS.items():
+            s = set()
+            for fam in fams:
+                hh_map, fam_bar = _fresh_above(fam, asof_ts, warnings)
+                if w_bar is not None and fam_bar is not None and fam_bar > w_bar:
+                    s |= set(hh_map)
+            lag_sets[tf] = s
+
+        if not w_hits or w_bar is None:
             out = {"weekly_bar": str(w_bar.date()) if w_bar is not None else None,
-                   "per_ticker": {}}
+                   "per_ticker": {}, "warnings": warnings}
         else:
             per = {}
-            for t in w_set:                               # haftalık TAZE above = LEAD şart
-                tf = (["1d"] if t in d_set else []) + (["5h"] if t in h_set else [])
+            for t, hits in w_hits.items():                # haftalık TAZE above = LEAD şart
+                tf = ([tfk for tfk in ("1d", "5h") if t in lag_sets[tfk]])
+                # rozet: "mit📐K kırılım07-03" (aile başına; aynı ticker'da
+                # birden çok aile → '+' ile birleşir)
+                badge = "+".join(f"{m}📐{s} kırılım{h[5:]}" for m, s, h in hits)
                 per[t] = {"weekly_bar": str(pd.Timestamp(w_bar).date()),
-                          "tf": tf, "weekly_lead": bool(tf)}  # + 1d|5h LAG (sonraki hafta)
-            out = {"weekly_bar": str(pd.Timestamp(w_bar).date()), "per_ticker": per}
+                          "tf": tf, "weekly_lead": bool(tf),   # + 1d|5h LAG (sonraki hafta)
+                          "families": [f"{m}/{s}" for m, s, _ in hits],
+                          "badge": badge}
+            out = {"weekly_bar": str(pd.Timestamp(w_bar).date()), "per_ticker": per,
+                   "warnings": warnings}
     except Exception as e:
-        out = {"weekly_bar": None, "per_ticker": {}, "error": str(e)}
+        out = {"weekly_bar": None, "per_ticker": {}, "warnings": [], "error": str(e)}
 
     mb_birth_xtf._cache[asof] = out
     return out

@@ -739,6 +739,14 @@ jobs:
             output/mb_scanner_events_bb_1d.parquet
             output/mb_scanner_events_bb_1w.parquet
             output/mb_scanner_events_bb_1M.parquet
+            output/mb_scanner_events_mb_5h_s.parquet
+            output/mb_scanner_events_mb_1d_s.parquet
+            output/mb_scanner_events_mb_1w_s.parquet
+            output/mb_scanner_events_mb_1M_s.parquet
+            output/mb_scanner_events_bb_5h_s.parquet
+            output/mb_scanner_events_bb_1d_s.parquet
+            output/mb_scanner_events_bb_1w_s.parquet
+            output/mb_scanner_events_bb_1M_s.parquet
             output/horizontal_base_event_v1.parquet
             output/paper_execution_v0_trades.parquet
             output/paper_execution_v0_trigger_retest_trades.parquet
@@ -769,7 +777,15 @@ jobs:
             output/mb_scanner_events_mb_5h.parquet
             output/mb_scanner_events_mb_1d.parquet
             output/mb_scanner_events_mb_1w.parquet
+            output/mb_scanner_events_bb_5h.parquet
             output/mb_scanner_events_bb_1d.parquet
+            output/mb_scanner_events_bb_1w.parquet
+            output/mb_scanner_events_mb_5h_s.parquet
+            output/mb_scanner_events_mb_1d_s.parquet
+            output/mb_scanner_events_mb_1w_s.parquet
+            output/mb_scanner_events_bb_5h_s.parquet
+            output/mb_scanner_events_bb_1d_s.parquet
+            output/mb_scanner_events_bb_1w_s.parquet
             output/regime_labels_daily_rdp_v1.csv
             output/decision_engine_lab_triangle_break_events_3y.parquet
             output/horizontal_base_event_v1.parquet

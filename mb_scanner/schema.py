@@ -39,6 +39,13 @@ US_FAMILIES = (
     "bb_1h", "bb_3h", "bb_1d", "bb_1w", "bb_1M",
 )
 
+# Short-scale (pivot_n=1) mirrors of the BIST families. Same detector, tighter
+# fractal window: a pivot confirms 1 bar after itself instead of 2, so
+# structures become visible up to `pivot_n` bars earlier (weekly: 1-2 weeks).
+# Kept as a SEPARATE tuple so legacy consumers pinned to the canonical 8 are
+# unaffected; events carry `scale` ∈ {short, long} to distinguish.
+BIST_FAMILIES_SHORT = tuple(f + "_s" for f in BIST_FAMILIES)
+
 ALL_FAMILIES = tuple(dict.fromkeys(BIST_FAMILIES + US_FAMILIES))
 
 FAMILIES = BIST_FAMILIES
