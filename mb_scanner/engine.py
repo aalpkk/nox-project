@@ -64,6 +64,17 @@ _PARAMS: dict[str, FamilyParams] = {
     "bb_1M": FamilyParams("bb_1M", "bb", "1M", 2, 12, 8),
 }
 
+# Short-scale mirrors: pivot_n=1 (pivot confirms 1 bar later instead of 2 →
+# structures visible earlier; catches tight tridents the ±2 window rejects).
+# Span/age limits identical to the long variants.
+_PARAMS.update({
+    f.family + "_s": FamilyParams(
+        f.family + "_s", f.mode, f.frequency, 1,
+        f.max_quartet_span_bars, f.max_zone_age_bars,
+    )
+    for f in list(_PARAMS.values())
+})
+
 OUT_DIR = Path("output")
 
 

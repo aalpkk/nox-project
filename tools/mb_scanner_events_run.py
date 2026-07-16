@@ -26,7 +26,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from mb_scanner.events import EVENT_TYPES, extract_events
-from mb_scanner.schema import FAMILIES
+from mb_scanner.schema import BIST_FAMILIES_SHORT, FAMILIES
 
 
 def _summarize(df: pd.DataFrame, family: str) -> None:
@@ -55,17 +55,19 @@ def _summarize(df: pd.DataFrame, family: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--families", nargs="*", default=list(FAMILIES),
-                    help="Subset of families to extract (default: all 8).")
+    ap.add_argument("--families", nargs="*",
+                    default=list(FAMILIES) + list(BIST_FAMILIES_SHORT),
+                    help="Subset of families to extract (default: 8 long + 8 short).")
     ap.add_argument("--tickers", nargs="*", default=None,
                     help="Subset tickers (default: full universe).")
     ap.add_argument("--min-coverage", type=float, default=0.0,
                     help="Minimum bar-coverage filter (default 0.0 = all).")
     args = ap.parse_args()
 
-    bad = [f for f in args.families if f not in FAMILIES]
+    valid = set(FAMILIES) | set(BIST_FAMILIES_SHORT)
+    bad = [f for f in args.families if f not in valid]
     if bad:
-        print(f"[error] unknown families: {bad}; valid={list(FAMILIES)}", file=sys.stderr)
+        print(f"[error] unknown families: {bad}; valid={sorted(valid)}", file=sys.stderr)
         return 2
 
     print(f"[events] families={args.families}")

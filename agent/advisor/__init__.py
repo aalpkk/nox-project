@@ -133,6 +133,10 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
         for b in advisory.get("buy_candidates", []):
             cand_tk.add(b["ticker"])
             info = per.get(b["ticker"])
+            if info:
+                # haftalık doğum rozeti (mit/brk × 📐U/📐K + kırılım tarihi) —
+                # LAG teyidi olmasa da göster; LEAD✓ yalnız lag'lıda.
+                b["weekly_birth_badge"] = info.get("badge", "")
             if info and info.get("weekly_lead"):
                 b["weekly_lead"] = True
                 b["weekly_lead_tf"] = info["tf"]
@@ -142,10 +146,14 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
                 b["mtf_birth"] = sorted(
                     mtf, key=lambda t: {"5h": 0, "1d": 1, "1w": 2, "1mo": 3}.get(t, 9))
         advisory["weekly_lead_watch"] = sorted(
-            ({"ticker": t, "weekly_bar": v["weekly_bar"], "tf": v["tf"]}
+            ({"ticker": t, "weekly_bar": v["weekly_bar"], "tf": v["tf"],
+              "badge": v.get("badge", "")}
              for t, v in per.items() if v.get("weekly_lead") and t not in cand_tk),
             key=lambda x: x["ticker"])
         advisory["weekly_lead_bar"] = xtf.get("weekly_bar")
+        advisory["weekly_lead_warnings"] = xtf.get("warnings") or []
+        for w in advisory["weekly_lead_warnings"]:
+            print(f"   {w}")
         print(f"   haftalık-lider çakışma: {sum(1 for v in per.values() if v['weekly_lead'])} "
               f"toplam ({len(advisory['weekly_lead_watch'])} aday-dışı, bar={xtf.get('weekly_bar')})")
     except Exception as e:

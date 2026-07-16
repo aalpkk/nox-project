@@ -50,13 +50,14 @@ from .zones import (
     retest_kind_label,
 )
 
-EVENT_SCHEMA_VERSION = "1.0.0"
+EVENT_SCHEMA_VERSION = "1.1.0"
 
 EVENT_TYPES = ("above_mb_birth", "mit_touch_first", "retest_bounce_first")
 
 EVENT_OUTPUT_COLUMNS = (
     # identity
     "ticker", "setup_family", "data_frequency", "mode",
+    "scale",
     "quartet_id",
     "event_type",
     "event_idx", "event_bar_date", "event_ts",
@@ -148,6 +149,7 @@ def _event_row(
         "ticker": ticker,
         "setup_family": fam.family,
         "data_frequency": fam.frequency,
+        "scale": "short" if fam.pivot_n == 1 else "long",
         "mode": fam.mode,
         "quartet_id": _qid(ticker, quartet),
         "event_type": event_type,

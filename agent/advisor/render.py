@@ -114,6 +114,11 @@ def _full_confluence(b):
     if b.get("weekly_lead"):
         tf = "+".join(b.get("weekly_lead_tf") or [])
         parts.append(f"1w-LİDER✓({tf})" if tf else "1w-LİDER✓")
+    # haftalık doğum detayı (xtf parquet'ten): mit=mitigation LL→LH→HL→HH /
+    # brk=breaker (dip-altına süpürüp geri alma) × 📐U(zun n=2)/📐K(ısa n=1)
+    # + kırılım (BoS close) tarihi — geç teyitli doğum "taze" gibi durmasın.
+    if b.get("weekly_birth_badge"):
+        parts.append(f"1w-birth[{b['weekly_birth_badge']}]")
     if b.get("trident_geo"):
         parts.append("TRİDENT" + ("✓G4" if b.get("trident_tier1") else ""))
     # DE'nin KENDİ trident sınıfı (geo'dan ayrı; SIL_DEEP/WEEKLY_BIRTH_ACTIVE/
@@ -123,8 +128,8 @@ def _full_confluence(b):
         if t and f"🔱{t}" not in parts:
             parts.append(f"🔱{t}")
     wf = b.get("trident_weekly_family") or ""
-    if wf and not b.get("weekly_lead"):  # 1w-LİDER✓ zaten varsa tekrar etme
-        parts.append(f"1w-birth({wf})")
+    if wf and not (b.get("weekly_lead") or b.get("weekly_birth_badge")):
+        parts.append(f"1w-birth({wf})")  # xtf rozeti yoksa DE'ninkini göster
     return parts
 
 
@@ -345,7 +350,10 @@ def render_telegram_tr(advisory):
                      f"günlük/5h, aday-dışı, bilgi)</i>")
         for w in wlw:
             tf = "+".join(w.get("tf") or [])
-            lines.append(f"• <b>{w['ticker']}</b> 1w+{tf}")
+            badge = f" [{w['badge']}]" if w.get("badge") else ""
+            lines.append(f"• <b>{w['ticker']}</b> 1w+{tf}{badge}")
+        for wrn in (a.get("weekly_lead_warnings") or []):
+            lines.append(wrn)
         lines.append("")
 
     if a.get("scorecard_prev"):
@@ -608,7 +616,9 @@ def render_html(advisory):
         bar = a.get("weekly_lead_bar") or "?"
         wl_rows = "".join(
             f"<tr><td><b>{_tv(w['ticker'])}</b></td>"
-            f"<td><span class='tag tag-w'>1w</span> + {'+'.join(w.get('tf') or [])}</td></tr>"
+            f"<td><span class='tag tag-w'>1w</span> + {'+'.join(w.get('tf') or [])}"
+            + (f" <span class='note'>[{w['badge']}]</span>" if w.get("badge") else "")
+            + "</td></tr>"
             for w in wlw)
         weekly_lead_html = _sec(
             "📐 Haftalık-lider çakışma",
