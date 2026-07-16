@@ -319,9 +319,10 @@ def render_telegram_tr(advisory):
 
     ce = a.get("chased_excluded") or []
     if ce:
-        lst = ", ".join("{}(+{:.0f}%)".format(c["ticker"], c["runup_pct"]) for c in ce[:10])
+        lst = ", ".join("{}(+{:.0f}%/düz.{:.0f}%)".format(
+            c["ticker"], c["runup_pct"], c.get("retrace_pct", 0)) for c in ce[:10])
         lines.append(f"⛔ <b>Kovalama-filtresi:</b> {len(ce)} aday elendi "
-                     f"(yakın +%20 koşmuş, weekly birth yok): {lst}")
+                     f"(+%20 koşmuş, düzeltme<1/3, weekly birth yok): {lst}")
         lines.append("")
 
     if a.get("skipped_candidates"):
@@ -719,12 +720,15 @@ def render_html(advisory):
     if ce:
         crows = "".join(f"<tr><td><b>{_tv(c['ticker'])}</b></td>"
                         f"<td style='color:#f85149'>+{c['runup_pct']:.0f}%</td>"
+                        f"<td>{c.get('retrace_pct', 0):.0f}%</td>"
                         f"<td>{c.get('section', '')}</td></tr>" for c in ce)
         chased_html = _sec(
             "⛔ Kovalama-filtresi — elenen adaylar",
-            f"<p class='note'>Yakın zamanda <b>≥+%20 koşmuş</b> VE weekly birth (mb_1w "
+            f"<p class='note'>Yakın zamanda <b>≥+%20 koşmuş</b>, koşunun <b>üçte birinden "
+            f"azını geri vermiş</b> (düzeltme&lt;1/3 → hâlâ uzamış) VE weekly birth (mb_1w "
             f"above) OLMAYAN adaylar aday-havuzundan çıkarıldı (kullanıcı kuralı — uzamış "
-            f"hisseyi haftalık yapı desteği olmadan kovalama). Yakın-koşu extfeed'den.</p>"
+            f"hisseyi haftalık yapı desteği olmadan kovalama; düzeltme yapmış hisse "
+            f"kovalama sayılmaz, 2026-07-16 düzeltmesi). Yakın-koşu extfeed'den.</p>"
             f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Yakın koşu</th>"
             f"<th>DE bölüm</th></tr></thead><tbody>{crows}</tbody></table></div>",
             sub=f"{len(ce)} elendi · bilgi", open=False)

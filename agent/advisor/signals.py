@@ -960,7 +960,13 @@ def fetch_runup(tickers, asof, lookback=10):
     """Yakın-koşu — EXTFEED master'dan (yfinance DEĞİL; scanner'larla tutarlı).
     NOKTA-NOKTA `lookback` işgünü getirisi: son_kapanış / lookback-gün-önceki − 1.
     Böylece ŞU AN uzamış (son N günde +%X koşmuş) yakalanır; ESKİDEN koşup SONRA
-    düşmüş (TEKTU gibi) getirisi ≤0 → kovalama sayılmaz. point-in-time (≤ asof)."""
+    düşmüş (TEKTU gibi) getirisi ≤0 → kovalama sayılmaz. point-in-time (≤ asof).
+
+    Döner: {tkr: {"runup": float, "retrace": float}} — retrace = koşunun geri
+    verilen oranı (pencere_tepesi−son)/(pencere_tepesi−taban), 0=tepede,
+    1=tabana döndü. Kovalama kapısı retrace≥1/3 olanı KOVALAMAZ (kullanıcı
+    düzeltmesi 2026-07-16: p2p hâlâ +%20 olsa da düzeltme yapmış hisse
+    "uzamış" değildir; kural tepeden alımı engellemek içindir)."""
     want = {str(t).upper() for t in (tickers or [])}
     if not want:
         return {}
@@ -976,9 +982,15 @@ def fetch_runup(tickers, asof, lookback=10):
             daily = g.set_index("d")["close"].resample("1D").last().dropna()
             if len(daily) >= 4:
                 n = min(lookback, len(daily) - 1)
-                base = float(daily.iloc[-(n + 1)])     # n işgünü ÖNCEKİ kapanış
+                win = daily.iloc[-(n + 1):]
+                base = float(win.iloc[0])              # n işgünü ÖNCEKİ kapanış
+                last = float(win.iloc[-1])
+                peak = float(win.max())
                 if base > 0:
-                    out[tkr] = float(daily.iloc[-1]) / base - 1.0   # nokta-nokta getiri
+                    runup = last / base - 1.0          # nokta-nokta getiri
+                    retrace = ((peak - last) / (peak - base)
+                               if peak > base else 0.0)
+                    out[tkr] = {"runup": runup, "retrace": retrace}
         return out
     except Exception as e:
         print(f"⚠️ runup (extfeed) hatası: {str(e)[:80]}")
