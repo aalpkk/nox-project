@@ -79,10 +79,13 @@ def run_advisor(asof=None, notify=False, dry_run=False, use_llm=True,
             info = runup.get(t) or {}
             ru = info.get("runup")
             retr = info.get("retrace", 0.0)
-            # retrace ≥ 1/3: koşunun üçte birini geri vermiş = düzeltme yapmış
-            # → artık "uzamış/tepede" değil, kovalama sayılmaz (2026-07-16 fix;
-            # eski p2p-only kural kısmi düzeltmeleri de yanlışlıkla eliyordu).
-            if (ru is not None and ru >= 0.20 and retr < (1 / 3)
+            struct = info.get("structure")
+            # YAPISAL düzeltme kuralı (2026-07-17, kullanıcı: "hisseler FVG'ye/
+            # OB'ye düzeltir" — sabit oran değil): koşu tepesinden sonra fiyat
+            # altındaki geçerli bullish FVG/OB bölgesine DOKUNDUYSA düzeltme
+            # yapılmış sayılır → kovalama değil. Yapıya dokunmamışsa (retrace
+            # ne olursa olsun) hâlâ uzamış → elenir.
+            if (ru is not None and ru >= 0.20 and struct is None
                     and t not in wbirth):
                 chased_excluded.append({"ticker": t, "runup_pct": round(ru * 100, 1),
                                         "retrace_pct": round(retr * 100, 0),

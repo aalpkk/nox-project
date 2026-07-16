@@ -956,41 +956,119 @@ def fetch_prices(tickers):
     return out
 
 
+def _structural_pullback(o, h, lo, c, v, peak_idx):
+    """Koşu tepesinden SONRA fiyat altındaki geçerli bullish FVG/OB bölgesine
+    dokundu mu? (kullanıcı kuralı 2026-07-17: "düzeltme" sabit oran değil —
+    hisseler FVG'ye/OB'ye düzeltir; yapıya dokunan koşu artık kovalama değildir.)
+
+    Formüller mtf_bull_fvg_strict_v4 ile birebir (2026-06-04 audit'te
+    textbook-correct doğrulandı):
+      bullish FVG: lo[t] > h[t-2] → bölge [h[t-2], lo[t]]
+      bullish OB : breakout barı (c>20g-max, range>1.2×ATR20, hacim>1.5×volma20)
+                   öncesi SON kırmızı mum → bölge [lo[k], h[k]]
+      geçerlilik : oluşumdan sonra bölge tabanının ALTINDA kapanış yok
+      dokunuş    : peak sonrası bir barda lo[j] ≤ bölge_tavanı ve c[j] ≥ bölge_tabanı
+    Döner: "fvg" | "ob" | None."""
+    import numpy as np
+    n = len(c)
+    if peak_idx >= n - 1:
+        return None                       # tepe = son bar → hiç düzeltme yok
+    prev_c = np.concatenate([[np.nan], c[:-1]])
+    tr = np.maximum.reduce([h - lo, np.abs(h - prev_c), np.abs(lo - prev_c)])
+    atr = pd.Series(tr).rolling(20, min_periods=10).mean().values
+    volma = pd.Series(v).rolling(20, min_periods=10).mean().values
+    rhigh20 = pd.Series(c).rolling(20, min_periods=10).max().shift(1).values
+    rng = h - lo
+    breakout = (c > rhigh20) & (rng > atr * 1.2) & (v > volma * 1.5)
+
+    def _touched_after_peak(z_lo, z_hi, created):
+        # bölge geçerli mi: oluşumdan bugüne z_lo altında kapanış yok
+        if np.any(c[created + 1:] < z_lo):
+            return False
+        for j in range(max(peak_idx + 1, created + 1), n):
+            if lo[j] <= z_hi and c[j] >= z_lo:
+                return True
+        return False
+
+    def _width_ok(z_lo, z_hi, created):
+        # mikro-gap koruması (v4 strict WIDTH_MIN_ATR=0.25): 0.1%'lik gap'e
+        # dokunmak "yapısal düzeltme" sayılmaz. ATR-ölçekli, sabit oran değil.
+        a = atr[created]
+        return (not np.isnan(a)) and a > 0 and (z_hi - z_lo) >= 0.25 * a
+
+    lo_scan = max(2, n - 40)              # ZONE_MAX_AGE=40 (v4 ile aynı)
+    for t in range(n - 1, lo_scan - 1, -1):
+        if (lo[t] > h[t - 2] and _width_ok(h[t - 2], lo[t], t)
+                and _touched_after_peak(h[t - 2], lo[t], t)):
+            return "fvg"
+    for b in range(n - 1, max(1, n - 40) - 1, -1):
+        if not breakout[b]:
+            continue
+        for k in range(b - 1, max(b - 10, 0) - 1, -1):   # OB_LOOKBACK=10
+            if c[k] < o[k]:
+                if (_width_ok(lo[k], h[k], k)
+                        and _touched_after_peak(lo[k], h[k], k)):
+                    return "ob"
+                break
+    return None
+
+
 def fetch_runup(tickers, asof, lookback=10):
     """Yakın-koşu — EXTFEED master'dan (yfinance DEĞİL; scanner'larla tutarlı).
     NOKTA-NOKTA `lookback` işgünü getirisi: son_kapanış / lookback-gün-önceki − 1.
     Böylece ŞU AN uzamış (son N günde +%X koşmuş) yakalanır; ESKİDEN koşup SONRA
     düşmüş (TEKTU gibi) getirisi ≤0 → kovalama sayılmaz. point-in-time (≤ asof).
 
-    Döner: {tkr: {"runup": float, "retrace": float}} — retrace = koşunun geri
-    verilen oranı (pencere_tepesi−son)/(pencere_tepesi−taban), 0=tepede,
-    1=tabana döndü. Kovalama kapısı retrace≥1/3 olanı KOVALAMAZ (kullanıcı
-    düzeltmesi 2026-07-16: p2p hâlâ +%20 olsa da düzeltme yapmış hisse
-    "uzamış" değildir; kural tepeden alımı engellemek içindir)."""
+    Döner: {tkr: {"runup", "retrace", "structure": "fvg"|"ob"|None}} —
+    structure = koşu tepesinden sonra fiyat altındaki GEÇERLİ bullish FVG/OB
+    bölgesine dokunduysa dolu. Kovalama kapısı structure'ı dolu olanı KOVALAMAZ
+    (kullanıcı kuralı 2026-07-17: düzeltme sabit oran değil yapı hedeflidir).
+    retrace yalnız gösterim içindir."""
     want = {str(t).upper() for t in (tickers or [])}
     if not want:
         return {}
     try:
         df = pd.read_parquet(OUT_DIR / "extfeed_intraday_1h_3y_master.parquet",
-                             columns=["ticker", "ts_istanbul", "close"])
+                             columns=["ticker", "ts_istanbul", "open", "high",
+                                      "low", "close", "volume"])
         df["tkr"] = df["ticker"].astype(str).str.upper()
         df = df[df["tkr"].isin(want)].copy()
         df["d"] = pd.to_datetime(df["ts_istanbul"]).dt.tz_localize(None)
         df = df[df["d"] <= pd.Timestamp(asof) + pd.Timedelta(days=1)]
         out = {}
         for tkr, g in df.groupby("tkr"):
-            daily = g.set_index("d")["close"].resample("1D").last().dropna()
-            if len(daily) >= 4:
-                n = min(lookback, len(daily) - 1)
-                win = daily.iloc[-(n + 1):]
-                base = float(win.iloc[0])              # n işgünü ÖNCEKİ kapanış
-                last = float(win.iloc[-1])
-                peak = float(win.max())
-                if base > 0:
-                    runup = last / base - 1.0          # nokta-nokta getiri
-                    retrace = ((peak - last) / (peak - base)
-                               if peak > base else 0.0)
-                    out[tkr] = {"runup": runup, "retrace": retrace}
+            g = g.set_index("d").sort_index()
+            daily = g.resample("1D").agg({"open": "first", "high": "max",
+                                          "low": "min", "close": "last",
+                                          "volume": "sum"}).dropna()
+            if len(daily) < 4:
+                continue
+            closes = daily["close"]
+            n = min(lookback, len(closes) - 1)
+            win = closes.iloc[-(n + 1):]
+            base = float(win.iloc[0])              # n işgünü ÖNCEKİ kapanış
+            last = float(win.iloc[-1])
+            peak = float(win.max())
+            if base <= 0:
+                continue
+            runup = last / base - 1.0              # nokta-nokta getiri
+            retrace = ((peak - last) / (peak - base)
+                       if peak > base else 0.0)
+            structure = None
+            if runup >= 0.20:
+                # yapısal düzeltme taraması: son ~60 bar bağlam + koşu tepesi
+                tail = daily.iloc[-60:]
+                peak_idx = int(tail["close"].values[-(n + 1):].argmax()
+                               + (len(tail) - (n + 1)))
+                structure = _structural_pullback(
+                    tail["open"].values.astype(float),
+                    tail["high"].values.astype(float),
+                    tail["low"].values.astype(float),
+                    tail["close"].values.astype(float),
+                    tail["volume"].values.astype(float),
+                    peak_idx)
+            out[tkr] = {"runup": runup, "retrace": retrace,
+                        "structure": structure}
         return out
     except Exception as e:
         print(f"⚠️ runup (extfeed) hatası: {str(e)[:80]}")

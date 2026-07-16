@@ -322,7 +322,7 @@ def render_telegram_tr(advisory):
         lst = ", ".join("{}(+{:.0f}%/düz.{:.0f}%)".format(
             c["ticker"], c["runup_pct"], c.get("retrace_pct", 0)) for c in ce[:10])
         lines.append(f"⛔ <b>Kovalama-filtresi:</b> {len(ce)} aday elendi "
-                     f"(+%20 koşmuş, düzeltme<1/3, weekly birth yok): {lst}")
+                     f"(+%20 koşmuş, FVG/OB'ye düzeltmemiş, weekly birth yok): {lst}")
         lines.append("")
 
     if a.get("skipped_candidates"):
@@ -724,11 +724,12 @@ def render_html(advisory):
                         f"<td>{c.get('section', '')}</td></tr>" for c in ce)
         chased_html = _sec(
             "⛔ Kovalama-filtresi — elenen adaylar",
-            f"<p class='note'>Yakın zamanda <b>≥+%20 koşmuş</b>, koşunun <b>üçte birinden "
-            f"azını geri vermiş</b> (düzeltme&lt;1/3 → hâlâ uzamış) VE weekly birth (mb_1w "
-            f"above) OLMAYAN adaylar aday-havuzundan çıkarıldı (kullanıcı kuralı — uzamış "
-            f"hisseyi haftalık yapı desteği olmadan kovalama; düzeltme yapmış hisse "
-            f"kovalama sayılmaz, 2026-07-16 düzeltmesi). Yakın-koşu extfeed'den.</p>"
+            f"<p class='note'>Yakın zamanda <b>≥+%20 koşmuş</b>, koşu tepesinden sonra "
+            f"<b>altındaki geçerli bullish FVG/OB bölgesine DOKUNMAMIŞ</b> (yapısal düzeltme "
+            f"yok → hâlâ uzamış) VE weekly birth (mb_1w above) OLMAYAN adaylar aday-havuzundan "
+            f"çıkarıldı (kullanıcı kuralı 2026-07-17 — düzeltme sabit oran değil yapı "
+            f"hedeflidir; FVG/OB'ye dokunan koşu kovalama sayılmaz). düz.% kolonu bilgi "
+            f"amaçlıdır. Yakın-koşu extfeed'den.</p>"
             f"<div class='nox-table-wrap'><table><thead><tr><th>Hisse</th><th>Yakın koşu</th>"
             f"<th>DE bölüm</th></tr></thead><tbody>{crows}</tbody></table></div>",
             sub=f"{len(ce)} elendi · bilgi", open=False)
