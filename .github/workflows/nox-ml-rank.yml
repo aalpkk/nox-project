@@ -1,0 +1,161 @@
+name: NYX ML-Rank
+
+# BIST-100 içi çapraz-kesit ML sıralama tarayıcısı.
+# Dayanak: output/index_bt/BIST100_BIST30_TARAMA_BACKTEST.md §6.6-6.9
+#   · mutlak ml_1g eşiği KULLANILMAZ (skorun kuyruğu yıllar arası 11 kat kayıyor)
+#   · gün içi top-N sıralaması; N = kapasite (eşzamanlı pozisyon) parametresi
+#   · kovalama koruması: sinyal günü getirisi > %7 olan satır elenir
+#   · gün kalitesi: top-N ortalama skorunun tarihsel yüzdebirliği < eşik ise ZAYIF
+
+on:
+  schedule:
+    - cron: '45 15 * * 1-5'   # 18:45 TR — master-data-pull close (18:30) sonrası
+  workflow_dispatch:
+    inputs:
+      topn:
+        description: 'Kapasite = eşzamanlı pozisyon sayısı (backtest argmax DEĞİL)'
+        type: string
+        default: '4'
+      skip_below_pct:
+        description: 'Gün skoru bu tarihsel yüzdebirliğin altındaysa ZAYIF işaretle'
+        type: string
+        default: '33'
+      chase_max:
+        description: 'Sinyal günü getirisi bu %-nin üstündeyse kovalama sayılıp elenir'
+        type: string
+        default: '7'
+      asof:
+        description: 'YYYY-MM-DD (boş = son kapanış)'
+        type: string
+        default: ''
+
+concurrency:
+  group: nox-ml-rank
+  cancel-in-progress: true
+
+jobs:
+  ml-rank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      # Master parquet commit tarihinde donuyor; eksik günleri YALNIZCA XU100
+      # evreni için çekip bellekte overlay olarak uygularız. Master'a yazılmaz —
+      # kısmi ekleme PIT evren kurulumunu bozar.
+      - name: Fetch OHLCV delta (XU100)
+        id: delta
+        continue-on-error: true
+        env:
+          FINTABLES_MCP_TOKEN: ${{ secrets.FINTABLES_MCP_TOKEN }}
+        run: python tools/ml_rank_fetch_delta.py --end "${{ github.event.inputs.asof }}"
+
+      - name: Run ML-Rank scan
+        id: scan
+        env:
+          TOPN: ${{ github.event.inputs.topn || '4' }}
+          SKIP_PCT: ${{ github.event.inputs.skip_below_pct || '33' }}
+          CHASE: ${{ github.event.inputs.chase_max || '7' }}
+          ASOF: ${{ github.event.inputs.asof || '' }}
+        run: |
+          set -o pipefail
+          ARGS="--topn $TOPN --skip-below-pct $SKIP_PCT --chase-max $CHASE"
+          if [ -f output/_delta/xu100_overlay.parquet ]; then
+            ARGS="$ARGS --ohlcv-delta output/_delta/xu100_overlay.parquet"
+          fi
+          if [ -f output/_delta/xu100_index_overlay.parquet ]; then
+            ARGS="$ARGS --xu-delta output/_delta/xu100_index_overlay.parquet"
+          fi
+          if [ -n "$ASOF" ]; then ARGS="$ARGS --asof $ASOF"; fi
+          echo "Running: python tools/ml_rank_scan.py $ARGS"
+          set +e
+          python tools/ml_rank_scan.py $ARGS 2>&1 | tee ml_rank_output.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          # çıkış kodu 2 = ZAYIF gün; liste geçerli, job başarısız SAYILMAZ
+          echo "weak_day=$([ "$rc" = "2" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          if [ "$rc" != "0" ] && [ "$rc" != "2" ]; then exit "$rc"; fi
+
+      - name: Publish to gh-pages
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          if [ -z "$GH_TOKEN" ] || [ -z "$GH_PAGES_REPO" ]; then
+            echo "gh-pages sırları yok — yayın atlandı"; exit 0
+          fi
+          git clone --depth 1 --branch gh-pages \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GH_PAGES_REPO}.git" _pages
+          cp output/ml_rank_scan_latest.html _pages/ml_rank_scan.html
+          cp output/ml_rank_scan_*.json _pages/ 2>/dev/null || true
+          cd _pages
+          git config user.name  "nox-bot"
+          git config user.email "nox-bot@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "ml-rank $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Telegram
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          WEAK: ${{ steps.scan.outputs.weak_day }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: |
+          python - <<'PYEOF'
+          import os, re, requests
+          try:
+              raw = open("ml_rank_output.txt", encoding="utf-8").read()
+          except OSError:
+              raw = ""
+          m_h = re.search(r"NYX ML-Rank · (\S+)", raw)
+          asof = m_h.group(1) if m_h else "?"
+          m_q = re.search(r"yüzdebirlik (\d+) \[(\w+)\]", raw)
+          band = f"{m_q.group(2)} (%{m_q.group(1)})" if m_q else "?"
+          picks = re.findall(
+              r"^\s+\d+ (\S+)\s+([\d.]+)\s+([\d.]+)\s+([+\-][\d.]+)", raw, re.M)
+
+          weak = os.environ.get("WEAK") == "true"
+          msg = f"🧮 <b>NYX ML-Rank</b> · {asof}\n"
+          msg += f"Gün kalitesi: <b>{band}</b>\n"
+          if weak:
+              msg += "⚠️ <b>ZAYIF GÜN</b> — işleme girilmemesi önerilir\n"
+          if picks:
+              msg += "<pre>\n"
+              for t, ml, px, chg in picks:
+                  msg += f"{t:<7} {ml}  {px:>9}  {chg}%\n"
+              msg += "</pre>"
+          else:
+              msg += "\n(liste üretilemedi — log'a bak)"
+          repo = os.environ.get("GH_PAGES_REPO", "aalpkk/nox-signals").split("/")[-1]
+          msg += f"\n🔗 https://aalpkk.github.io/{repo}/ml_rank_scan.html"
+
+          tok, chat = os.environ.get("TG_BOT_TOKEN",""), os.environ.get("TG_CHAT_ID","")
+          if tok and chat:
+              r = requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
+                                json={"chat_id": chat, "text": msg[:4096],
+                                      "parse_mode": "HTML",
+                                      "disable_web_page_preview": True})
+              print("Telegram:", r.status_code)
+          else:
+              print("TG sırları yok\n" + msg)
+          PYEOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ml-rank-${{ github.run_number }}
+          path: |
+            ml_rank_output.txt
+            output/ml_rank_scan_*.csv
+            output/ml_rank_scan_*.json
+            output/ml_rank_scan_*.html
+          if-no-files-found: warn
