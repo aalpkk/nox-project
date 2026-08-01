@@ -185,8 +185,14 @@ def fmt_status(px, st, confirm, label):
         assets = '+'.join(leg_asset(max(off, 1)))
         sup = ' (SUPPRESSED — fren)' if tr.get('suppressed') else ''
         L.append(f"  giriş {px.index[min(tr['entry'], st['n']-1)].date()} offset {off}/{HOLD} | leg: {assets}{sup}")
+        # Geçişler replay()'de off in (LEG1+1, LEG2+1) ile tetikleniyor, yani
+        # 11 ve 26'da; HOLD (40) zaman çıkışı. Eski ifade LEG1/LEG2/HOLD (10/25/40)
+        # döndürüyordu → off=10 ve off=25'te bir sonraki bardaki geçişi atlayıp
+        # 15 bar sonrasını gösteriyordu.
+        nxt = next((s for s in (LEG1 + 1, LEG2 + 1, HOLD) if off < s), HOLD)
+        nxt_lbl = 'ÇIKIŞ (zaman)' if nxt >= HOLD else '+'.join(leg_asset(nxt))
         L.append(f"  stop: XU100 < {tr['run_min']:,.0f} | sonraki geçiş offset "
-                 f"{LEG1 if off < LEG1 else (LEG2 if off < LEG2 else HOLD)}")
+                 f"{nxt} → {nxt_lbl}")
     cl = st['closed']
     if cl:
         t8 = cl[-BRAKE_MEANN:]
