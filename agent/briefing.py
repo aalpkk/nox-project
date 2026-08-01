@@ -340,6 +340,244 @@ def _calc_taban_risk(df):
 
 _ALL_LIST_KEYS = ('tier1', 'tier2', 'tier2a', 'tier2b', 'alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha')
 
+# ══════════════════════════════════════════════════════════════════
+# SİNYAL TAZELİĞİ — rozet, yeni/eski ayrımı, çelişki yüzeyi
+# ══════════════════════════════════════════════════════════════════
+
+_FRESH_BADGES = {
+    'today': '🟢BUGÜN',
+    'd1': '🕐D-1',
+    'd2': '🕐D-2',
+    'd3': '🕐D-3',
+    'old': '🕐D-3+',
+    'unknown': '🕐D-?',
+}
+# Liste anahtarı → sinyal üreten screener adı (latest_signals fallback'i için)
+_LIST_SCREENER = {
+    'alsat': 'alsat', 'tavan': 'tavan', 'nw': 'nox_v3_daily',
+    'rt': 'regime_transition', 'sbt': 'sbt', 'alpha': 'alpha',
+}
+_SCREENER_LIST = {v: k for k, v in _LIST_SCREENER.items()}
+_SOURCE_LIST_KEYS = ('alsat', 'tavan', 'nw', 'rt', 'sbt', 'alpha')
+
+
+def _build_freshness_ctx(latest_signals, now=None):
+    """Tazelik karşılaştırma bağlamı.
+
+    Screener başına en son tarih de tutulur: hafta sonu/tatilde bugünün
+    takvim tarihi hiçbir sinyalle eşleşmez, o gün üretilen tarama yine
+    "bugünün verisi"dir (mevcut _is_today davranışıyla aynı).
+    """
+    now = now or datetime.now(_TZ_TR)
+    ctx = {
+        'today_sd': now.strftime('%Y-%m-%d'),
+        'today_cd': now.strftime('%Y%m%d'),
+        'latest_sd': {},
+        'latest_cd': {},
+    }
+    for s in latest_signals or []:
+        scr = s.get('screener', '')
+        sd = s.get('signal_date', '')
+        cd = s.get('csv_date', '')
+        if sd and sd > ctx['latest_sd'].get(scr, ''):
+            ctx['latest_sd'][scr] = sd
+        if cd and cd > ctx['latest_cd'].get(scr, ''):
+            ctx['latest_cd'][scr] = cd
+    return ctx
+
+
+def _signal_age(sig, ctx):
+    """Tek sinyalin yaş kovası: today | d1 | d2 | d3 | old | unknown.
+
+    ÖNCELİK: bars_ago > signal_date. Sebep: tarayıcıların çoğunda
+    signal_date = tarama günü (rapor günü) yazılıyor; gerçek sinyal yaşını
+    yalnızca bars_ago taşıyor (örn. SBT dünkü tavan mumundan üretilmişse
+    signal_date=bugün ama bars_ago=1). signal_date'e öncelik verilirse
+    taşınan sinyaller BUGÜN görünür — ayrımın tamamı kaybolur.
+    """
+    if not isinstance(sig, dict):
+        return 'unknown'
+    ba = sig.get('bars_ago')
+    if ba is not None and ba != '':
+        try:
+            ba = int(ba)
+        except (TypeError, ValueError):
+            ba = None
+        if ba is not None:
+            if ba <= 0:
+                return 'today'
+            if ba == 1:
+                return 'd1'
+            if ba == 2:
+                return 'd2'
+            if ba == 3:
+                return 'd3'
+            return 'old'
+
+    sd = sig.get('signal_date', '') or ''
+    cd = sig.get('csv_date', '') or ''
+    if not sd and not cd:
+        return 'unknown'          # örn. alpha — tarih alanı hiç yok
+    if sd == ctx['today_sd'] or cd == ctx['today_cd']:
+        return 'today'
+    scr = sig.get('screener', '')
+    if (sd and sd == ctx['latest_sd'].get(scr)) or \
+       (cd and cd == ctx['latest_cd'].get(scr)):
+        return 'today'            # hafta sonu/tatil: taramanın en son günü
+
+    # Takvim farkından iş günü yaşı
+    try:
+        d0 = datetime.strptime(sd or cd, '%Y-%m-%d' if sd else '%Y%m%d')
+        ref = datetime.strptime(ctx['today_sd'], '%Y-%m-%d')
+        bd = len(pd.bdate_range(d0.date(), ref.date())) - 1 if d0 <= ref else 0
+    except Exception:
+        return 'unknown'
+    if bd <= 0:
+        return 'today'
+    if bd == 1:
+        return 'd1'
+    if bd == 2:
+        return 'd2'
+    if bd == 3:
+        return 'd3'
+    return 'old'
+
+
+def _freshness_overlay(lists_dict, latest_signals, confluence_results=None):
+    """Tier1/2A/2B item'larına tazelik rozeti, çelişki rozeti ve CONF önerisi ekler.
+
+    SKORLAMAYA VE ÜYELİĞE DOKUNMAZ — yalnızca reasons/meta zenginleştirir.
+    Gruplama (taşınan sinyaller alt bloku) meta['carried'] bayrağı üzerinden
+    sunum katmanında yapılır.
+    """
+    ctx = _build_freshness_ctx(latest_signals)
+
+    conf_map = {}
+    for r in (confluence_results or []):
+        if isinstance(r, dict) and r.get('ticker'):
+            conf_map[r['ticker']] = r
+
+    # (liste, ticker) → o listeye sokan sinyal dict'i
+    src_sig = {}
+    for lk in _SOURCE_LIST_KEYS:
+        for item in lists_dict.get(lk, []):
+            if len(item) >= 4 and (lk, item[0]) not in src_sig:
+                src_sig[(lk, item[0])] = item[3]
+
+    # ML filtresi kaynak listeden düşürmüş olabilir → latest_signals fallback'i
+    raw_by_ticker = {}
+    for s in (latest_signals or []):
+        raw_by_ticker.setdefault(s.get('ticker'), []).append(s)
+
+    def _src_age(ticker, list_key):
+        sig = src_sig.get((list_key, ticker))
+        if sig is not None:
+            return _signal_age(sig, ctx)
+        scr = _LIST_SCREENER.get(list_key)
+        cands = [s for s in raw_by_ticker.get(ticker, [])
+                 if s.get('screener') == scr]
+        if not cands:
+            return 'unknown'
+        order = ['today', 'd1', 'd2', 'd3', 'old', 'unknown']
+        return min((_signal_age(s, ctx) for s in cands), key=order.index)
+
+    def _conflict(ticker):
+        """(has_conflict, [kaynak...]) — CONF bayrağı VEYA bugün tarihli SAT."""
+        conf = conf_map.get(ticker) or {}
+        srcs = set()
+        for s in raw_by_ticker.get(ticker, []):
+            if s.get('direction') == 'SAT' or s.get('karar') == 'SAT':
+                if _signal_age(s, ctx) == 'today':
+                    srcs.add(s.get('screener', '?'))
+        flag = bool(conf.get('has_conflict')) or bool(srcs)
+        if not srcs and conf.get('conflict_sources'):
+            srcs = set(conf.get('conflict_sources') or [])
+        return flag, sorted(srcs)
+
+    order = ['today', 'd1', 'd2', 'd3', 'old', 'unknown']
+    for key in ('tier1', 'tier2a', 'tier2b'):
+        items = lists_dict.get(key, [])
+        if not items:
+            continue
+        new_items = []
+        for item in items:
+            ticker, score, reasons, meta = item[0], item[1], item[2], item[3]
+
+            # Bu item'ı oluşturan kaynak listeler
+            if key == 'tier1' and isinstance(meta, dict) and meta.get('in_lists'):
+                sources = list(meta['in_lists'])
+            elif isinstance(meta, dict) and meta.get('screener'):
+                sources = [_SCREENER_LIST.get(meta['screener'], meta['screener'])]
+            else:
+                sources = [lk for lk in _SOURCE_LIST_KEYS
+                           if (lk, ticker) in src_sig]
+
+            ages = {lk: _src_age(ticker, lk) for lk in sources}
+            today_src = sorted([lk for lk, a in ages.items() if a == 'today'])
+            stale_src = sorted([lk for lk, a in ages.items() if a != 'today'])
+            # Item rozeti = en taze kaynak
+            best = min(ages.values(), key=order.index) if ages else 'unknown'
+            badge = _FRESH_BADGES.get(best, _FRESH_BADGES['unknown'])
+            # Kaynak bazlı detay: SBT:D-1 gibi
+            per_src = " ".join(
+                f"{_LIST_SHORT_G.get(lk, lk)}:{_FRESH_BADGES.get(a, a).lstrip('🟢🕐')}"
+                for lk, a in sorted(ages.items()))
+
+            carried = (len(today_src) == 0)
+            has_conf, conf_srcs = _conflict(ticker)
+            conf = conf_map.get(ticker) or {}
+            rec = conf.get('recommendation', '') or ''
+
+            conflict_badge = ''
+            if has_conf:
+                lbl = ", ".join(conf_srcs) if conf_srcs else "CONF"
+                conflict_badge = f"⚠️ÇELİŞKİ: {lbl} SAT"
+
+            new_reasons = [badge] + list(reasons or [])
+            if per_src:
+                new_reasons.append(f"⏱{per_src}")
+            if conflict_badge:
+                new_reasons.append(conflict_badge)
+            if rec:
+                new_reasons.append(f"CONF:{rec}")
+
+            new_meta = dict(meta) if isinstance(meta, dict) else {}
+            new_meta.update({
+                'freshness': {'today': today_src, 'stale': stale_src},
+                'freshness_ages': ages,
+                'freshness_badge': badge,
+                'carried': carried,
+                'has_conflict': has_conf,
+                'conflict_sources': conf_srcs,
+                'conflict_badge': conflict_badge,
+                'conf_recommendation': rec,
+            })
+            new_items.append((ticker, score, new_reasons, new_meta))
+        lists_dict[key] = new_items
+
+    n_carried = sum(1 for it in lists_dict.get('tier1', [])
+                    if isinstance(it[3], dict) and it[3].get('carried'))
+    n_conf = sum(1 for it in lists_dict.get('tier1', [])
+                 if isinstance(it[3], dict) and it[3].get('has_conflict'))
+    print(f"  [TAZELİK] Tier1: {n_carried} taşınan, {n_conf} çelişkili")
+
+
+_LIST_SHORT_G = {'alsat': 'AS', 'tavan': 'TVN', 'nw': 'NW',
+                 'rt': 'RT', 'sbt': 'SBT', 'alpha': 'ALP'}
+
+
+def _split_carried(items):
+    """(taze, taşınan) — sıralamayı korur, üyeliği değiştirmez.
+
+    Taşınan = çakışmayı oluşturan kaynakların hiçbirinde bugün tarihli
+    sinyal yok. Sunum ayrımı; skor/üyelik aynı kalır.
+    """
+    fresh, carried = [], []
+    for it in items or []:
+        meta = it[3] if len(it) >= 4 else None
+        (carried if isinstance(meta, dict) and meta.get('carried') else fresh).append(it)
+    return fresh, carried
+
 
 def _taban_risk_overlay(lists_dict):
     """Tüm listelere taban riski bilgi label'ı ekle (skor cezası yok).
@@ -2640,16 +2878,28 @@ def _build_shortlist_message(lists_dict,
     # ── Tier 1: Çapraz Çakışmalar ──
     tier1 = lists_dict.get('tier1', [])
     if tier1:
-        lines.append("")
-        lines.append(f"🔥 <b>Tier 1 — Çakışmalar</b> ({len(tier1)} hisse)")
-        lines.append("")
-        for i, (ticker, score, reasons, _) in enumerate(tier1[:15], 1):
-            reasons_str = " | ".join(reasons)
-            lines.append(f"{i}. <b>{ticker}</b> {reasons_str}")
-            if has_sm:
-                sm_line = _build_sm_inline(ticker, takas_data, mkk_data, sms_scores, ice_results)
-                if sm_line:
-                    lines.append(sm_line)
+        fresh_t1, carried_t1 = _split_carried(tier1)
+
+        def _emit_t1(block, header, note=""):
+            if not block:
+                return
+            lines.append("")
+            lines.append(f"{header} ({len(block)} hisse)")
+            if note:
+                lines.append(note)
+            lines.append("")
+            for i, (ticker, score, reasons, _m) in enumerate(block[:15], 1):
+                reasons_str = " | ".join(reasons)
+                lines.append(f"{i}. <b>{ticker}</b> {reasons_str}")
+                if has_sm:
+                    sm_line = _build_sm_inline(ticker, takas_data, mkk_data,
+                                               sms_scores, ice_results)
+                    if sm_line:
+                        lines.append(sm_line)
+
+        _emit_t1(fresh_t1, "🔥 <b>Tier 1 — Çakışmalar</b>")
+        _emit_t1(carried_t1, "📦 <b>Tier 1 — taşınan sinyaller (bugün teyit yok)</b>",
+                 "<i>Çakışmayı oluşturan sinyallerin hepsi eski.</i>")
 
     # ── Tier 2A: Tactical (⚡1G) ──
     tier2a = lists_dict.get('tier2a', [])
@@ -2883,52 +3133,70 @@ def _build_template_briefing(macro_result, signal_summary, lists_dict,
     # Tier 1 — çakışmalar
     tier1 = lists_dict.get('tier1', [])
     if tier1:
-        lines.append(f"🔥 <b>Tier 1 — Çakışmalar</b> ({len(tier1)} hisse)")
-        lines.append("")
-        for i, (ticker, quality, reasons, meta) in enumerate(tier1[:15], 1):
-            in_lists = meta.get('in_lists', []) if isinstance(meta, dict) else []
-            list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
-            relaxed = " [RT↓]" if (isinstance(meta, dict) and meta.get('relaxed')) else ""
-            # Metrik detayları
-            metrics = []
-            for l in sorted(in_lists):
-                for t, sc, reas, sig in lists_dict.get(l, []):
-                    if t != ticker:
-                        continue
-                    if l == 'rt':
-                        badge = sig.get('badge', '')
-                        if badge:
-                            metrics.append(f"[{badge}]")
-                    elif l == 'nw':
-                        if sig.get('dw_overlap'):
-                            metrics.append("D+W")
-                        delta = sig.get('delta_pct')
-                        if delta is not None:
-                            metrics.append(f"δ={delta:.1f}%")
-                    elif l == 'alsat':
-                        st = sig.get('signal_type', '')
-                        if st:
-                            metrics.append(st)
-                    elif l == 'tavan':
-                        skor = sig.get('skor', 0) or 0
-                        if skor:
-                            metrics.append(f"tvn={skor}")
-                    break
-            # ML badge
-            ml_badge = ""
-            for r in reasons:
-                if r.startswith('🤖'):
-                    ml_badge = r
-                    break
-            pt = _price_tag(ticker)
-            metric_str = " ".join(metrics)
-            line = f"{i}. <b>{ticker}</b> [{list_tags}]{relaxed} Q={quality} {metric_str}"
-            if ml_badge:
-                line += f" {ml_badge}"
-            if pt:
-                line += f" | {pt}"
-            lines.append(line)
-        lines.append("")
+        def _emit_tier1(block, header, note=""):
+            if not block:
+                return
+            lines.append(f"{header} ({len(block)} hisse)")
+            if note:
+                lines.append(note)
+            lines.append("")
+            for i, (ticker, quality, reasons, meta) in enumerate(block[:15], 1):
+                in_lists = meta.get('in_lists', []) if isinstance(meta, dict) else []
+                list_tags = "+".join(_LIST_SHORT.get(l, l) for l in sorted(in_lists))
+                relaxed = " [RT↓]" if (isinstance(meta, dict) and meta.get('relaxed')) else ""
+                # Metrik detayları
+                metrics = []
+                for l in sorted(in_lists):
+                    for t, sc, reas, sig in lists_dict.get(l, []):
+                        if t != ticker:
+                            continue
+                        if l == 'rt':
+                            badge = sig.get('badge', '')
+                            if badge:
+                                metrics.append(f"[{badge}]")
+                        elif l == 'nw':
+                            if sig.get('dw_overlap'):
+                                metrics.append("D+W")
+                            delta = sig.get('delta_pct')
+                            if delta is not None:
+                                metrics.append(f"δ={delta:.1f}%")
+                        elif l == 'alsat':
+                            st = sig.get('signal_type', '')
+                            if st:
+                                metrics.append(st)
+                        elif l == 'tavan':
+                            skor = sig.get('skor', 0) or 0
+                            if skor:
+                                metrics.append(f"tvn={skor}")
+                        break
+                # ML badge
+                ml_badge = ""
+                for r in reasons:
+                    if r.startswith('🤖'):
+                        ml_badge = r
+                        break
+                pt = _price_tag(ticker)
+                metric_str = " ".join(metrics)
+                fresh_b = meta.get('freshness_badge', '') if isinstance(meta, dict) else ''
+                line = (f"{i}. <b>{ticker}</b> {fresh_b} [{list_tags}]{relaxed} "
+                        f"Q={quality} {metric_str}")
+                if ml_badge:
+                    line += f" {ml_badge}"
+                if isinstance(meta, dict):
+                    if meta.get('conflict_badge'):
+                        line += f" {meta['conflict_badge']}"
+                    if meta.get('conf_recommendation'):
+                        line += f" [{meta['conf_recommendation']}]"
+                if pt:
+                    line += f" | {pt}"
+                lines.append(line)
+            lines.append("")
+
+        _fresh_t1, _carried_t1 = _split_carried(tier1)
+        _emit_tier1(_fresh_t1, "🔥 <b>Tier 1 — Çakışmalar</b>")
+        _emit_tier1(_carried_t1,
+                    "📦 <b>Tier 1 — taşınan sinyaller (bugün teyit yok)</b>",
+                    "<i>Çakışmayı oluşturan sinyallerin hepsi eski.</i>")
 
     # Tier 2B — swing
     tier2b = lists_dict.get('tier2b', [])
@@ -3374,6 +3642,9 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
         # Sektör regime overlay (soft gate + badge)
         _sector_regime_overlay(lists_dict)
 
+        # Sinyal tazeliği + çelişki overlay (skorlamaya dokunmaz)
+        _freshness_overlay(lists_dict, latest_signals, confluence_results)
+
         # Shortlistteki benzersiz hisseleri çıkar (Matriks sadece bunlar için çekilecek)
         shortlist_tickers = _extract_list_tickers(lists_dict)
 
@@ -3465,6 +3736,9 @@ def run_briefing(notify=False, use_ai=True, fresh=False, shortlist_only=False):
 
     # Sektör regime overlay (soft gate + badge)
     _sector_regime_overlay(lists_dict)
+
+    # Sinyal tazeliği + çelişki overlay (skorlamaya dokunmaz)
+    _freshness_overlay(lists_dict, latest_signals, confluence_results)
 
     # 4a. Matriks kurumsal veri (sadece shortlist hisseleri — ~50 hisse, ~2.5 dk)
     shortlist_tickers = _extract_list_tickers(lists_dict)

@@ -147,6 +147,32 @@ def _prepare_lists_json(lists_dict, max_per_list=15):
     return result
 
 
+def _freshness_fields(meta):
+    """Tazelik/çelişki alanlarını JSON entry'sine kopyala.
+
+    briefing._freshness_overlay tarafından meta'ya yazılır. Downstream
+    tüketiciler (advisor analizi) bu alanları okur.
+    """
+    if not isinstance(meta, dict):
+        return {}
+    out = {
+        'freshness': meta.get('freshness', {'today': [], 'stale': []}),
+        'has_conflict': bool(meta.get('has_conflict', False)),
+        'conf_recommendation': meta.get('conf_recommendation', '') or '',
+    }
+    if meta.get('freshness_badge'):
+        out['freshness_badge'] = meta['freshness_badge']
+    if meta.get('freshness_ages'):
+        out['freshness_ages'] = meta['freshness_ages']
+    if meta.get('carried') is not None:
+        out['carried'] = bool(meta.get('carried'))
+    if meta.get('conflict_badge'):
+        out['conflict_badge'] = meta['conflict_badge']
+    if meta.get('conflict_sources'):
+        out['conflict_sources'] = meta['conflict_sources']
+    return out
+
+
 def _prepare_overlap_json(lists_dict, max_per_group=15):
     """Tier1'den overlap_count bazli gruplama."""
     tier1 = lists_dict.get('tier1', [])
@@ -161,6 +187,7 @@ def _prepare_overlap_json(lists_dict, max_per_group=15):
             'in_lists': meta.get('in_lists', []) if isinstance(meta, dict) else [],
             'relaxed': meta.get('relaxed', False) if isinstance(meta, dict) else False,
         }
+        entry.update(_freshness_fields(meta))
         if isinstance(meta, dict):
             if meta.get('ml_score') is not None:
                 entry['ml_score'] = meta['ml_score']
@@ -249,6 +276,7 @@ def _prepare_shortlist_json(lists_dict, max_items=15):
                 'score': score,
                 'reasons': reasons,
             }
+            entry.update(_freshness_fields(meta))
             if isinstance(meta, dict):
                 entry['in_lists'] = meta.get('in_lists', [])
                 if meta.get('ml_score_short') is not None:
@@ -920,6 +948,29 @@ def generate_briefing_html(briefing_text, macro_data, confluence_results,
 .action-card.tier1 {{ border-left: 3px solid rgba(201,169,110,0.4); }}
 .action-card.tier2a {{ border-left: 3px solid rgba(184,149,110,0.25); }}
 .action-card.tier2b {{ border-left: 3px solid rgba(138,122,158,0.25); }}
+/* ── Sinyal tazeliği / çelişki ── */
+.action-card.carried {{ opacity: 0.82; border-left-style: dashed; }}
+.action-card.conflicted {{ box-shadow: inset 2px 0 0 rgba(214,90,90,0.55); }}
+.fresh-badge {{
+    font-size: 0.6rem; font-family: var(--font-mono); font-weight: 600;
+    padding: 1px 5px; border-radius: 3px; white-space: nowrap; letter-spacing: 0.2px;
+}}
+.fresh-badge.today {{ background: rgba(96,168,120,0.16); color: #7fc79a; }}
+.fresh-badge.stale {{ background: rgba(190,168,110,0.14); color: #c9a96e; }}
+.card-flags {{ display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 1px; }}
+.conflict-badge {{
+    font-size: 0.6rem; font-family: var(--font-mono); font-weight: 600;
+    padding: 1px 5px; border-radius: 3px;
+    background: rgba(214,90,90,0.16); color: #e08a8a;
+}}
+.rec-badge {{
+    font-size: 0.6rem; font-family: var(--font-mono);
+    padding: 1px 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.05); color: var(--text-muted);
+}}
+.rec-badge.rec-bekle {{ background: rgba(214,90,90,0.12); color: #d69a6e; }}
+.rec-badge.rec-tradeable {{ background: rgba(96,168,120,0.14); color: #7fc79a; }}
+.tier-group-label.carried {{ color: #c9a96e; opacity: 0.9; }}
 @keyframes cardFadeIn {{
     from {{ opacity: 0; transform: translateY(8px); }}
     to {{ opacity: 1; transform: translateY(0); }}
@@ -1994,7 +2045,17 @@ function volBadge(item) {{
     return `<span class="vol-tier ${{c}}">${{item.vol_tier_icon||''}}${{item.vol_tier}}</span>`;
 }}
 function filterReasons(reasons) {{
-    return (reasons||[]).filter(r=>!r.startsWith('🤖')&&!r.startsWith('SBT:')&&!r.startsWith('✅')&&!(r.startsWith('⚠️')&&!r.startsWith('⚠️taban')));
+    // Tazelik/çelişki/CONF rozetleri ayrı öğe olarak render ediliyor —
+    // reasons satırında tekrar etmesinler.
+    return (reasons||[]).filter(r=>!r.startsWith('🤖')&&!r.startsWith('SBT:')&&!r.startsWith('✅')&&!(r.startsWith('⚠️')&&!r.startsWith('⚠️taban'))&&!r.startsWith('🟢')&&!r.startsWith('🕐')&&!r.startsWith('⏱')&&!r.startsWith('CONF:'));
+}}
+
+function fmtFreshTitle(item) {{
+    const f = item.freshness || {{}};
+    const ages = item.freshness_ages || {{}};
+    const parts = Object.keys(ages).map(k => k + '=' + ages[k]);
+    const t = (f.today||[]).length ? 'bugün: ' + (f.today||[]).join(',') : 'bugün teyit yok';
+    return t + (parts.length ? ' | ' + parts.join(' ') : '');
 }}
 
 // ══════ KATMAN 1: Makro pills (sticky bar) ══════
@@ -2053,11 +2114,29 @@ function filterReasons(reasons) {{
         tier2b: {{ cls:'tier2b', tag:'T2B', tagCls:'t2b' }},
     }};
     let cardIdx = 0;
+    // Tier1 sunumda ikiye ayrılır: bugün teyitli olanlar / taşınan sinyaller.
+    // Üyelik ve skor değişmez — yalnızca gruplama.
+    const groups = [];
     ['tier1','tier2a','tier2b'].forEach(key => {{
         const list = SL[key];
-        if(!list || list.items.length===0) return;
+        if(!list || !list.items || list.items.length===0) return;
+        if(key === 'tier1') {{
+            const fresh = list.items.filter(it => !it.carried);
+            const carried = list.items.filter(it => it.carried);
+            if(fresh.length) groups.push({{key, icon:list.icon, label:list.label,
+                                           items:fresh, total:fresh.length}});
+            if(carried.length) groups.push({{key, icon:'📦',
+                label:'Tier 1 — taşınan sinyaller (bugün teyit yok)',
+                items:carried, total:carried.length, carried:true}});
+        }} else {{
+            groups.push({{key, icon:list.icon, label:list.label,
+                          items:list.items, total:list.total}});
+        }}
+    }});
+    groups.forEach(list => {{
+        const key = list.key;
         const tc = tierConf[key];
-        html += `<div class="tier-group-label">${{list.icon}} ${{list.label}} <span class="cnt">${{list.total}}</span></div>`;
+        html += `<div class="tier-group-label${{list.carried?' carried':''}}">${{list.icon}} ${{list.label}} <span class="cnt">${{list.total}}</span></div>`;
         html += '<div class="action-grid">';
         list.items.forEach((item,i) => {{
             const delay = (cardIdx * 0.04).toFixed(2);
@@ -2075,13 +2154,22 @@ function filterReasons(reasons) {{
                     <span style="color:var(--text-muted)">streak=${{ltp.streak}}</span>
                 </div>`;
             }}
-            html += `<div class="action-card ${{tc.cls}}" style="animation-delay:${{delay}}s">
+            const fb = item.freshness_badge || '';
+            const freshCls = (fb.indexOf('BUGÜN') >= 0) ? 'fresh-badge today' : 'fresh-badge stale';
+            const freshHtml = fb ? `<span class="${{freshCls}}" title="${{fmtFreshTitle(item)}}">${{fb}}</span>` : '';
+            const confHtml = item.conflict_badge
+                ? `<span class="conflict-badge">${{item.conflict_badge}}</span>` : '';
+            const recHtml = item.conf_recommendation
+                ? `<span class="rec-badge rec-${{(item.conf_recommendation||'').toLowerCase()}}">${{item.conf_recommendation}}</span>` : '';
+            html += `<div class="action-card ${{tc.cls}}${{item.carried?' carried':''}}${{item.has_conflict?' conflicted':''}}" style="animation-delay:${{delay}}s">
                 <div class="card-head">
                     ${{tvL(item.ticker)}}
+                    ${{freshHtml}}
                     <span class="tier-tag ${{tc.tagCls}}">${{tc.tag}}</span>
                     ${{listsTag ? `<span style="font-size:0.65rem;color:var(--text-muted);font-family:var(--font-mono)">${{listsTag}}</span>` : ''}}
                     <span class="score-pill">${{item.score}}p</span>
                 </div>
+                ${{(confHtml||recHtml) ? `<div class="card-flags">${{confHtml}}${{recHtml}}</div>` : ''}}
                 <div class="card-badges">
                     ${{sbt1700Badge(item)}}${{mlBadge(item)}}${{sbtBadge(item)}}${{sectorBadge(item)}}${{brkBadge(item)}}${{iceBadge(item)}}${{volBadge(item)}}
                 </div>
