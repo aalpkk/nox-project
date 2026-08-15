@@ -1,0 +1,67 @@
+name: us-watch
+
+# ABD izleme evreni taraması — extfeed (TV WS) birincil, yfinance yedek.
+# Çıktılar nox-signals/usdata/ altına yayınlanır:
+#   https://raw.githubusercontent.com/aalpkk/nox-signals/main/usdata/summary.json
+#   https://raw.githubusercontent.com/aalpkk/nox-signals/main/usdata/us_scan.md
+#   https://raw.githubusercontent.com/aalpkk/nox-signals/main/usdata/full_scan.md
+# Push tetiklemesi: evren/kod değişince ilk koşu otomatik gelir.
+
+on:
+  schedule:
+    # UTC: 12:50 (TR 15:50 premarket sonu), 15:30 (TR 18:30 seans ortası), 20:15 (TR 23:15 kapanış sonrası)
+    - cron: "50 12 * * 1-5"
+    - cron: "30 15 * * 1-5"
+    - cron: "15 20 * * 1-5"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "tools/us_watch_scan.py"
+      - "tools/us_full_scan.py"
+      - "config/us_watch_universe.yaml"
+      - ".github/workflows/us-watch.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: us-watch
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install "pandas>=2.1,<3.0" "numpy" "requests" "yfinance>=0.2.31" "websockets>=12" "pyyaml" "lxml"
+
+      - name: US watch scan (extfeed -> yfinance fallback)
+        env:
+          PYTHONUNBUFFERED: "1"
+          INTRADAY_SID: ${{ secrets.INTRADAY_SID }}
+          INTRADAY_SIGN: ${{ secrets.INTRADAY_SIGN }}
+          INTRADAY_HOST: ${{ secrets.INTRADAY_HOST }}
+          INTRADAY_WS_URL: ${{ secrets.INTRADAY_WS_URL }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: python -u tools/us_watch_scan.py
+
+      - name: US full scan (yfinance bulk, ~3000 sembol)
+        continue-on-error: true
+        env:
+          PYTHONUNBUFFERED: "1"
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: python -u tools/us_full_scan.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: us-watch-${{ github.run_number }}
+          path: output/usdata/
+          if-no-files-found: warn
+          retention-days: 14

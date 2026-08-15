@@ -1,0 +1,15 @@
+# NOX US izleme evreni — sektör etiketli (tools/us_watch_scan.py okur)
+# Yeni sembol eklemek: ilgili gruba ekle, push et; push tetiklemesiyle veri hemen gelir.
+core_positions: [NVDA, MU, SPY, QQQ, SOXX, GLD]
+memory: [SNDK, WDC]
+semicap: [AMAT, LRCX, KLAC, ASML]
+gpu_logic: [AMD, AVGO, TSM, INTC, MRVL]
+optics: [LITE, COHR, AAOI, GLW, CIEN]
+neocloud_dc: [CRWV, NBIS, IREN, APLD, CORZ, WULF, SMCI]
+power: [VRT, GEV, CEG, VST, OKLO]
+space: [RKLB, SPCX, ASTS, LUNR]
+defense: [MSI, RTX, NOC, LMT]
+robotics_misc: [ISRG, AMBA, TSLA]
+quality_lowai: [V, LLY, CME]
+# 1 saatlik bar da çekilecek alt küme (aktif dosyalar):
+hourly_subset: [NVDA, MU, MSI, LRCX, CRWV, NBIS, GLW, COHR, IREN, RKLB]
