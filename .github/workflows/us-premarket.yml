@@ -1,0 +1,48 @@
+name: us-premarket
+
+# ABD izleme evreni PREMARKET taraması (gap listesi, yfinance prepost 5m).
+# Yayın: nox-signals/usdata/premarket_scan.md + premarket.json
+#   https://raw.githubusercontent.com/aalpkk/nox-signals/main/usdata/premarket_scan.md
+
+on:
+  schedule:
+    # UTC 12:50 = TR 15:50 = NY 08:50 (açılışa 40 dk, premarket'in son bölümü)
+    - cron: "50 12 * * 1-5"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "tools/us_premarket_scan.py"
+      - ".github/workflows/us-premarket.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: us-premarket
+  cancel-in-progress: false
+
+jobs:
+  premarket:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install "pandas>=2.1,<3.0" numpy requests "yfinance>=0.2.31" pyyaml
+      - name: Premarket scan
+        env:
+          PYTHONUNBUFFERED: "1"
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_PAGES_REPO: ${{ secrets.GH_PAGES_REPO }}
+        run: python -u tools/us_premarket_scan.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: us-premarket-${{ github.run_number }}
+          path: |
+            output/usdata/premarket_scan.md
+            output/usdata/premarket.json
+          if-no-files-found: warn
+          retention-days: 7
