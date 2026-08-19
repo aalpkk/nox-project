@@ -93,8 +93,10 @@ def _fetch_live(symbol: str, timeframe: str, n: int) -> pd.DataFrame:
 
 
 def _us_symbol(code: str) -> str:
-    from markets.us.data import _fetch_us_exchange_map
     code = code.upper().strip()
+    if ":" in code:
+        return code  # açık borsa öneki (BINANCE:BTCUSDT, OANDA:XAUUSD...) — dokunma
+    from markets.us.data import _fetch_us_exchange_map
     exch = _cached(("exmap",), _fetch_us_exchange_map).get(code, "NASDAQ")
     return f"{exch}:{code}"
 
@@ -111,10 +113,12 @@ def _bars_out(df: pd.DataFrame, tz: str) -> list[dict]:
 
 @server.tool()
 def us_bars(symbol: str, timeframe: str = "D", n: int = 100) -> list[dict]:
-    """ABD hissesi/ETF için canlı OHLCV barları (extfeed TV kaynağı).
+    """Canlı OHLCV barları (extfeed TV kaynağı) — ABD hissesi/ETF ve genel enstrümanlar.
 
     Args:
-        symbol: Ticker, ör. NVDA, SPY. Borsa öneki otomatik bulunur.
+        symbol: ABD ticker'ı (NVDA, SPY — borsa öneki otomatik bulunur) VEYA
+            açık önekli herhangi bir TV sembolü: BINANCE:BTCUSDT, BINANCE:ETHUSDT,
+            OANDA:XAUUSD, BITFINEX:XAUTUSD... (":" varsa önek aynen kullanılır).
         timeframe: 1/5/15/60/240 (dakika), D (günlük), W (haftalık).
         n: Bar sayısı (en çok 500).
     Returns: [{t,o,h,l,c,v}] — t New York saati. Seans içinde son bar KISMİDİR.

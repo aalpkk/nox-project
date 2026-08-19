@@ -109,6 +109,8 @@ def get(sym: str, exch: str, tf: str, n: int, auth):
 
 
 def summarize(grp: str, df: pd.DataFrame) -> dict:
+    if len(df) < 2:
+        raise RuntimeError(f"yetersiz bar ({len(df)}) — metrik hesaplanamaz")
     c, h, l, v = df["close"], df["high"], df["low"], df["volume"]
     last, prev = float(c.iloc[-1]), float(c.iloc[-2])
     tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
