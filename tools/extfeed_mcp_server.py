@@ -32,6 +32,13 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+try:  # lokal koşularda repo/.env ve bir üst klasördeki .env otomatik yüklenir
+    from dotenv import load_dotenv
+    for _p in (REPO / ".env", REPO.parent / ".env"):
+        load_dotenv(_p)
+except ImportError:
+    pass
+
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 

@@ -40,6 +40,13 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+try:  # lokal koşularda repo/.env ve bir üst klasördeki .env otomatik yüklenir
+    from dotenv import load_dotenv
+    for _p in (REPO / ".env", REPO.parent / ".env"):
+        load_dotenv(_p)
+except ImportError:
+    pass
+
 OUT_DIR = REPO / "output" / "usdata"
 
 PRIORITY = ["SINDIRME", "BREAKOUT_1G", "BOLGEDE", "TABAN", "NOTR", "UZAMIS", "ZAYIF"]
