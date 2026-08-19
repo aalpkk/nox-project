@@ -19,3 +19,21 @@ services:
         value: "aalpkk/nox-private"
       - key: GH_TOKEN          # PAT (repo scope) — değer dashboard'dan girilir
         sync: false
+
+  # extfeed MCP connector — claude.ai "custom connector" icin canli veri servisi
+  # Kurulum: Render dashboard'da INTRADAY_SID / INTRADAY_SIGN / MCP_TOKEN gir;
+  # claude.ai > Settings > Connectors > Add custom connector:
+  #   https://nox-extfeed-mcp.onrender.com/<MCP_TOKEN>/mcp
+  - type: web
+    name: nox-extfeed-mcp
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt "mcp>=2.0" uvicorn
+    startCommand: python tools/extfeed_mcp_server.py
+    envVars:
+      - key: INTRADAY_SID
+        sync: false
+      - key: INTRADAY_SIGN
+        sync: false
+      - key: MCP_TOKEN
+        sync: false
