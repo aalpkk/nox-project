@@ -1,5 +1,6 @@
 name: us-premarket
 
+# schedule re-register nudge: 2026-08-19
 # ABD izleme evreni PREMARKET taraması (gap listesi, yfinance prepost 5m).
 # Yayın: nox-signals/usdata/premarket_scan.md + premarket.json
 #   https://raw.githubusercontent.com/aalpkk/nox-signals/main/usdata/premarket_scan.md

@@ -1,5 +1,6 @@
 name: us-watch
 
+# schedule re-register nudge: 2026-08-19
 # ABD izleme evreni taraması — extfeed (TV WS) birincil, yfinance yedek.
 # Çıktılar nox-signals/usdata/ altına yayınlanır:
 #   https://raw.githubusercontent.com/aalpkk/nox-signals/main/usdata/summary.json
