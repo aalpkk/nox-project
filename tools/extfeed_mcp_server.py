@@ -62,6 +62,13 @@ server = MCPServer(
 )
 
 
+@server.custom_route("/healthz", methods=["GET"])
+async def _healthz(request):
+    """Isıtıcı ping ucu (token gerekmez) — Render free'nin uyumasını engeller."""
+    from starlette.responses import PlainTextResponse
+    return PlainTextResponse("ok")
+
+
 def _get_auth():
     global _auth
     if _auth is None:
