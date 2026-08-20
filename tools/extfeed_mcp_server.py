@@ -62,13 +62,6 @@ server = MCPServer(
 )
 
 
-@server.custom_route("/healthz", methods=["GET"])
-async def _healthz(request):
-    """Isıtıcı ping ucu (token gerekmez) — Render free'nin uyumasını engeller."""
-    from starlette.responses import PlainTextResponse
-    return PlainTextResponse("ok")
-
-
 def _get_auth():
     global _auth
     if _auth is None:
@@ -245,6 +238,17 @@ def main() -> None:
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=False),
     )
+    try:  # ısıtıcı ping ucu (token gerekmez) — Render free'nin uyumasını engeller
+        from starlette.responses import PlainTextResponse
+        from starlette.routing import Route
+
+        async def _healthz(request):
+            return PlainTextResponse("ok")
+
+        app.router.routes.append(Route("/healthz", _healthz, methods=["GET"]))
+    except Exception as e:  # healthz eklenemese de servis ayakta kalsın
+        print(f"[healthz] eklenemedi: {e}", flush=True)
+
     port = int(os.environ.get("PORT", "8756"))
     print(f"[nox-extfeed-mcp] 0.0.0.0:{port}{path}", flush=True)
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
