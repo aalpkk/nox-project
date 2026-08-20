@@ -27,8 +27,6 @@ import threading
 import time
 from pathlib import Path
 
-import pandas as pd
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
@@ -39,9 +37,6 @@ try:  # lokal koşularda repo/.env ve bir üst klasördeki .env otomatik yüklen
 except ImportError:
     pass
 
-from mcp.server import MCPServer
-from mcp.server.transport_security import TransportSecuritySettings
-
 TF_OK = {"1", "5", "15", "60", "240", "D", "W"}
 N_CAP = 500
 SNAP_CAP = 12
@@ -51,7 +46,10 @@ _lock = threading.Lock()
 _cache: dict[tuple, tuple[float, object]] = {}
 _auth = None
 
-server = MCPServer(
+
+def _make_server():
+    from mcp.server import MCPServer
+    return MCPServer(
     name="nox-extfeed",
     instructions=(
         "NOX canlı piyasa verisi. ABD/BIST OHLCV için us_bars/bist_bars, "
@@ -60,6 +58,11 @@ server = MCPServer(
         "Etiketler betimseldir, valide edge değildir."
     ),
 )
+
+
+import pandas as pd  # noqa: E402  (pandas yoksa main() fallback'i devreye girer)
+
+server = _make_server()
 
 
 def _get_auth():
@@ -227,8 +230,8 @@ def published_scan(which: str = "summary") -> str:
     return r.text[:60000]
 
 
-def main() -> None:
-    import uvicorn
+def _build_app():
+    from mcp.server.transport_security import TransportSecuritySettings
     token = os.environ.get("MCP_TOKEN", "").strip()
     path = f"/{token}/mcp" if token else "/mcp"
     app = server.streamable_http_app(
@@ -238,6 +241,26 @@ def main() -> None:
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=False),
     )
+    return app, path
+
+
+def main() -> None:
+    import traceback
+    import uvicorn
+    try:
+        app, path = _build_app()
+    except Exception:
+        tb = traceback.format_exc()
+        print("[STARTUP ERROR]\n" + tb, flush=True)
+        from starlette.applications import Starlette
+        from starlette.responses import PlainTextResponse
+        from starlette.routing import Route
+
+        async def _err(request):
+            return PlainTextResponse("STARTUP ERROR:\n" + tb, status_code=500)
+
+        app, path = Starlette(routes=[Route("/healthz", _err, methods=["GET"]),
+                                      Route("/", _err, methods=["GET"])]), "/(err)"
     try:  # ısıtıcı ping ucu (token gerekmez) — Render free'nin uyumasını engeller
         from starlette.responses import PlainTextResponse
         from starlette.routing import Route
