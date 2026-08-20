@@ -28,7 +28,7 @@ services:
     name: nox-extfeed-mcp
     runtime: python
     plan: free
-    buildCommand: pip install "pandas>=2.1,<3.0" numpy requests "yfinance>=0.2.31" "websockets>=12" pyyaml "mcp>=2.0" uvicorn
+    buildCommand: pip install "pandas>=2.1,<3.0" numpy requests "yfinance>=0.2.31" "websockets>=12" pyyaml "mcp==2.0.0" uvicorn
     startCommand: python tools/extfeed_mcp_server.py
     envVars:
       - key: PYTHON_VERSION
