@@ -55,3 +55,4 @@ run_ts,bar_date,xu100,state_on,brake_on,state_off,brake_off,new_events
 2026-08-26T18:25:43,2026-08-26,14610.92,ARMED,False,IN_TRADE,False,
 2026-08-28T01:09:49,2026-08-27,14575.51,ARMED,False,ARMED,False,[keşifsel confirm-OFF] 2026-08-27 EXIT_TIME net +2.9%
 2026-08-29T00:43:11,2026-08-28,14641.56,ARMED,False,ARMED,False,
+2026-08-31T21:39:20,2026-08-31,14334.06,ARMED,False,ARMED,False,
