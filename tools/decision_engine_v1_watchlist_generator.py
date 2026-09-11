@@ -304,22 +304,20 @@ def _trident_lookup(
 
 
 def _prior_completed_friday(asof: str) -> str:
-    """PR-DE-3.17: last Friday STRICTLY BEFORE asof (ISO YYYY-MM-DD).
+    """PR-DE-3.17 / PR-DE-3.21: last completed Friday ON OR BEFORE asof.
 
     The weekly bar labeled at this Friday closes the range
     (prev_Friday, this_Friday] which spans Mon-Fri sessions. mb_1w /
     bb_1w above_mb_birth events with `event_bar_date == this_Friday`
     represent structural birth that completed during that week.
 
-    Edge case: when asof itself falls on a Friday (e.g. close-mode run on
-    Fri 2026-05-15), the current Friday's weekly bar has *just closed* and
-    is treated as the CURRENT week; "prior completed" returns the Friday
-    one week earlier.
+    Close-mode runs (master-data-pull 15:30 UTC = 18:30 TR weekday cron)
+    fire AFTER BIST close (18:00 TR), so when asof is itself a Friday the
+    weekly bar dated 2026-05-22 is already closed and IS the most-recent
+    completed weekly bar. Return asof itself in that case.
     """
     d = dt.date.fromisoformat(asof)
     delta = (d.weekday() - 4) % 7
-    if delta == 0:
-        delta = 7
     return (d - dt.timedelta(days=delta)).isoformat()
 
 
