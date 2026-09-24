@@ -18,13 +18,13 @@
 # key is a hard FAIL in consumer scripts — no fallback, no auto-derive.
 
 [locked_hb_archive]
-path = "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-09-21__sha256_a4b1e1c5.parquet"
-sha256 = "a4b1e1c5c1eb14ef65972b2518ae3b001ec6fd18cbc0bdc0312cc0a00a4b5a5c"
-asof_date = "2026-09-21"
+path = "output/_archive/horizontal_base_event_v1__pre_refresh__asof_2026-09-24__sha256_5e69eedc.parquet"
+sha256 = "5e69eedc013e1a5f42eecba4cf8ccf5bf59fa59d488ef7dd2d5c567fdfb7ec25"
+asof_date = "2026-09-24"
 # rows: HB event count of the locked baseline. Consumed as RESEARCH_BASELINE_HB_ROWS
 # by ema_forward_alignment + pilot3_forward (externalized from hardcoded constants
 # 2026-06-08 to enable auto-rotation; rotation updates this in lockstep with path/sha256).
-rows = 11409
+rows = 11463
 
 # NOT rotated: research_frozen breakpoints are permanently frozen at the original
 # research moment (2026-05-05). Forward consumers must tag with these ORIGINAL
@@ -44,23 +44,23 @@ asof_date = "2026-05-05"
 # archive parquet(s), updated full sha256 entries, and validation evidence.
 
 [locked_pilot3_panel]
-path = "output/_archive/ema_context_pilot3_panel__locked__sha256_57b37418.parquet"
-sha256 = "57b3741827ccd29d89627589bfb1e9ea0e9bcfb55d489ff83ee59677e54b39cc"
+path = "output/_archive/ema_context_pilot3_panel__locked__sha256_ec245f1e.parquet"
+sha256 = "ec245f1e3cec423d87d5df856216279ed413264857a896d169186784fe5d9a78"
 # panel_rows / unique_eid consumed by pilot3_forward (externalized 2026-06-08).
-panel_rows = 353363
-unique_eid = 11409
+panel_rows = 355134
+unique_eid = 11463
 
 [locked_pilot5_panel]
-path = "output/_archive/ema_context_pilot5_panel__locked__sha256_72ad8f94.parquet"
-sha256 = "72ad8f9486a7d2e1f6bc590360eb161aad975883b5c64505a45839afc381738b"
+path = "output/_archive/ema_context_pilot5_panel__locked__sha256_59d85039.parquet"
+sha256 = "59d8503988bd37ba91e298ed30f993ae282ee05e6d3bc0b7c698d5de88c87104"
 
 [locked_pilot6_panel]
-path = "output/_archive/ema_context_pilot6_panel__locked__sha256_7da6ea3e.parquet"
-sha256 = "7da6ea3e203924e9e226f75f3ab61a350d1ddbd0ffbed462811dcbcc538f457d"
+path = "output/_archive/ema_context_pilot6_panel__locked__sha256_878574cc.parquet"
+sha256 = "878574cc05a534ea7bcc0cb4241698d35ce2c07a41c059f95fe51e6fafb24979"
 
 [locked_pilot7_panel]
-path = "output/_archive/ema_context_pilot7_panel__locked__sha256_a07c202d.parquet"
-sha256 = "a07c202d51b42f72d7ebb228a52319ea3a54a2ea82f9b4593d08626678cd38ff"
+path = "output/_archive/ema_context_pilot7_panel__locked__sha256_4b0a63b0.parquet"
+sha256 = "4b0a63b0d6e4aee9e29b4a2a58a04b1e015f780811bd5d01dbd74c95cbce6604"
 
 # ── Locked pilot7 research CSVs (PR-DE-3.9) ─────────────────────────────────
 # Statistical baseline outputs consumed by Stage 6 Line TR producer
@@ -74,12 +74,12 @@ sha256 = "a07c202d51b42f72d7ebb228a52319ea3a54a2ea82f9b4593d08626678cd38ff"
 # sha256, and validation evidence.
 
 [locked_pilot7_gates_main]
-path = "output/_archive/ema_context_pilot7_gates_main__locked__sha256_9c5b4181.csv"
-sha256 = "9c5b4181ef5f8dd83606d9d4dac911b8fef50c7baa5a4be8a1037db1f9c30a18"
+path = "output/_archive/ema_context_pilot7_gates_main__locked__sha256_b96005e0.csv"
+sha256 = "b96005e0894c0b3ae5056aa9d2d798fd15fc22a73288c0370712746b04d7f112"
 
 [locked_pilot7_drop_diagnostic_census]
-path = "output/_archive/ema_context_pilot7_drop_diagnostic_census__locked__sha256_2a567512.csv"
-sha256 = "2a56751206bebdebec50b6374713e7c90614e4caf9eefec57842db1d5fdb1602"
+path = "output/_archive/ema_context_pilot7_drop_diagnostic_census__locked__sha256_64c12658.csv"
+sha256 = "64c126580f6e68c28c215ad33304b0b0f44b91224b531452b7e8b90cea1861db"
 
 # ── Locked prior-day DE operational state (PR-DE-3.10) ──────────────────────
 # Baseline for Stage 7 (tools/decision_engine_v1_panel_refresh.py):
