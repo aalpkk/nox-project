@@ -1,7 +1,7 @@
 name: NYX Alpha Scan
 on:
-  schedule:
-    - cron: '30 15 * * 1-5'  # 18:30 TR — BIST kapanış sonrası
+  # schedule kaldırıldı (GH cron 3-4 saat gecikiyordu): briefing-chain.yml close
+  # master-pull sonrası dispatch eder (~19:15 TR).
   workflow_dispatch:
     inputs:
       mode:

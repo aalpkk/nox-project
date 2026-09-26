@@ -1,0 +1,130 @@
+name: briefing chain
+
+# Brifing'i en geç ~19:45 TR'de yayınlar (hedef: 21:00 TR'den önce KESİN).
+# Neden: bu repoda GitHub'ın native cron'u 3.5-4.5 saat gecikiyor (09-2026 ölçümü:
+# 16:45 UTC cron → 19:50-20:10 UTC start). Brifing ve beslediği tarayıcılar
+# (alpha / nyxexp / screener_combo) native cron'la koştuğu için yayın ~23:20 TR'ye kayıyordu.
+#
+# Akış: close master data pull (cron-job.org watchdog ile ~19:10 TR'de biter)
+#       → bu workflow (workflow_run) → alpha + nyxexp + screener_combo dispatch → hepsi bitince
+#       → nox-agent-brief dispatch (~12 dk) → yayın + Telegram.
+# Idempotent: bugün nox-agent-brief zaten tetiklenmişse no-op (günün 2. close pull'u vb.).
+# Yedek: close-chain-watchdog bugün brifing yoksa bu workflow'u dispatch eder.
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["master data pull"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: briefing-chain
+  cancel-in-progress: false
+
+jobs:
+  chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Gate — close master-pull + bugün brifing yok
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_ID: ${{ github.event.workflow_run.id }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          is_close_run() {
+            local rid="$1" tmp
+            tmp=$(mktemp -d)
+            if ! gh run download "$rid" -n master-data-manifest -D "$tmp" >/dev/null 2>&1; then
+              rm -rf "$tmp"; return 1
+            fi
+            local mode verdict fresh
+            mode=$(jq -r '.mode // empty' "$tmp/master_data_manifest.json")
+            verdict=$(jq -r '.verdict // empty' "$tmp/master_data_manifest.json")
+            fresh=$(jq -r '.freshness_status // empty' "$tmp/master_data_manifest.json")
+            rm -rf "$tmp"
+            [ "$mode" = "close" ] && [ "$verdict" = "PASS" ] && [ "$fresh" = "PASS" ]
+          }
+
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            if [ "$UPSTREAM_BRANCH" != "main" ] || [ "$UPSTREAM_CONCLUSION" != "success" ]; then
+              echo "[chain] SKIP: branch=$UPSTREAM_BRANCH conclusion=$UPSTREAM_CONCLUSION"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            if ! is_close_run "$UPSTREAM_ID"; then
+              echo "[chain] SKIP: tetikleyen master-pull close değil"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+
+          today=$(TZ=Europe/Istanbul date +%F)
+          # brifing TR günü içinde (UTC 21:00 önceki gün→) koştu mu?
+          since=$(date -u -d "${today}T00:00:00+03:00" +%FT%TZ)  # TR sabit UTC+3
+          n=$(gh run list --workflow=nox-agent-brief.yml --limit 20 \
+                --json createdAt,conclusion \
+                --jq "[.[] | select(.createdAt >= \"$since\") | select(.conclusion != \"failure\" and .conclusion != \"cancelled\")] | length")
+          echo "[chain] bugün ($today) brifing koşusu: $n"
+          if [ "$n" -gt 0 ]; then
+            echo "[chain] brifing zaten var/koşuyor → no-op"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Besleyici tarayıcıları dispatch et ve bitmelerini bekle
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SCANS="nyx-alpha-scan.yml nyxexp-daily-scan.yml screener-combo-daily.yml"
+          start=$(date -u +%FT%TZ)
+          for w in $SCANS; do
+            gh workflow run "$w" --ref main
+            echo "[chain] dispatch: $w"
+          done
+
+          # En fazla 40 dk bekle; biri takılırsa/başarısızsa brifing yine de koşar
+          # (brifing eksik kaynağı atlıyor).
+          deadline=$(( $(date +%s) + 40*60 ))
+          while :; do
+            pending=""
+            for w in $SCANS; do
+              st=$(gh run list --workflow="$w" --event=workflow_dispatch --limit 5 \
+                     --json createdAt,status \
+                     --jq "[.[] | select(.createdAt >= \"$start\")][0].status // \"missing\"")
+              [ "$st" = "completed" ] || pending="$pending $w($st)"
+            done
+            if [ -z "$pending" ]; then echo "[chain] tüm tarayıcılar bitti"; break; fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::warning::40 dk doldu, bekleyenler:$pending — brifing yine de tetikleniyor"
+              break
+            fi
+            echo "[chain] bekleniyor:$pending"
+            sleep 30
+          done
+
+          for w in $SCANS; do
+            gh run list --workflow="$w" --event=workflow_dispatch --limit 5 \
+              --json createdAt,conclusion,url \
+              --jq "[.[] | select(.createdAt >= \"$start\")][0] | \"  $w → \\(.conclusion) \\(.url)\""
+          done
+
+      - name: Brifing'i dispatch et
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run nox-agent-brief.yml --ref main
+          echo "[chain] nox-agent-brief dispatch edildi (~12 dk)"

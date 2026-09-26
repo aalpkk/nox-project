@@ -1,8 +1,7 @@
 name: Screener Combo Daily 9-list
 on:
-  schedule:
-    # Pzt-Cuma 18:35 TR (BIST kapanış 18:00 + buffer): 15:35 UTC
-    - cron: '35 15 * * 1-5'
+  # schedule kaldırıldı (GH cron 3-4 saat gecikiyordu): briefing-chain.yml close
+  # master-pull sonrası dispatch eder (~19:15 TR).
   workflow_dispatch:
     inputs:
       limit:

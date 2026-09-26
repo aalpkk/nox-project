@@ -78,3 +78,33 @@ jobs:
           else
             echo "[watchdog] zincir TAM (master-pull+DE+advisor) → no-op"
           fi
+
+      - name: Brifing eksikse briefing-chain dispatch et (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_DISPATCH_PAT || github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          today=$(TZ=Europe/Istanbul date +%F)
+          since=$(date -u -d "${today}T00:00:00+03:00" +%FT%TZ)  # TR sabit UTC+3
+          # brifing (başarılı/koşuyor) veya koşan bir zincir varsa no-op
+          nb=$(gh run list --repo "$REPO" --workflow=nox-agent-brief.yml --limit 20 \
+                 --json createdAt,conclusion \
+                 --jq "[.[] | select(.createdAt >= \"$since\") | select(.conclusion != \"failure\" and .conclusion != \"cancelled\")] | length")
+          nc=$(gh run list --repo "$REPO" --workflow=briefing-chain.yml --limit 20 \
+                 --json createdAt,status \
+                 --jq "[.[] | select(.createdAt >= \"$since\") | select(.status != \"completed\")] | length")
+          echo "[watchdog] brifing bugün: $nb | koşan zincir: $nc"
+          if [ "$nb" -gt 0 ] || [ "$nc" -gt 0 ]; then
+            echo "[watchdog] brifing tamam/yolda → no-op"; exit 0
+          fi
+          # ~20:15 TR çağrısında master-pull close yoksa bekle (pull'un kendi cascade'i zinciri tetikler);
+          # ~21:30 TR çağrısında ne olursa olsun zinciri tetikle (tarayıcılar master-pull'dan bağımsız).
+          hour=$(TZ=Europe/Istanbul date +%H)
+          mp=$(gh run list --repo "$REPO" --workflow=master-data-pull.yml \
+                 --created="$today" --status=success --json databaseId --jq 'length')
+          if [ "$mp" -eq 0 ] && [ "$hour" -lt 21 ]; then
+            echo "[watchdog] master-pull henüz yok, saat $hour → sonraki çağrıya bırakıldı"; exit 0
+          fi
+          echo "[watchdog] brifing YOK → briefing-chain dispatch"
+          gh workflow run briefing-chain.yml --repo "$REPO" --ref main
