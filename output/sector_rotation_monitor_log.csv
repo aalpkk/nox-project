@@ -78,3 +78,4 @@ run_ts,bar_date,xu100,state_on,brake_on,state_off,brake_off,new_events
 2026-09-28T22:17:42,2026-09-28,12592.76,ARMED,False,ARMED,False,[PRIMARY confirm-ON] 2026-09-28 EXIT_STOP net -11.8%; [keşifsel confirm-OFF] 2026-09-28 LEG_SWITCH XHOLD; [keşifsel confirm-OFF] 2026-09-28 EXIT_STOP net -8.2%
 2026-09-29T21:04:10,2026-09-29,12290.58,ARMED,False,ARMED,False,
 2026-09-30T21:01:24,2026-09-30,11947.18,ARMED,False,ARMED,False,
+2026-10-01T21:22:54,2026-10-01,12249.04,ARMED,False,ARMED,False,
